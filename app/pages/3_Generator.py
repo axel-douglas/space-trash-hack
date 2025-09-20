@@ -1,18 +1,25 @@
-# --- path guard para Streamlit Cloud ---
+# --- path guard universal (funciona en Home.py y en pages/*) ---
 import sys, pathlib
-ROOT = pathlib.Path(__file__).resolve().parents[1]  # carpeta raíz del repo
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-# ---------------------------------------
+_here = pathlib.Path(__file__).resolve()
+p = _here.parent
+while p.name != "app" and p.parent != p:
+    p = p.parent
+repo_root = p.parent if p.name == "app" else _here.parent  # fallback
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+# ----------------------------------------------------------------
 
 import streamlit as st
+
+# ⚠️ Primero
+st.set_page_config(page_title="Generador", page_icon="⚙️", layout="wide")
+
 from app.modules.io import load_waste_df, load_process_df
 from app.modules.process_planner import choose_process
 from app.modules.generator import generate_candidates
 from app.modules.safety import check_safety, safety_badge
 from app.modules.ui_blocks import pill
 
-st.set_page_config(page_title="Generador", page_icon="⚙️", layout="wide")
 st.title("3) Generar recetas y procesos")
 
 target = st.session_state.get("target", None)
@@ -22,6 +29,10 @@ if not target:
 
 waste_df = load_waste_df()
 proc_df  = load_process_df()
+if waste_df.empty or proc_df.empty:
+    st.error("Faltan datos: revisá `data/waste_inventory_sample.csv` y `data/process_catalog.csv`.")
+    st.stop()
+
 filtered_proc = choose_process(
     target["name"], proc_df,
     scenario=target.get("scenario"),
@@ -37,6 +48,10 @@ if st.button("🚀 Generar opciones", type="primary"):
     st.session_state["candidates"] = cands
 
 cands = st.session_state.get("candidates", [])
+if not cands:
+    st.info("Generá opciones para ver candidatos.")
+    st.stop()
+
 for i,c in enumerate(cands):
     flags = check_safety(c["materials"], c["process_name"], c["process_id"])
     badge = safety_badge(flags)
