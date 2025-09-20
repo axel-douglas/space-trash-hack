@@ -1,16 +1,23 @@
-# --- path guard para Streamlit Cloud ---
+# --- path guard universal (funciona en Home.py y en pages/*) ---
 import sys, pathlib
-ROOT = pathlib.Path(__file__).resolve().parents[1]  # carpeta raíz del repo
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-# ---------------------------------------
+_here = pathlib.Path(__file__).resolve()
+p = _here.parent
+while p.name != "app" and p.parent != p:
+    p = p.parent
+repo_root = p.parent if p.name == "app" else _here.parent  # fallback
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+# ----------------------------------------------------------------
 
 import streamlit as st
+
+# ⚠️ Primero
+st.set_page_config(page_title="Resultados", page_icon="📊", layout="wide")
+
 import plotly.graph_objects as go
 from app.modules.explain import score_breakdown
 from app.modules.ui_blocks import pill
 
-st.set_page_config(page_title="Resultados", page_icon="📊", layout="wide")
 st.title("4) Resultados y trade-offs")
 
 state_sel = st.session_state.get("selected", None)
@@ -20,7 +27,7 @@ if not state_sel:
 
 sel = state_sel["data"]
 badge = state_sel["safety"]
-target = st.session_state.get("target")
+target = st.session_state.get("target", {})
 p = sel["props"]
 
 col1, col2, col3 = st.columns(3)
