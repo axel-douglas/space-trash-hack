@@ -10,12 +10,12 @@ if not cands or not target:
     st.warning("Generá opciones en **3) Generador** primero.")
     st.stop()
 
-df = compare_table(cands, target)
+df = compare_table(cands, target, crew_time_low=target.get("crew_time_low", False))
 st.dataframe(df, use_container_width=True, hide_index=True)
 
 pick = st.number_input("Ver desglose de la Opción #", min_value=1, max_value=len(cands), value=1, step=1)
 c = cands[pick-1]
-parts = score_breakdown(c["props"], target)
+parts = score_breakdown(c["props"], target, crew_time_low=target.get("crew_time_low", False))
 
 colA, colB = st.columns(2)
 with colA:
