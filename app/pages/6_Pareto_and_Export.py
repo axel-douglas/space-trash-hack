@@ -1,17 +1,24 @@
-# --- path guard para Streamlit Cloud ---
+# --- path guard universal (funciona en Home.py y en pages/*) ---
 import sys, pathlib
-ROOT = pathlib.Path(__file__).resolve().parents[1]  # carpeta raíz del repo
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-# ---------------------------------------
+_here = pathlib.Path(__file__).resolve()
+p = _here.parent
+while p.name != "app" and p.parent != p:
+    p = p.parent
+repo_root = p.parent if p.name == "app" else _here.parent  # fallback
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+# ----------------------------------------------------------------
 
 import streamlit as st
+
+# ⚠️ Primero
+st.set_page_config(page_title="Pareto & Export", page_icon="📤", layout="wide")
+
 import plotly.express as px
 from app.modules.explain import compare_table
 from app.modules.analytics import pareto_front
 from app.modules.exporters import candidate_to_json, candidate_to_csv
 
-st.set_page_config(page_title="Pareto & Export", page_icon="📤", layout="wide")
 st.title("6) Pareto & Export")
 
 cands = st.session_state.get("candidates", [])
@@ -23,6 +30,10 @@ if not cands or not target:
     st.stop()
 
 df = compare_table(cands, target, crew_time_low=target.get("crew_time_low", False))
+if df.empty:
+    st.info("No hay candidatos para analizar.")
+    st.stop()
+
 front_idx = pareto_front(df)
 df["Pareto"] = df.index.isin(front_idx)
 
