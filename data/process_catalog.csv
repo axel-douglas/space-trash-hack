@@ -1,0 +1,5 @@
+process_id,name,location,energy_kwh_per_kg,water_l_per_kg,crew_min_per_batch,notes
+P01,Shredder (low RPM),indoor,0.12,0.0,6,"Tamaño partícula 5-10 mm"
+P02,Press & Heat Lamination,indoor,0.55,0.0,18,"150C 5 bar 20min"
+P03,Sinter with MGS-1,mix,0.70,0.1,25,"Cargar 10-30% regolito"
+P04,CTB Kit Reconfig,reuse,0.05,0.0,12,"Herrajes/particiones"
