@@ -1,4 +1,6 @@
 import streamlit as st
+from app.modules.ui_blocks import inject_css, card, section
+inject_css()
 from pathlib import Path
 
 st.set_page_config(
@@ -13,14 +15,16 @@ st.markdown("**Objetivo:** convertir basura inorgánica en productos útiles, mi
 col1, col2 = st.columns([2,1], gap="large")
 
 with col1:
-    st.subheader("Flujo en 4 pasos")
-    st.markdown("""
-1. **Inventario** — cargar/editar residuos disponibles (NASA non-metabolic waste simplificado).  
-2. **Objetivo** — elegir el producto (contenedor/utensilio/interior/herramienta) y prioridades (agua/energía/tiempo/seguridad).  
-3. **Generador** — el motor propone **recetas** (mezcla de residuos) y **proceso** (pipeline).  
-4. **Resultados** — métricas, Pareto, Sankey y checklist de fabricación.
-""")
-    st.info("Usá el menú **Pages** (a la izquierda) para avanzar por el wizard.")
+    section("Flujo en 4 pasos")
+card("1) Inventario",
+     "Cargá/edita residuos disponibles (tabla NASA simplificada).")
+card("2) Objetivo",
+     "Elegí producto y prioridades (agua/energía/tiempo/seguridad).")
+card("3) Generador",
+     "Recetas (mezclas) + proceso sugerido con predicciones.")
+card("4) Resultados",
+     "Pareto, Sankey, checklist y métricas de impacto.")
+
 
 with col2:
     st.subheader("Estado del sistema")
