@@ -33,3 +33,6 @@ with col2:
     st.caption("`data/waste_inventory_sample.csv` | `process_catalog.csv` | `targets_presets.json`")
     st.write("Modo:", "Demo local (modelos ligeros)")
     st.write("Restricciones:", "Sin incineración • Minimizar agua/energía • Evitar PFAS/microplásticos")
+
+st.markdown("---")
+st.caption("Siguiente: 1) Inventario → 2) Objetivo → 3) Generador → 4) Resultados → 5) Comparar → 6) Pareto & Export → 7) Playbooks")
