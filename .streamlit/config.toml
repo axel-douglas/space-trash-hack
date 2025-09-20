@@ -1,0 +1,7 @@
+[theme]
+base="dark"
+primaryColor="#00B894"      # verde turquesa (acción/éxito)
+backgroundColor="#0E1117"   # negro mate cockpit
+secondaryBackgroundColor="#151A21"
+textColor="#E6EDF3"
+font="sans serif"
