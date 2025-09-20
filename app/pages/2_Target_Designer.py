@@ -1,19 +1,29 @@
-# --- path guard para Streamlit Cloud ---
+# --- path guard universal (funciona en Home.py y en pages/*) ---
 import sys, pathlib
-ROOT = pathlib.Path(__file__).resolve().parents[1]  # carpeta raíz del repo
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-# ---------------------------------------
+_here = pathlib.Path(__file__).resolve()
+p = _here.parent
+while p.name != "app" and p.parent != p:
+    p = p.parent
+repo_root = p.parent if p.name == "app" else _here.parent  # fallback
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+# ----------------------------------------------------------------
 
 import streamlit as st
+
+# ⚠️ Debe ser la PRIMERA llamada de Streamlit en la página
+st.set_page_config(page_title="Objetivo", page_icon="🎯", layout="wide")
+
 from app.modules.io import load_targets
 from app.modules.ui_blocks import section
 
-st.set_page_config(page_title="Objetivo", page_icon="🎯", layout="wide")
 st.title("2) Definir objetivo (TargetSpec)")
 
 presets = load_targets()
-names = [p["name"] for p in presets]
+names = [p["name"] for p in presets] if presets else []
+if not names:
+    st.error("No se encontraron presets de objetivos. Verifica `data/targets_presets.json`.")
+    st.stop()
 
 colL, colR = st.columns([1,2])
 
@@ -26,7 +36,11 @@ with colL:
         index=0
     )
 
-    crew_low = st.toggle("Modo Crew-time Low (priorizar poco tiempo de tripulación)", value=False, help="Aumenta el peso del tiempo de tripulación en el score y filtra procesos más cortos.")
+    crew_low = st.toggle(
+        "Modo Crew-time Low (priorizar poco tiempo de tripulación)",
+        value=False,
+        help="Aumenta el peso del tiempo de tripulación en el score y filtra procesos más cortos."
+    )
 
 with colR:
     preset = next(p for p in presets if p["name"]==choice)
