@@ -1,0 +1,6 @@
+[
+  {"name":"Container","rigidity":0.8,"tightness":0.7,"max_water_l":0.2,"max_energy_kwh":1.2,"max_crew_min":30},
+  {"name":"Utensil","rigidity":0.6,"tightness":0.4,"max_water_l":0.1,"max_energy_kwh":0.8,"max_crew_min":20},
+  {"name":"Interior","rigidity":0.7,"tightness":0.5,"max_water_l":0.2,"max_energy_kwh":1.5,"max_crew_min":25},
+  {"name":"Tool","rigidity":0.9,"tightness":0.6,"max_water_l":0.1,"max_energy_kwh":1.6,"max_crew_min":30}
+]
