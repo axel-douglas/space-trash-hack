@@ -12,3 +12,5 @@ edited = st.data_editor(df, num_rows="dynamic", use_container_width=True)
 if st.button("💾 Guardar inventario", type="primary"):
     save_waste_df(edited)
     st.success("Inventario guardado.")
+    
+st.caption("Consejo: podés duplicar filas para simular nuevos lotes de residuos. Guardá antes de pasar al siguiente paso.")
