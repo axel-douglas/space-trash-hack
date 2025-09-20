@@ -1,3 +1,10 @@
+# --- path guard para Streamlit Cloud ---
+import sys, pathlib
+ROOT = pathlib.Path(__file__).resolve().parents[1]  # carpeta raíz del repo
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+# ---------------------------------------
+
 import streamlit as st
 from app.modules.explain import compare_table, score_breakdown
 
