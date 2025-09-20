@@ -1,9 +1,13 @@
-# --- path guard para Streamlit Cloud ---
+# --- path guard universal (funciona en Home.py y en pages/*) ---
 import sys, pathlib
-ROOT = pathlib.Path(__file__).resolve().parents[1]  # carpeta raíz del repo
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-# ---------------------------------------
+_here = pathlib.Path(__file__).resolve()
+p = _here.parent
+while p.name != "app" and p.parent != p:
+    p = p.parent
+repo_root = p.parent if p.name == "app" else _here.parent  # fallback
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+# ----------------------------------------------------------------
 
 import streamlit as st
 
@@ -38,7 +42,9 @@ with col1:
 
 with col2:
     st.subheader("Estado del sistema")
-    data_ok = Path("../data/waste_inventory_sample.csv").exists()
+    # ruta robusta basada en el archivo actual
+    data_dir = repo_root / "data"
+    data_ok = (data_dir / "waste_inventory_sample.csv").exists()
     st.write("Datos de ejemplo:", "✅" if data_ok else "❌")
     st.caption("`data/waste_inventory_sample.csv` | `process_catalog.csv` | `targets_presets.json`")
     st.write("Modo:", "Demo local (modelos ligeros)")
