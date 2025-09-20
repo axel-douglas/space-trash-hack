@@ -1,19 +1,35 @@
 import streamlit as st
 import plotly.graph_objects as go
+from app.modules.explain import score_breakdown
+from app.modules.ui_blocks import pill
 
 st.set_page_config(page_title="Resultados", page_icon="📊", layout="wide")
 st.title("4) Resultados y trade-offs")
 
-sel = st.session_state.get("selected", None)
-if not sel:
+state_sel = st.session_state.get("selected", None)
+if not state_sel:
     st.warning("Seleccioná una receta en **3) Generador**.")
     st.stop()
 
+sel = state_sel["data"]
+badge = state_sel["safety"]
+target = st.session_state.get("target")
 p = sel["props"]
+
 col1, col2, col3 = st.columns(3)
 col1.metric("Rigidez", f"{p.rigidity:.2f}")
 col2.metric("Estanqueidad", f"{p.tightness:.2f}")
 col3.metric("Score", f"{sel['score']:.2f}")
+
+st.markdown("**Seguridad**")
+if badge["level"]=="Riesgo":
+    pill("Riesgo","risk"); st.warning(badge["detail"])
+else:
+    pill("OK","ok"); st.success(badge["detail"])
+
+st.subheader("Desglose del Score (explicabilidad)")
+parts = score_breakdown(p, target, crew_time_low=target.get("crew_time_low", False))
+st.bar_chart(parts.set_index("component")["contribution"])
 
 st.subheader("Sankey (residuos → proceso → producto)")
 labels = sel["materials"] + [sel["process_name"], "Producto"]
