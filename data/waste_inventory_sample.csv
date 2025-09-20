@@ -1,0 +1,7 @@
+id,category,material_family,mass_kg,volume_l,flags
+W001,pouches,PE-PET-Al,2.4,18,"multilayer,thermal"
+W002,textiles,polyester,1.2,10,"wipe"
+W003,foam,ZOTEK_F30,1.8,22,"closed_cell"
+W004,EVA_bag,nylon-polyester,3.1,25,"CTB"
+W005,glove,nitrile,0.8,4,""
+W006,aluminum,Al,4.0,3,"struts"
