@@ -1,16 +1,22 @@
-# --- path guard para Streamlit Cloud ---
+# --- path guard universal (funciona en Home.py y en pages/*) ---
 import sys, pathlib
-ROOT = pathlib.Path(__file__).resolve().parents[1]  # carpeta raíz del repo
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-# ---------------------------------------
+_here = pathlib.Path(__file__).resolve()
+p = _here.parent
+while p.name != "app" and p.parent != p:
+    p = p.parent
+repo_root = p.parent if p.name == "app" else _here.parent  # fallback
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+# ----------------------------------------------------------------
 
 import streamlit as st
+
+# ⚠️ Primero
+st.set_page_config(page_title="Capacity Simulator", page_icon="🧮", layout="wide")
+
 from app.modules.capacity import LineConfig, simulate
 
-st.set_page_config(page_title="Capacity Simulator", page_icon="🧮", layout="wide")
 st.title("9) Simulador de capacidad productiva (por turnos)")
-
 st.caption("Modela producción acumulada con una línea/equipo del hábitat, considerando lotes por turno, kg por lote y recursos.")
 
 colA, colB = st.columns(2)
