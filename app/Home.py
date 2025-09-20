@@ -36,3 +36,5 @@ with col2:
 
 st.markdown("---")
 st.caption("Siguiente: 1) Inventario → 2) Objetivo → 3) Generador → 4) Resultados → 5) Comparar → 6) Pareto & Export → 7) Playbooks")
+st.markdown("---")
+st.caption("Extras: 8) Feedback & Impact • 9) Capacity Simulator")
