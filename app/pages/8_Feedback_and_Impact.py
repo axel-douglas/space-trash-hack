@@ -1,18 +1,25 @@
-# --- path guard para Streamlit Cloud ---
+# --- path guard universal (funciona en Home.py y en pages/*) ---
 import sys, pathlib
-ROOT = pathlib.Path(__file__).resolve().parents[1]  # carpeta raíz del repo
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-# ---------------------------------------
+_here = pathlib.Path(__file__).resolve()
+p = _here.parent
+while p.name != "app" and p.parent != p:
+    p = p.parent
+repo_root = p.parent if p.name == "app" else _here.parent  # fallback
+if str(repo_root) not in sys.path:
+    sys.path.insert(0, str(repo_root))
+# ----------------------------------------------------------------
 
 import streamlit as st
+
+# ⚠️ Primero
+st.set_page_config(page_title="Feedback & Impact", page_icon="📝", layout="wide")
+
 from datetime import datetime
 from app.modules.impact import (
     ImpactEntry, FeedbackEntry, append_impact, append_feedback,
     load_impact_df, load_feedback_df, summarize_impact
 )
 
-st.set_page_config(page_title="Feedback & Impact", page_icon="📝", layout="wide")
 st.title("8) Feedback del astronauta & Impacto acumulado")
 
 # --- Bloque A: Registrar impacto del candidato seleccionado ---
