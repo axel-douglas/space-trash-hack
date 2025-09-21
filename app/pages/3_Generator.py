@@ -283,20 +283,18 @@ for i, c in enumerate(cands):
             st.session_state["selected"] = {"data": c, "safety": badge}
             st.success("Opción seleccionada. Abrí **4) Resultados**, **5) Comparar & Explicar** o **6) Pareto & Export**.")
 
-        # Explicación en criollo (mini narrativa)
-        with st.expander("🧠 ¿Por qué esta receta pinta bien? (explicación en criollo)"):
-            bullets = []
-            # Encaje con target
-            bullets.append("• Sumamos puntos si **rigidez/estanqueidad** se acercan a lo que pediste.")
-            # Penalizaciones
-            bullets.append("• Restamos si se pasa en **agua/energía/tiempo** de la tripulación.")
-            # Bono problemáticos
-            if problem_present:
-                bullets.append("• Bonus porque esta opción **se come basura problemática** (¡la que más molesta en la base!).")
-            # MGS-1
-            if c.get("regolith_pct", 0) > 0:
-                bullets.append("• Usa **MGS-1** (regolito) como carga mineral → eso es ISRU puro: menos dependencia de la Tierra.")
-            st.markdown("\n".join(bullets))
+        # Explicación en criollo (mini narrativa) — evitar anidar expanders
+pop = st.popover("🧠 ¿Por qué esta receta pinta bien? (explicación en criollo)")
+with pop:
+    bullets = []
+    bullets.append("• Sumamos puntos si **rigidez/estanqueidad** se acercan a lo que pediste.")
+    bullets.append("• Restamos si se pasa en **agua/energía/tiempo** de la tripulación.")
+    if problem_present:
+        bullets.append("• Bonus porque esta opción **se come basura problemática** (¡la que más molesta en la base!).")
+    if c.get('regolith_pct', 0) > 0:
+        bullets.append("• Usa **MGS-1** (regolito) como carga mineral → eso es ISRU puro: menos dependencia de la Tierra.")
+    st.markdown("\n".join(bullets))
+
 
 # -------------------- Pie de guía / glosario --------------------
 st.markdown('<div class="hr-micro"></div>', unsafe_allow_html=True)
