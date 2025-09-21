@@ -184,3 +184,92 @@ st.caption(
     "Ruta: 1) Inventario → 2) Objetivo → 3) Generador → 4) Resultados → "
     "5) Comparar → 6) Pareto & Export → 7) Playbooks → 8) Feedback & Impact → 9) Capacity Simulator"
 )
+
+# === FUTURE: Escalabilidad e Inteligencia de Próxima Generación ===
+st.markdown("## 🔭 FUTURE — Cómo REX-AI escala y se vuelve más inteligente")
+
+ft_tab_tech, ft_tab_plain = st.tabs([
+    "🧪 Mega-técnico (para el jurado)", 
+    "🤝 En criollo (para todos)"
+])
+
+with ft_tab_tech:
+    st.markdown("#### Estado actual (demo operativa)")
+    st.markdown("""
+- **Arquitectura modular** (`app/modules/*`): separación clara de UI, IO, generador, explicabilidad, export.
+- **Trazabilidad**: cada candidato conserva `source_ids`, `source_categories`, `source_flags`, `regolith_pct`.
+- **Guardrails**: sin incineración; atención a PFAS/microplásticos; coherencia de procesos (P02/P03/P04).
+- **Compatibilidad de datos**: normalización robusta (alias de columnas), fallos visibles y recuperables.
+""")
+
+    st.markdown("#### Plano de datos (Data Plane) — listo para crecer")
+    st.markdown("""
+- **Ingesta**: de CSV/JSON → **Parquet** versionado en **S3/MinIO** (lineage por corrida).
+- **Contratos de datos**: validación con `pydantic/msgspec` (corta el pipeline ante “data drift”).
+- **Catálogo**: `PostgreSQL` + `pgvector` para búsqueda semántica de materiales/flags; `DuckDB` para analítica *in-process*.
+- **Streaming**: `Kafka/Redpanda` para telemetría de ensayos y logs de proceso (puenteable con OPC-UA/ROS).
+""")
+
+    st.markdown("#### Plano de modelos (Model Plane) — de heurística a IA avanzada")
+    st.markdown("""
+- **Surrogates** de propiedades: **GNNs** (grafos de materia), **XGBoost/TabTransformer** (tabular),
+  **Physics-Informed ML** para rigidez/porosidad/estanqueidad condicionadas por proceso.
+- **Incertidumbre**: **ensembles**, **MC Dropout**, **Conformal Prediction** → bandas de confianza y *risk-aware scoring*.
+- **Optimización**: **Bayesian Optimization** (Ax/BoTorch) con límites (agua/kWh/crew); **MILP/CP-SAT** para factibilidad operativa.
+- **Active Learning** / **Bayesian Experimental Design**: selecciona el próximo experimento con mayor valor esperado.
+""")
+
+    st.markdown("#### Serving & MLOps (Control Plane) — confiable y auditable")
+    st.markdown("""
+- **Serving**: **FastAPI** + **ONNX Runtime/TensorRT** (CPU/GPU/edge); colas `Redis` para picos.
+- **MLOps**: **MLflow/Weights&Biases** para registro de datasets/modelos/metrics; *model registry* y *rollbacks*.
+- **Orquestación**: **Airflow/Prefect** para ingesta, *feature store*, entrenamiento y despliegue continuo (CD).
+- **Resiliencia**: timeouts, reintentos exponenciales, *circuit breakers*, *graceful degradation* en modo vuelo.
+""")
+
+    st.markdown("#### Integración de planta (misión crítica)")
+    st.markdown("""
+- **Protocolos**: OPC-UA/ROS para células; mapeo **ISA-95/88** hacia MES/SCADA.
+- **Digital Twin**: simulación *in-silico* (DEM/FEM ligera) para priorizar pruebas y reducir consumo de agua/energía/crew.
+- **Compliance**: auditoría por corrida (hash de dataset/modelo), export JSON/CSV, *golden datasets* y *shadow mode*.
+""")
+
+    st.markdown("#### Por qué puede cambiar Marte y la Tierra")
+    st.markdown("""
+- **ISRU real en Marte**: convertir *lo que sobra* en *lo que falta* con costo logístico marginal.
+- **Economía circular en la Tierra**: recetas para residuos complejos (multicapa/espumas), bases remotas, minería urbana.
+- **Aprendizaje federado**: cada base entrena local y comparte pesos (privacidad + convergencia global).
+""")
+
+    st.markdown("#### Roadmap claro")
+    st.markdown("""
+- **T-0 (ahora)**: persistencia en Parquet/DuckDB, MLflow local, visualización de incertidumbre.
+- **T-1 (MVP productivo)**: FastAPI+ONNX, BO con restricciones, Airflow diario, pgvector semántico.
+- **T-2 (Flight-ready)**: edge GPU, active learning en lazo cerrado, OPC-UA/ROS, digital twin ligero, canary en campo.
+- **T-3 (Programa)**: federated learning entre hábitats, planificación multi-planta y optimización global.
+""")
+
+    st.success("Mensaje al jurado: cambiar de heurísticas a modelos avanzados es un ‘swap’ controlado en `modules/generator.py` y `modules/explain.py`. El resto de la arquitectura ya está preparada para escalar sin romper UX ni seguridad.")
+
+with ft_tab_plain:
+    st.markdown("#### ¿Qué tenemos hoy y qué viene después?")
+    st.markdown("""
+**Hoy** ya funciona: cargás basura inorgánica, elegís un objetivo y REX-AI te arma recetas con números de agua, energía y minutos de tripulación.  
+**Mañana** va a aprender de cada intento y te va a decir: *“probá esta receta, gasta menos y es más firme”*.
+""")
+    st.markdown("#### ¿Cómo se vuelve más inteligente?")
+    st.markdown("""
+1) Guarda lo que probaste (ingredientes, proceso, resultado).  
+2) Verifica que los datos estén bien (si no, frena).  
+3) Aprende cuáles mezclas rinden mejor (y por qué).  
+4) Te propone el próximo experimento con más chances de éxito.  
+5) Repite el ciclo y cada vez gasta menos y resulta mejor.
+""")
+    st.markdown("#### ¿Por qué esto importa?")
+    st.markdown("""
+- En Marte, cada litro de agua y minuto de astronauta valen oro.  
+- En la Tierra, ayuda a reciclar lo difícil (bolsas multicapa, espumas) y a gastar menos recursos.  
+- Es como un **chef** que cada día cocina mejor con lo que hay.
+""")
+    st.info("Traducción simple: hoy ya podés jugar con recetas; la versión avanzada aprende de cada intento y te ahorra agua, energía y tiempo.")
+
