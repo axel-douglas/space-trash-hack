@@ -1,255 +1,182 @@
 # app/Home.py
-# --- path guard ---
+# ================== Path guard (siempre antes de importar módulos propios) ==================
 import sys, pathlib
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-# -------------------
-
-import streamlit as st
-from pathlib import Path
+# ===========================================================================================
 
 # ⚠️ PRIMER comando de Streamlit:
-st.set_page_config(
-    page_title="REX-AI Mars — Mission Hub",
-    page_icon="🛰️",
-    layout="wide"
-)
+import streamlit as st
+st.set_page_config(page_title="REX-AI Mars — Mission Hub", page_icon="🛰️", layout="wide")
 
-# ---------- Estilos SpaceX-like ----------
+from pathlib import Path
+
+# ================== Estilos (SpaceX-like, sobrios y legibles) ==================
 st.markdown("""
 <style>
-:root{ --bd: rgba(130,140,160,.28);}
-.hero{
-  border:1px solid var(--bd);
-  border-radius:22px;
-  padding:28px;
-  margin-bottom:20px;
-  background: radial-gradient(1200px 400px at 20% -20%, rgba(80,120,255,.12), transparent);
+:root{
+  --bd: rgba(130,140,160,.28);
+  --card: rgba(255,255,255,.02);
+  --ink: rgba(230,238,255,.9);
 }
-.hero h1{margin:0 0 6px 0; font-size:2rem}
-.hero .tagline{font-size:1.1rem; opacity:.9; margin-bottom:12px}
-.grid{display:grid; grid-template-columns: repeat(auto-fit, minmax(240px,1fr)); gap:18px; margin:20px 0;}
-.card{border:1px solid var(--bd); border-radius:16px; padding:18px; background:rgba(255,255,255,.02);}
-.card h3{margin:.1rem 0 .25rem 0;}
-.kpi{border:1px solid var(--bd); border-radius:14px; padding:14px; text-align:center;}
-.kpi h3{margin:0 0 6px 0; font-size:.95rem; opacity:.8}
-.kpi .v{font-size:1.6rem; font-weight:800; letter-spacing:.2px}
-.pill{display:inline-block; padding:4px 10px; border-radius:999px; font-weight:700; font-size:.78rem;
-      border:1px solid var(--bd); margin-right:6px}
+html, body, [data-testid="stAppViewContainer"] {background: radial-gradient(1400px 600px at 5% -20%, rgba(80,120,255,.10), transparent);}
+.hero{
+  border:1px solid var(--bd); border-radius:28px; padding:28px; margin-bottom:22px;
+  background: linear-gradient(135deg, rgba(30,36,48,.75), rgba(30,36,48,.55));
+}
+.hero h1{margin:0 0 8px 0; font-size:2.1rem; letter-spacing:.2px}
+.hero .tag{display:inline-block; margin-top:10px}
+.pill{display:inline-block; padding:5px 12px; border-radius:999px; font-weight:700; font-size:.78rem;
+      border:1px solid var(--bd); margin-right:8px; background:var(--card)}
 .pill.ok{background:#e8f7ee; color:#136c3a; border-color:#b3e2c4}
 .pill.info{background:#e7f1ff; color:#174ea6; border-color:#c6dcff}
 .pill.warn{background:#fff3cd; color:#8a6d1d; border-color:#ffe69b}
-.small{font-size:.92rem; opacity:.9}
-.section{margin-top:30px; margin-bottom:18px;}
-.section h2{margin-bottom:6px;}
+.grid{display:grid; grid-template-columns: repeat(auto-fit, minmax(240px,1fr)); gap:18px; margin:16px 0 6px 0;}
+.card{border:1px solid var(--bd); border-radius:16px; padding:18px; background:var(--card);}
+.card h3{margin:.1rem 0 .35rem 0;}
+.card p{margin:0; opacity:.95}
+.kpis{display:grid; grid-template-columns: repeat(auto-fit, minmax(160px,1fr)); gap:12px; margin-top:10px}
+.kpi{border:1px solid var(--bd); border-radius:14px; padding:14px; text-align:center; background:var(--card)}
+.kpi h4{margin:0 0 6px 0; font-size:.95rem; opacity:.8}
+.kpi .v{font-size:1.5rem; font-weight:800; letter-spacing:.2px}
+.section{margin-top:26px; margin-bottom:4px;}
+.small{font-size:.92rem; opacity:.92}
+.cta{display:flex; gap:8px; flex-wrap:wrap; margin-top:10px}
+.cta a{padding:10px 14px; border-radius:12px; border:1px solid var(--bd); text-decoration:none; font-weight:700; font-size:.9rem}
+.cta a.primary{background:#1b66ff1a; border-color:#6e9bff66}
+.cta a:hover{background:rgba(255,255,255,.06)}
+.callout{border:1px dashed var(--bd); border-radius:16px; padding:14px; margin-top:6px; background:rgba(255,255,255,.03)}
 </style>
 """, unsafe_allow_html=True)
 
-# ---------- Encabezado ----------
+# ================== Encabezado ==================
 logo_svg = ROOT / "app" / "static" / "logo_rexai.svg"
-cols = st.columns([0.15, 0.85])
-with cols[0]:
+c_logo, c_title = st.columns([0.13, 0.87])
+with c_logo:
     if logo_svg.exists():
         st.image(str(logo_svg), use_column_width=True)
-with cols[1]:
-    st.title("REX-AI Mars — Mission Hub")
+with c_title:
+    st.markdown("### REX-AI Mars — Mission Hub")
     st.caption("Recycling & Experimentation eXpert — Jezero Base")
 
-# ---------- Hero narrative ----------
-st.markdown("""
+# ================== Hero ==================
+st.markdown(f"""
 <div class="hero">
-  <h1>Conoce a REX-AI</h1>
-  <div class="tagline">
-    Nuestra inteligencia artificial que convierte basura espacial en recursos para la misión.
-  </div>
-  <div>
+  <h1>Convierte basura espacial en recursos de misión</h1>
+  <div class="small">REX-AI prioriza residuos problemáticos (pouches multicapa, espumas ZOTEK, textiles EVA/CTB, guantes de nitrilo, etc.), sugiere procesos viables y
+  optimiza agua, energía y tiempo de tripulación. Cuando corresponde, integra **MGS-1** (regolito de Jezero) como carga mineral.</div>
+  <div class="tag">
     <span class="pill info">Reciclaje inteligente</span>
     <span class="pill ok">Optimización multi-objetivo</span>
-    <span class="pill warn">Uso seguro de MGS-1</span>
+    <span class="pill warn">Guardrails de seguridad</span>
   </div>
 </div>
 """, unsafe_allow_html=True)
 
-# ---------- Qué hace (versión narrativa + técnica) ----------
-st.markdown("### ¿Qué hace REX-AI?")
-st.markdown("""
-**En criollo**:  
-La nave genera **basura inorgánica** — pouches multicapa, espumas, textiles, guantes de nitrilo, piezas de aluminio.  
-Lo que hace **REX-AI** es agarrar ese lío y decirte: *“Con esto podés armar un contenedor, un utensilio, una herramienta…”*  
-Y no lo hace a ojo: combina datos reales de procesos, costos de crew, y hasta regula la mezcla con **regolito MGS-1** del cráter Jezero.
+# ================== Toggle de narrativa: Ingeniero / Criollo ==================
+mode = st.toggle("🧪 Modo Ingeniero (desactiva para Modo Criollo)", value=True)
 
-**Para ingenieros**:  
-- Analiza inventarios reales (NASA Non-Metabolic Waste Categories).  
-- Selecciona procesos viables (Shredder, Heat Lamination, Sinter con MGS-1, Reuso CTB).  
-- Calcula propiedades predichas (rigidez, estanqueidad, masa final) con modelos ligeros.  
-- Puntúa cada candidato con un **score multi-objetivo**: compatibilidad con target + penalización por recursos + bonus por “consumir problemáticos”.  
-- Devuelve recetas con trazabilidad: cada ID, categoría y flag queda registrado.
-""")
-
-# ---------- Estado del sistema ----------
-st.markdown("### Estado actual")
-c1, c2, c3, c4 = st.columns(4)
+# ================== Estado del sistema ==================
+st.markdown("#### Estado del sistema")
 data_ok = (ROOT / "data" / "waste_inventory_sample.csv").exists()
 proc_ok = (ROOT / "data" / "process_catalog.csv").exists()
 tgt_ok  = (ROOT / "data" / "targets_presets.json").exists()
-with c1: st.markdown(f'<div class="kpi"><h3>Inventario</h3><div class="v">{"✅" if data_ok else "❌"}</div></div>', unsafe_allow_html=True)
-with c2: st.markdown(f'<div class="kpi"><h3>Procesos</h3><div class="v">{"✅" if proc_ok else "❌"}</div></div>', unsafe_allow_html=True)
-with c3: st.markdown(f'<div class="kpi"><h3>Targets</h3><div class="v">{"✅" if tgt_ok else "❌"}</div></div>', unsafe_allow_html=True)
-with c4: st.markdown('<div class="kpi"><h3>Modo</h3><div class="v">Demo</div></div>', unsafe_allow_html=True)
+colA, colB = st.columns([1.4, 1], vertical_alignment="center")
 
-# ---------- Flujo ----------
-st.markdown("### Flujo de misión")
-st.markdown("""
-<div class="grid">
-  <div class="card"><h3>1) Inventario</h3><div class="small">Subí y editá los residuos. Detectamos los **problemáticos** y los marcamos.</div></div>
-  <div class="card"><h3>2) Objetivo</h3><div class="small">Definí qué querés fabricar (ej: Container, Tool) y límites de recursos.</div></div>
-  <div class="card"><h3>3) Generador</h3><div class="small">REX-AI arma recetas priorizando consumir problemáticos y elige procesos coherentes.</div></div>
-  <div class="card"><h3>4) Resultados</h3><div class="small">Ves métricas, trade-offs, Sankey de flujo y checklist de fabricación.</div></div>
+with colA:
+    st.markdown("""
+<div class="kpis">
+  <div class="kpi"><h4>Inventario</h4><div class="v">""" + ("✅" if data_ok else "❌") + """</div></div>
+  <div class="kpi"><h4>Procesos</h4><div class="v">""" + ("✅" if proc_ok else "❌") + """</div></div>
+  <div class="kpi"><h4>Targets</h4><div class="v">""" + ("✅" if tgt_ok else "❌") + """</div></div>
+  <div class="kpi"><h4>Modo</h4><div class="v">Demo</div></div>
 </div>
 """, unsafe_allow_html=True)
 
-# ---------- Explicación SpaceX-style ----------
-st.markdown("### ¿Por qué importa?")
-st.markdown("""
-- **Nivel crew**: cada minuto de astronauta ahorrado vale millones. REX-AI aprende a minimizarlo.  
-- **Nivel recursos**: el agua y energía en Marte son como oro; penalizamos cualquier exceso.  
-- **Nivel materiales**: en lugar de mandar toneladas desde la Tierra, reusamos lo que ya está en el hábitat.  
-- **Nivel misión**: más seguridad (sin incineración, sin PFAS), más resiliencia (aprovechar regolito local).  
-
-**Ejemplo simple**:  
-Si mezclamos espuma ZOTEK F30 con regolito MGS-1 → se logra un panel rígido que puede reforzar interiores.  
-Si usamos pouches multicapa en laminar + presión → conseguimos láminas estancas para compartimentos.  
-""")
-
-# ---------- Ruta completa ----------
-st.markdown("---")
-st.caption(
-    "Ruta: 1) Inventario → 2) Objetivo → 3) Generador → 4) Resultados → "
-    "5) Comparar → 6) Pareto & Export → 7) Playbooks → 8) Feedback & Impact → 9) Capacity Simulator"
-)
-
-# === Extensión: Escalabilidad & Roadmap técnico (SpaceX-style) ===
-
-st.markdown("## Escalabilidad y Roadmap técnico — cómo REX-AI crece sin techo 🚀")
-
-st.markdown("""
-**Resumen ejecutivo**  
-REX-AI hoy es una **demo operativa** con módulos ligeros y trazabilidad real (IDs de residuo, categorías, flags y uso de MGS-1).  
-Fue diseñada como **esqueleto escalable**: los mismos puntos de extensión que hoy alimentan el generador pueden acoplarse a
-pipelines de datos, modelos avanzados y orquestación industrial sin reescribir la app.  
-**Meta**: convertir la basura en *supply chain in-situ*, con IA que aprende en cada corrida y reduce agua/energía/tiempo/costo.
-
-### 1) Estado actual (v1 demo)
-- **Arquitectura modular**: `app/modules/*` separa UI, IO, generador, scoring, explicabilidad y export.
-- **Trazabilidad**: cada candidato guarda `source_ids`, `source_categories`, `source_flags` y `regolith_pct`.
-- **Compatibilidad de datos**: normalización robusta (nombres de columna variables), enfoque *schema-first* simple.
-- **Explicabilidad**: score multi-objetivo transparente + desglose por componentes (función, agua, energía, crew, seguridad).
-- **Seguridad**: reglas “hard-stop” (sin incineración, evitar PFAS/microplásticos), y checks de coherencia básica por proceso.
-
-### 2) Arquitectura para escalar (cómo se vuelve cada vez más inteligente)
-**Plano de datos (Data Plane)**
-- **Ingesta**: CSV/JSON hoy → **Parquet** en **objeto/MinIO** o **S3**, versión de datos por corrida (data lineage).
-- **Contratos de datos**: `pydantic`/`msgspec` para validar lotes, procesos y targets (rompe si no cumple -> evitar “data drift”).
-- **Catálogo**: `PostgreSQL/pgvector` para búsquedas semánticas de materiales/flags y `DuckDB` para análisis *in-process*.
-- **Streaming**: `Kafka/Redpanda` para telemetría de ensayos (tiempo real) y bitácoras de procesos (IoT/OPC-UA/ROS puenteados).
-
-**Plano de modelos (Model Plane)**
-- **Surrogates de propiedades**: de “heurísticas ligeras” → a **GNNs** (material graphs), **XGBoost/TabTransformer** (tabular),
-  y **Physics-Informed ML** (PIML) para rigidez/porosidad/estanqueidad condicionadas al proceso.
-- **Incertidumbre**: **ensembles**, **MC Dropout**, **conformal prediction** → graficar bandas de confianza y *risk-aware scoring*.
-- **Optimización**: **Bayesian Optimization** (Ax/BoTorch) para receta/proceso bajo límites (agua/kWh/crew),
-  más **solvers con restricciones** (MILP/CP-SAT) para factibilidad operativa (turnos, kg/lote, disponibilidad).
-- **Ciclo activo**: **Active Learning** y **Bayesian Experimental Design** que selecciona el *próximo experimento* de mayor valor.
-
-**Plano de control (Control Plane)**
-- **MLOps**: entrenamiento/registro con **MLflow** o **Weights & Biases**, versionado de datasets y de artefactos.
-- **Orquestación**: **Airflow/Prefect** para pipelines de ingesta, feature store, entrenamiento y despliegue continuo (CD).
-- **Serving**: **FastAPI** + **ONNX Runtime/TensorRT** para inferencia acelerada (CPU/GPU/Jetson), cola con **Redis**.
-- **Edge/Flight**: empaquetado **OCI** con perfiles reproducibles (SBOM), estrategia *graceful degradation* y *circuit breakers*.
-
-### 3) Seguridad, fiabilidad y compliance (misión crítica)
-- **Guardrails de proceso**: políticas *deny-by-default* para incineración y sustancias críticas; whitelists por hábitat.
-- **Provenance**: hash de datasets y modelos, **audit log** por corrida, exportables a JSON/CSV (ya presente en demo).
-- **Testing y validación**: *golden datasets*, *shadow mode* para nuevos modelos, *canary releases* y *rollbacks* atómicos.
-- **Resiliencia**: timeouts, reintento exponencial para ingestas/sensórica, *data gap filling* y *late data handling*.
-
-### 4) Interoperabilidad con infraestructura de misión
-- **Protocolos**: OPC-UA/ROS para células robóticas, **ISA-95/88** para integración MES/SCADA.
-- **Digital Twin**: simulación *in-silico* (DEM/FEM simplificada) para priorizar ensayos con mayor valor esperado.
-- **Compatibilidad NASA**: mapeo a taxonomías *Non-Metabolic Waste*, ingeniería de materiales (MGS-1) y formatos estándar.
-
-### 5) ¿Por qué puede revolucionar Marte y la Tierra?
-- **Marte (ISRU real)**: convertir *lo que sobra* en *lo que falta* con costo marginal casi nulo en logística interplanetaria.
-- **Tierra (economía circular)**: recetas trasladables a residuos complejos (multicapa/espumas), cierre de ciclos en bases remotas,
-  minería urbana y descarbonización por **reducción de materia virgen + energía**.
-- **Aprendizaje compuesto**: cada base/hábitat entrena un pedacito → federado, con privacidad y *model averaging*.
-
-### 6) Roadmap por etapas (claro y accionable)
-**T-0 (demo+)**  
-- Persistir corridas en DuckDB/Parquet, MLflow local, bandas de confianza visuales, export de *experiment design*.
-
-**T-1 (MVP productivo)**  
-- FastAPI + ONNX serving, BO con restricciones, pgvector para materiales, Airflow para pipelines diarios, auditoría completa.
-
-**T-2 (Flight-ready)**  
-- Edge GPU (TensorRT), active learning en lazo cerrado, integración OPC-UA/ROS, digital twin ligero y canary en campo.
-
-**T-3 (Programa)**  
-- Federated learning entre hábitats, planificación multi-planta, optimización global de recursos y logística inversa.
-
-### 7) Cómo REX-AI se “vuelve más inteligente” (de verdad)
-1. **Captura** datos crudos de cada corrida (input → receta → proceso → salida).  
-2. **Valida** con contratos de datos y los guarda versionados.  
-3. **Etiqueta/Enriquece** (features, contexto, condiciones de proceso).  
-4. **Re-entrena** surrogates con incertidumbre y compara vs. “golden”.  
-5. **Optimiza** próximos experimentos (mínimo costo, máximo aprendizaje).  
-6. **Despliega** modelos certificados; deja bitácora y *rollbacks*.  
-7. **Repite** (cada ciclo reduce agua/kWh/crew y mejora score/seguridad).
-
-> **Mensaje al jurado**: lo que hoy ves corriendo en Streamlit ya implementa trazabilidad, reglas y explicabilidad.
-> Cambiar de “heurísticas” a **modelos avanzados** es un swap controlado en `modules/generator.py` y `modules/explain.py`,
-> con el resto de la arquitectura (datos/MLOps/serving) ya preparada para crecer sin romper la UX ni la seguridad.
-""")
-
-# === Extensión criolla para Don Pepe & Doña Marta ===
-
-st.markdown("## 🤠 REX-AI explicado para Don Pepe y Doña Marta")
-
-with st.container():
+with colB:
     st.markdown("""
-    **Imaginate esto:**  
-    Estás en tu casa en Marte (sí, en Marte). Vivís en un hábitat que parece un galpón futurista.  
-    Todos los días, la tripulación junta **bolsas, guantes, telitas, espumas raras** y cosas que sobran de la vida diaria.  
-    Acá en la Tierra esos residuos molestan. Allá arriba, en Marte… **son oro**: no podés traer un container nuevo desde Buenos Aires porque sale miles de millones.
+<div class="callout small">
+<b>Checklist de datos</b><br>
+• <code>data/waste_inventory_sample.csv</code><br>
+• <code>data/process_catalog.csv</code><br>
+• <code>data/targets_presets.json</code><br>
+</div>
+""", unsafe_allow_html=True)
 
-    ### ¿Qué hace hoy REX-AI?
-    - **Arma el inventario**: como tu alacena, pero de basura espacial.
-    - **Elige un objetivo**: “Necesito un contenedor, un utensilio, una pieza interior o una herramienta”.
-    - **Genera recetas**: mezcla los residuos con procesos que tenemos (laminar, sinterizar con regolito, reusar kits).
-    - **Muestra resultados**: te dice cuánta agua, energía y tiempo de crew vas a gastar, y qué tan bien queda.
+# ================== Qué hace (según modo) ==================
+st.markdown("#### ¿Qué hace REX-AI?")
 
-    > Es como un recetario de cocina: “con esta espuma y estas bolsitas podemos armar una tablita útil en 25 minutos con poca energía”.
+if mode:
+    # Modo Ingeniero
+    st.markdown("""
+- **Ingesta robusta** de inventario (normalización de columnas, detección de <em>problemáticos</em>).
+- **Heurísticas de selección de proceso** (P02 laminar multicapa, P03 sinter + MGS-1, P04 reuso CTB).
+- **Propiedades predichas** (rigidez, estanqueidad, masa final) y costos de recursos (kWh, L agua, crew-min).
+- **Score multi-objetivo** transparente: compatibilidad con target + penalizaciones por recursos + bonus por “consumir problemáticos”.
+- **Trazabilidad NASA**: cada candidato guarda <code>source_ids</code>, <code>source_categories</code>, <code>source_flags</code> y <code>regolith_pct</code>.
+""")
+else:
+    # Modo Criollo
+    st.markdown("""
+- **Ordena la alacena** de basura espacial y marca lo que más molesta (⚠️ problemáticos).
+- **Te sugiere la receta** y la forma de cocinarla (proceso), sin gastar de más agua ni energía.
+- **Te dice cómo va a salir** (qué tan firme, qué tan estanco) y cuánto tiempo de crew te lleva.
+- **Te muestra el porqué** con puntajes fáciles y una ruta clara para fabricar.
+- **Te deja todo anotado** (qué usaste, de dónde salió, si metiste regolito MGS-1).
+""")
 
-    ### ¿Qué va a hacer en el futuro?
-    - Va a **aprender solo**: cada vez que probás una receta, guarda lo que pasó y ajusta la próxima.
-    - Va a ser **como un maestro pizzero**: sabe que si ponés más levadura sube más rápido, y si ponés menos queda más chatito.  
-      Solo que acá es con plásticos, espumas y regolito.
-    - Va a poder **optimizar todo el hábitat**: menos agua usada, menos horas de astronauta perdidas, menos energía gastada.
-    - Y encima, lo que se aprende en Marte **sirve en la Tierra**: para que tu barrio pueda reciclar mejor esas bolsas que nadie quiere.
+# ================== Flujo de misión (con navegación) ==================
+st.markdown("#### Flujo de misión (paso a paso)")
+st.markdown("""
+<div class="grid">
+  <div class="card"><h3>1) Inventario</h3><p>Subí/edita residuos, detectamos <b>problemáticos</b> y masa/volumen.</p></div>
+  <div class="card"><h3>2) Objetivo</h3><p>Elegí el producto (Container, Tool...) y límites de agua/energía/crew.</p></div>
+  <div class="card"><h3>3) Generador</h3><p>REX-AI arma recetas que <i>consumen</i> problemáticos y elige procesos coherentes.</p></div>
+  <div class="card"><h3>4) Resultados</h3><p>Trade-offs, Sankey, checklist y métricas clave para fabricar y evaluar.</p></div>
+</div>
+""", unsafe_allow_html=True)
 
-    ### ¿Por qué es entretenido?
-    Porque no es un Excel aburrido:  
-    - Ves gráficos coloridos como si fueran los tableros de SpaceX.  
-    - Tenés botoncitos que te llevan paso a paso.  
-    - Podés jugar a comparar recetas, ver cuál gasta menos agua, cuál hace la pieza más firme.  
-    - Y hasta te dice **“ojo con esta espuma, es problemática”** con un ícono rojo ⚠️.
+colFlowA, colFlowB = st.columns([1.2, 1])
+with colFlowA:
+    st.markdown("###### Ir directo a…")
+    st.page_link("pages/1_Inventory_Builder.py", label="🧱 1) Inventory Builder", icon="🧱")
+    st.page_link("pages/2_Target_Designer.py", label="🎯 2) Target Designer", icon="🎯")
+    st.page_link("pages/3_Generator.py", label="⚙️ 3) Generator", icon="⚙️")
+    st.page_link("pages/4_Results_and_Tradeoffs.py", label="📊 4) Results & Trade-offs", icon="📊")
+with colFlowB:
+    st.markdown("###### O explorar herramientas avanzadas")
+    st.page_link("pages/5_Compare_and_Explain.py", label="🧪 5) Compare & Explain", icon="🧪")
+    st.page_link("pages/6_Pareto_and_Export.py", label="📤 6) Pareto & Export", icon="📤")
+    st.page_link("pages/7_Scenario_Playbooks.py", label="📚 7) Scenario Playbooks", icon="📚")
+    st.page_link("pages/8_Feedback_and_Impact.py", label="📝 8) Feedback & Impact", icon="📝")
+    st.page_link("pages/9_Capacity_Simulator.py", label="🧮 9) Capacity Simulator", icon="🧮")
 
-    ### ¿Qué significa para vos?
-    - Si sos ingeniero, es un simulador con data dura.  
-    - Si sos aprendiz, es un juego serio donde aprendés reciclando.  
-    - Y si sos Doña Marta, es como abrir la heladera y que una app te diga cómo hacer una tarta con lo que tenés.
-    """)
+# ================== Por qué importa (con ejemplos rápidos) ==================
+st.markdown("#### ¿Por qué importa?")
+st.markdown("""
+- **Crew-time**: cada minuto ahorrado vale millones (logística/seguridad).  
+- **Recursos**: agua y energía son oro en Marte; el score penaliza excesos por diseño.  
+- **Materiales**: convertir “lo que sobra” en “lo que falta” reduce dependencia de envíos desde la Tierra.  
+- **Seguridad**: sin incineración, evitando PFAS/microplásticos, con guardrails de proceso visibles.
 
-    st.success("En criollo: REX-AI agarra basura que nadie quiere y la transforma en cosas útiles. Hoy te muestra la idea. Mañana va a ser el **chef inteligente de Marte** que decide cómo cocinar cada residuo para que la tripulación siempre tenga lo que necesita.")
+**Ejemplos express**  
+• Pouches PE–PET–Al + Laminar (P02) → lámina con buena estanqueidad para compartimentos.  
+• ZOTEK F30 (espuma) + Sinter MGS-1 (P03) → panel rígido/estructural ligero.  
+• EVA/CTB + Reuse Kit (P04) → reconfig de hardware y particiones internas.
+""")
 
+# ================== Cierre: ruta de exploración ==================
+st.markdown("---")
+st.caption("Ruta sugerida: 1) Inventario → 2) Objetivo → 3) Generador → 4) Resultados → 5) Comparar → 6) Pareto & Export → 7) Playbooks → 8) Feedback & Impact → 9) Capacity Simulator")
+
+# ================== Extra: Mensaje de claridad técnica (confianza para el jurado) ==================
+with st.expander("🔎 Transparencia técnica (para el jurado)"):
+    st.markdown("""
+**Qué está pasando bajo el capó**  
+- Los módulos de datos normalizan columnas y etiquetan <em>problemáticos</em> con reglas claras.  
+- El generador usa heurísticas determinísticas para elegir procesos y calcular recursos/props (demo).  
+- Los candidatos guardan trazabilidad completa (IDs/categorías/flags), y cuando el proceso es P03 suman <b>regolito MGS-1</b>.  
+- Los gráficos y tablas de todas las páginas **leen el estado real** (inventario, target, candidatos, seleccionado).  
+- En un siguiente upgrade, se pueden reemplazar heurísticas por **surrogates ML** y optimizadores con incertidumbre, sin romper UX.
+""")
