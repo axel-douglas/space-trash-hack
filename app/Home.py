@@ -16,42 +16,55 @@ st.set_page_config(
     layout="wide"
 )
 
-# ---------- Estilos (seguros) ----------
+# ============== Estilos SpaceX-like (seguros) ==============
 st.markdown("""
 <style>
 :root{
-  --bd: rgba(130,140,160,.25);
-  --glass: linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02));
+  --bd: rgba(130,140,160,.28);
+  --ink: rgba(230,240,255,.95);
 }
-.hero{border:1px solid var(--bd); border-radius:22px; padding:24px;
-      background: radial-gradient(1200px 380px at 20% -10%, rgba(80,120,255,.10), transparent);}
-.hero h1{margin:0 0 6px 0}
-.hero .kicker{opacity:.8; letter-spacing:.2px; font-size:.95rem; margin-bottom:6px}
+.hero{
+  border:1px solid var(--bd); border-radius:24px; padding:26px;
+  background:
+    radial-gradient(1000px 300px at 20% -10%, rgba(80,120,255,.10), transparent),
+    linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,0));
+}
+.hero h1{margin:.2rem 0 .3rem 0; letter-spacing:.2px}
+.hero p{font-size:1.05rem; opacity:.92; margin:0}
 
 .grid{display:grid; grid-template-columns: 1fr 1fr; gap:16px}
 .grid3{display:grid; grid-template-columns: 1fr 1fr 1fr; gap:16px}
-.card{border:1px solid var(--bd); border-radius:18px; padding:18px; background:var(--glass)}
-.card h3{margin:.1rem 0 .35rem 0}
-.small{font-size:.95rem; opacity:.92}
-.micro{font-size:.86rem; opacity:.85}
-.hr{height:1px; background:var(--bd); margin:10px 0 14px 0}
 
-.kpi{border:1px solid var(--bd); border-radius:16px; padding:14px; background:var(--glass)}
-.kpi h4{margin:0 0 4px 0; font-size:.95rem; opacity:.8}
-.kpi .v{font-size:1.45rem; font-weight:800; letter-spacing:.2px}
+.card{
+  border:1px solid var(--bd);
+  border-radius:18px; padding:18px; background:rgba(255,255,255,.02)
+}
+.card h3{margin:.1rem 0 .25rem 0}
+.card p{margin:.2rem 0 .4rem 0; opacity:.95}
 
-.step{border-left:4px solid rgba(80,120,255,.5); padding-left:12px; margin-bottom:8px}
-.pill{display:inline-block; padding:4px 10px; border-radius:999px; font-weight:700; font-size:.78rem;
-      border:1px solid var(--bd); margin-right:6px}
+.kpi{border:1px solid var(--bd); border-radius:16px; padding:16px;}
+.kpi h4{margin:0 0 6px 0; font-size:.94rem; opacity:.8}
+.kpi .v{font-size:1.5rem; font-weight:800; letter-spacing:.2px}
+
+.pill{
+  display:inline-block; padding:4px 10px; border-radius:999px; font-weight:700; font-size:.78rem;
+  border:1px solid var(--bd); margin-right:6px
+}
 .pill.ok{background:#e8f7ee; color:#136c3a; border-color:#b3e2c4}
 .pill.info{background:#e7f1ff; color:#174ea6; border-color:#c6dcff}
 .pill.warn{background:#fff3cd; color:#8a6d1d; border-color:#ffe69b}
-blockquote{margin:0; padding:8px 12px; border-left:3px solid rgba(130,140,160,.45); background:rgba(255,255,255,.03); border-radius:8px}
-code.inline{background:rgba(130,140,160,.15); padding:1px 6px; border-radius:6px}
+
+.lead{font-size:1.05rem; opacity:.96}
+.small{font-size:.92rem; opacity:.9}
+.center{text-align:center}
+.bignum{font-size:2.2rem; font-weight:800; letter-spacing:.3px}
+hr.s{
+  border:0; border-top:1px solid var(--bd); margin:16px 0 6px 0;
+}
 </style>
 """, unsafe_allow_html=True)
 
-# ---------- Encabezado ----------
+# ============== Encabezado ==============
 logo_svg = ROOT / "app" / "static" / "logo_rexai.svg"
 cols = st.columns([0.15, 0.85])
 with cols[0]:
@@ -61,158 +74,154 @@ with cols[1]:
     st.title("REX-AI Mars — Mission Hub")
     st.caption("Recycling & Experimentation eXpert — Jezero Base")
 
-# ---------- HERO: Storytelling + promesa ----------
+# ============== HERO: ¿Qué va a probar el jurado? ==============
 st.markdown("""
 <div class="hero">
-  <div class="kicker">CONOCE A <b>REX-AI</b>, LA TECNOLOGÍA QUE LO HACE POSIBLE</div>
-  <h1>Basura espacial → Piezas útiles. En serio.</h1>
-  <div class="small">
-    Bolsas multicapa que nadie quiere reciclar, espumas ZOTEK F30 tercas, textiles EVA/CTB y guantes de nitrilo. 
-    <b>REX-AI</b> las mira, entiende el objetivo (p. ej. un <i>Container</i> con buena rigidez y estanqueidad), 
-    y propone <b>recetas+procesos</b> que minimizan <b>agua</b>, <b>energía</b> y <b>tiempo de crew</b>. 
-    Si el proceso es <b>P03</b>, inyecta <b>MGS-1</b> (regolito de Jezero) como carga mineral. 
-  </div>
+  <h1>Conocé a REX-AI, la tecnología que lo hace posible</h1>
+  <p class="lead">
+    Un “copiloto” de ingeniería que toma <b>residuos inorgánicos</b> y los transforma en <b>piezas útiles</b> dentro de un hábitat,
+    minimizando <b>agua, energía y tiempo de tripulación</b>. Sin incineración. Con <b>MGS-1</b> cuando el proceso lo pide.
+  </p>
   <div style="margin-top:10px">
     <span class="pill info">Optimización multi-objetivo</span>
-    <span class="pill info">Trazabilidad de residuos (IDs, flags)</span>
-    <span class="pill ok">Sin incineración / PFAS a raya</span>
+    <span class="pill info">Procesos P02/P03/P04 (catálogo)</span>
+    <span class="pill ok">Trazabilidad NASA end-to-end</span>
   </div>
 </div>
 """, unsafe_allow_html=True)
 
-st.markdown("")
-
-# ---------- Estado del sistema ----------
+# ============== Estado del sistema (en vivo) ==============
+st.markdown("### Estado de misión (en vivo)")
+c1, c2, c3, c4 = st.columns(4)
 data_ok = (ROOT / "data" / "waste_inventory_sample.csv").exists()
 proc_ok = (ROOT / "data" / "process_catalog.csv").exists()
 tgt_ok  = (ROOT / "data" / "targets_presets.json").exists()
-c1, c2, c3, c4 = st.columns(4)
 with c1:
-    st.markdown('<div class="kpi"><h4>Inventario</h4><div class="v">{}</div><div class="micro">waste_inventory_sample.csv</div></div>'.format("✅" if data_ok else "❌"), unsafe_allow_html=True)
+    st.markdown(f'<div class="kpi"><h4>Inventario</h4><div class="v">{"✅" if data_ok else "❌"}</div></div>', unsafe_allow_html=True)
 with c2:
-    st.markdown('<div class="kpi"><h4>Procesos</h4><div class="v">{}</div><div class="micro">process_catalog.csv</div></div>'.format("✅" if proc_ok else "❌"), unsafe_allow_html=True)
+    st.markdown(f'<div class="kpi"><h4>Procesos</h4><div class="v">{"✅" if proc_ok else "❌"}</div></div>', unsafe_allow_html=True)
 with c3:
-    st.markdown('<div class="kpi"><h4>Targets</h4><div class="v">{}</div><div class="micro">targets_presets.json</div></div>'.format("✅" if tgt_ok else "❌"), unsafe_allow_html=True)
+    st.markdown(f'<div class="kpi"><h4>Targets</h4><div class="v">{"✅" if tgt_ok else "❌"}</div></div>', unsafe_allow_html=True)
 with c4:
-    st.markdown('<div class="kpi"><h4>Modo</h4><div class="v">Demo ligera</div><div class="micro">Explicable por humanos</div></div>', unsafe_allow_html=True)
-
-st.caption("Archivos requeridos en `/data`: `waste_inventory_sample.csv`, `process_catalog.csv`, `targets_presets.json`.")
-
-st.markdown("---")
-
-# ---------- “Solo pregúntale a REX-AI” (criollo vs geek) ----------
-L, R = st.columns(2)
-with L:
-    st.subheader("Solo pregúntale a REX-AI (versión criolla)")
-    st.markdown("""
-<div class="step"><b>1) Contame qué querés fabricar</b>: elegís el objetivo y límites (agua, kWh, minutos de crew).</div>
-<div class="step"><b>2) REX-AI mira tu inventario</b>: detecta “problemáticos” (pouches PE-PET-Al, espumas ZOTEK F30, EVA/CTB, nitrilo, etc.).</div>
-<div class="step"><b>3) Propone recetas + proceso</b>: mezcla materiales y sugiere P02/P03/P04; si es P03, agrega <b>MGS-1</b>.</div>
-<div class="step"><b>4) Te muestra trade-offs</b>: score explicable, Sankey, recursos, seguridad y checklist de fabricación.</div>
-""", unsafe_allow_html=True)
-    st.markdown('<blockquote>Como reconstruir una pieza con <i>Legos™</i>, pero los ladrillos son residuos + regolito.</blockquote>', unsafe_allow_html=True)
-
-with R:
-    st.subheader("Dime cómo, pero a la manera geek")
-    st.markdown("""
-- **Pipeline**: `io` → `generator` → `process_planner` → `safety` → `explain/analytics` → `exporters`.
-- **Scoring**: compatibilidad con target + penalizaciones por recursos + <code class="inline">bonus</code> por “consumir problemáticos”.
-- **P03 (Sinter + MGS-1)**: inyecta 10–30% de MGS-1 → ↑rigidez, posible ↓estanq.; parámetros de proceso del catálogo.
-- **Trazabilidad**: cada candidato guarda `source_ids/categories/flags` para auditoría NASA.
-    """, unsafe_allow_html=True)
+    # KPIs rápidos desde session_state si existen
+    cand_count = len(st.session_state.get("candidates", []))
+    sel_ok = "✅" if st.session_state.get("selected") else "—"
+    st.markdown(
+        f'<div class="kpi"><h4>Run actual</h4>'
+        f'<div class="v">{cand_count} cand.</div>'
+        f'<div class="small">Seleccionado: {sel_ok}</div></div>',
+        unsafe_allow_html=True
+    )
+st.caption("Requeridos: `data/waste_inventory_sample.csv` · `process_catalog.csv` · `targets_presets.json`")
 
 st.markdown("---")
 
-# ---------- Flujo (4 pasos) + CTAs ----------
-st.subheader("Tu plan de vuelo (4 pasos)")
-gL, gR = st.columns([2, 1], gap="large")
-with gL:
+# ============== “Solo preguntale a REX” — storytelling + CTA ==============
+left, right = st.columns([1.4, 1])
+with left:
+    st.subheader("“Solo preguntale a REX” — ¿Cómo arranca todo?")
     st.markdown("""
-<div class="grid">
-  <div class="card">
-    <h3>1) Inventario</h3>
-    <div class="small">Editá el laboratorio: masas, flags y categorías. Resaltamos problemáticos que el sistema prioriza.</div>
-    <div class="hr"></div>
-    <div class="micro">Tip: duplicar filas simula lotes nuevos. Guardar antes de seguir.</div>
-  </div>
-  <div class="card">
-    <h3>2) Objetivo</h3>
-    <div class="small">Ajustá el target (Container/Utensil/Interior/Tool), pesos de rigidez/estanqueidad y límites (L, kWh, min).</div>
-    <div class="hr"></div>
-    <div class="micro">El escenario (Residence/Celebrations/Discoveries) filtra procesos y penaliza tiempo de crew si así lo pedís.</div>
-  </div>
-  <div class="card">
-    <h3>3) Generador</h3>
-    <div class="small">Crea de 3 a 12 candidatos. Si hay espumas o pouches, preferirá P02/P03; CTB/EVA va hacia P04.</div>
-    <div class="hr"></div>
-    <div class="micro">En P03, entra MGS-1: verás cómo sube rigidez y cambian recursos.</div>
-  </div>
-  <div class="card">
-    <h3>4) Resultados</h3>
-    <div class="small">Score desglosado, Sankey residuos→proceso→producto, checklist y badges de seguridad.</div>
-    <div class="hr"></div>
-    <div class="micro">Listo para comparar, exportar y planificar ejecución.</div>
-  </div>
-</div>
-""", unsafe_allow_html=True)
-
-with gR:
-    st.subheader("Ir ahora")
-    cA, cB = st.columns(2)
-    with cA:
-        if st.button("🧱 Inventario"):
+1) Cargás el **inventario real** (pouches multilayer, ZOTEK F30, EVA/CTB, nitrilo, Al).  
+2) Definís un **objetivo** (p.ej., *Container*) con límites de **agua/kWh/crew** y escenario.  
+3) El **Generador** propone **recetas + proceso** (P02/P03/P04), priorizando “consumir el problema”.  
+4) En **Resultados**, ves **trade-offs**, Sankey, checklist de fabricación y seguridad.  
+5) Luego comparás, haces Pareto, exportás planes, seguís playbooks, das feedback y simulas capacidad.
+""")
+with right:
+    st.subheader("Ir al flujo")
+    colA, colB = st.columns(2)
+    with colA:
+        if st.button("🧱 1) Inventario"):
             st.switch_page("pages/1_Inventory_Builder.py")
-        if st.button("⚙️ Generador"):
+        if st.button("⚙️ 3) Generador"):
             st.switch_page("pages/3_Generator.py")
-    with cB:
-        if st.button("🎯 Objetivo"):
+    with colB:
+        if st.button("🎯 2) Objetivo"):
             st.switch_page("pages/2_Target_Designer.py")
-        if st.button("📊 Resultados"):
+        if st.button("📊 4) Resultados"):
             st.switch_page("pages/4_Results_and_Tradeoffs.py")
 
-st.markdown("---")
+# ============== Dos modos: Humano / Geek ==============
+t1, t2 = st.tabs(["🧭 Dime cómo (modo humano)", "🧪 Dime cómo (modo geek)"])
 
-# ---------- “Aprende con feedback” ----------
-st.subheader("Feedback: la clave del aprendizaje humano-en-el-loop")
-F1, F2, F3 = st.columns(3)
-with F1:
+with t1:
     st.markdown("""
-<div class="card">
-  <h3>Probar y anotar</h3>
-  <div class="small">Después de fabricar, registra rigidez percibida, facilidad y problemas (bordes, olor, slip).</div>
-  <div class="hr"></div>
-  <div class="micro">Página <b>8) Feedback & Impact</b> consolida el historial y suma señales para iterar mejores pesos.</div>
-</div>
-""", unsafe_allow_html=True)
-with F2:
-    st.markdown("""
-<div class="card">
-  <h3>Métricas que importan</h3>
-  <div class="small">kWh, L de agua, minutos de crew y kg valorizados. Con eso priorizás qué proceso escalar.</div>
-  <div class="hr"></div>
-  <div class="micro">También exportás JSON/CSV del plan ganador en <b>6) Pareto & Export</b>.</div>
-</div>
-""", unsafe_allow_html=True)
-with F3:
-    st.markdown("""
-<div class="card">
-  <h3>Capacidad de línea</h3>
-  <div class="small">Simulá producción: lotes/turno, kg/lote y recursos. Visualizá el impacto por “sol” en <b>9) Capacity</b>.</div>
-  <div class="hr"></div>
-  <div class="micro">Ideal para planificar con restricciones reales del hábitat.</div>
-</div>
-""", unsafe_allow_html=True)
-
-st.markdown("---")
-
-# ---------- Nota técnica final (por qué esto impacta) ----------
-st.subheader("¿Por qué impacta a nivel ingeniería?")
-st.markdown("""
-- **Velocidad**: convierte inventarios caóticos en candidatos viables con trazabilidad y explicabilidad.
-- **Rigor**: alinea objetivos (función/recursos/seguridad) con catálogos de proceso y <b>MGS-1</b> cuando aplica.
-- **Decisión**: comparás, explicás trade-offs, exportás y ejecutás. El loop con feedback cierra la mejora continua.
+- **REX-AI entiende tu basura**: señala lo problemático y te sugiere qué proceso conviene.  
+- **No tira de la palanca fácil**: evita incineración y rutas “baratas” pero sucias.  
+- **Si aparece P03 (Sinter)**: suma **MGS-1** para darle rigidez a la pieza.  
+- **Te canta la posta** con un score simple de entender: cuánto cumple el objetivo, cuánto gasta y cuánto tiempo de crew pide.  
+- **Aprende contigo**: lo que guardes en *Feedback & Impact* alimenta iteraciones más atinadas.
 """)
 
+with t2:
+    st.markdown("""
+**Arquitectura y lógica clave**
+- **Módulos**  
+  `io` (I/O de datos), `generator` (recetas y proceso), `process_planner` (filtro por escenario y crew),  
+  `safety` (banderas), `explain` (score y desglose), `analytics` (Pareto), `exporters` (JSON/CSV).
+- **Scoring multi-objetivo (legible)**  
+  Similaridad con target (rigidez/estanqueidad) − penalizaciones (agua/kWh/crew) + bonus por masa “problemática” consumida.  
+- **MGS-1 explícito**  
+  Si `process_id == "P03"`, se inyecta `regolith_pct` (por defecto 0.2) y se ajustan propiedades (↑rigidez, cuidado con estanqueidad).  
+- **Trazabilidad NASA**  
+  Cada candidato guarda `source_ids/categories/flags` para auditoría; *no hay cajas negras*.
+""")
+
+st.markdown("---")
+
+# ============== Qué vas a encontrar — “plataforma REX-AI” ==============
+st.subheader("Qué vas a encontrar (plataforma REX-AI)")
+
+st.markdown("""
+<div class="grid3">
+  <div class="card">
+    <h3>Concept ↗︎</h3>
+    <p>Planteá el objetivo del producto con límites operativos (agua, kWh, crew) y escenario.</p>
+    <p class="small">Salida: un Target Spec verificable.</p>
+  </div>
+  <div class="card">
+    <h3>Discovery ↗︎</h3>
+    <p>Explorá combinaciones de residuos + procesos con heurísticas de compatibilidad y seguridad.</p>
+    <p class="small">Salida: candidatos ordenados por score + trazabilidad.</p>
+  </div>
+  <div class="card">
+    <h3>Elevate ↗︎</h3>
+    <p>Compará, armá Pareto 3D, exportá un plan ejecutable, corré playbooks y medí impacto.</p>
+    <p class="small">Salida: decisión explicada y lista para fabricar.</p>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+# ============== KPIs rápidos de la sesión (si existen) ==============
+st.markdown("### Telemetría de esta sesión")
+cA, cB, cC = st.columns(3)
+candidates = st.session_state.get("candidates", [])
+selected = st.session_state.get("selected")
+with cA:
+    st.markdown(f'<div class="kpi"><h4>Candidatos generados</h4><div class="v">{len(candidates)}</div></div>', unsafe_allow_html=True)
+with cB:
+    sel_txt = "Sí" if selected else "No"
+    st.markdown(f'<div class="kpi"><h4>Hay selección</h4><div class="v">{sel_txt}</div></div>', unsafe_allow_html=True)
+with cC:
+    # Target básico
+    t = st.session_state.get("target", {})
+    name = t.get("name", "—")
+    st.markdown(f'<div class="kpi"><h4>Target actual</h4><div class="v">{name}</div></div>', unsafe_allow_html=True)
+
+# ============== Playbook de prueba sugerido (guía al jurado) ==============
+st.markdown("---")
+st.subheader("Playbook de prueba sugerido para el jurado (5 minutos)")
+
+st.markdown("""
+**1)** Abrí **Inventario** y confirmá que hay pouches/foam/EVA/nitrilo/Al (los verás marcados como “problemáticos”).  
+**2)** En **Objetivo**, elegí *Container* y fijá límites razonables (p.ej., agua ≤ 0.2 L, energía ≤ 1.2 kWh, crew ≤ 30 min).  
+**3)** En **Generador**, pedí 6 opciones → seleccioná la que mejor balancee **score** y **seguridad**.  
+**4)** En **Resultados**, mirá el **desglose del score**, el **Sankey** y el **checklist** de fabricación.  
+**5)** En **Comparar** y **Pareto**, validá que la decisión esté respaldada por datos y exportá el plan.
+""")
+
+# ============== Cierres y navegación ==============
+st.markdown("---")
 st.caption(
     "Ruta completa: 1) Inventario → 2) Objetivo → 3) Generador → 4) Resultados → "
     "5) Comparar → 6) Pareto & Export → 7) Playbooks → 8) Feedback & Impact → 9) Capacity Simulator"
