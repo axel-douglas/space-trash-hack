@@ -211,3 +211,45 @@ pipelines de datos, modelos avanzados y orquestación industrial sin reescribir 
 > Cambiar de “heurísticas” a **modelos avanzados** es un swap controlado en `modules/generator.py` y `modules/explain.py`,
 > con el resto de la arquitectura (datos/MLOps/serving) ya preparada para crecer sin romper la UX ni la seguridad.
 """)
+
+# === Extensión criolla para Don Pepe & Doña Marta ===
+
+st.markdown("## 🤠 REX-AI explicado para Don Pepe y Doña Marta")
+
+with st.container():
+    st.markdown("""
+    **Imaginate esto:**  
+    Estás en tu casa en Marte (sí, en Marte). Vivís en un hábitat que parece un galpón futurista.  
+    Todos los días, la tripulación junta **bolsas, guantes, telitas, espumas raras** y cosas que sobran de la vida diaria.  
+    Acá en la Tierra esos residuos molestan. Allá arriba, en Marte… **son oro**: no podés traer un container nuevo desde Buenos Aires porque sale miles de millones.
+
+    ### ¿Qué hace hoy REX-AI?
+    - **Arma el inventario**: como tu alacena, pero de basura espacial.
+    - **Elige un objetivo**: “Necesito un contenedor, un utensilio, una pieza interior o una herramienta”.
+    - **Genera recetas**: mezcla los residuos con procesos que tenemos (laminar, sinterizar con regolito, reusar kits).
+    - **Muestra resultados**: te dice cuánta agua, energía y tiempo de crew vas a gastar, y qué tan bien queda.
+
+    > Es como un recetario de cocina: “con esta espuma y estas bolsitas podemos armar una tablita útil en 25 minutos con poca energía”.
+
+    ### ¿Qué va a hacer en el futuro?
+    - Va a **aprender solo**: cada vez que probás una receta, guarda lo que pasó y ajusta la próxima.
+    - Va a ser **como un maestro pizzero**: sabe que si ponés más levadura sube más rápido, y si ponés menos queda más chatito.  
+      Solo que acá es con plásticos, espumas y regolito.
+    - Va a poder **optimizar todo el hábitat**: menos agua usada, menos horas de astronauta perdidas, menos energía gastada.
+    - Y encima, lo que se aprende en Marte **sirve en la Tierra**: para que tu barrio pueda reciclar mejor esas bolsas que nadie quiere.
+
+    ### ¿Por qué es entretenido?
+    Porque no es un Excel aburrido:  
+    - Ves gráficos coloridos como si fueran los tableros de SpaceX.  
+    - Tenés botoncitos que te llevan paso a paso.  
+    - Podés jugar a comparar recetas, ver cuál gasta menos agua, cuál hace la pieza más firme.  
+    - Y hasta te dice **“ojo con esta espuma, es problemática”** con un ícono rojo ⚠️.
+
+    ### ¿Qué significa para vos?
+    - Si sos ingeniero, es un simulador con data dura.  
+    - Si sos aprendiz, es un juego serio donde aprendés reciclando.  
+    - Y si sos Doña Marta, es como abrir la heladera y que una app te diga cómo hacer una tarta con lo que tenés.
+    """)
+
+    st.success("En criollo: REX-AI agarra basura que nadie quiere y la transforma en cosas útiles. Hoy te muestra la idea. Mañana va a ser el **chef inteligente de Marte** que decide cómo cocinar cada residuo para que la tripulación siempre tenga lo que necesita.")
+
