@@ -1,3 +1,4 @@
+# app/pages/6_Pareto_and_Export.py
 # --- path guard para Streamlit Cloud ---
 import sys, pathlib
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -14,123 +15,123 @@ import plotly.graph_objects as go
 from app.modules.explain import compare_table
 from app.modules.analytics import pareto_front
 from app.modules.exporters import candidate_to_json, candidate_to_csv
-from app.modules.safety import check_safety  # para recalcular badge al seleccionar
+from app.modules.safety import check_safety  # recalcular badge al seleccionar
 
-# ⚠️ Debe ser la PRIMERA llamada
+# ⚠️ PRIMERA llamada
 st.set_page_config(page_title="Pareto & Export", page_icon="📤", layout="wide")
 
 # ======== estado requerido ========
-cands     = st.session_state.get("candidates", [])
-target    = st.session_state.get("target", None)
+cands  = st.session_state.get("candidates", [])
+target = st.session_state.get("target", None)
 state_sel = st.session_state.get("selected", None)
 
 if not cands or not target:
     st.warning("Generá opciones en **3) Generador** primero.")
     st.stop()
 
-# ======== estilo visual ========
+# ======== estilos (NASA/SpaceX-like) ========
 st.markdown("""
 <style>
-.kpi {border:1px solid rgba(128,128,128,0.25); border-radius:14px; padding:14px; margin-bottom:12px;}
-.kpi h3 {margin:0 0 6px 0; font-size:0.95rem; opacity:0.8;}
-.kpi .v {font-size:1.6rem; font-weight:700; letter-spacing:0.2px;}
-.kpi .hint {font-size:0.85rem; opacity:0.75;}
-.section-note {font-size:0.92rem; opacity:0.85;}
-.pill {display:inline-block; padding:3px 10px; border-radius:999px; font-weight:600; font-size:0.80rem; border:1px solid rgba(128,128,128,0.25);}
-.pill.ok {background:#e8f7ee; color:#136c3a; border-color:#b3e2c4;}
-.pill.info {background:#e7f1ff; color:#174ea6; border-color:#c6dcff;}
-.pill.warn {background:#fff3cd; color:#8a6d1d; border-color:#ffe69b;}
-.card {border:1px solid rgba(128,128,128,0.25); border-radius:14px; padding:14px;}
-h1, h2, h3 { letter-spacing:.2px }
+:root{ --bd: rgba(140,140,160,.28); --muted: rgba(255,255,255,.55); }
+.block{border:1px solid var(--bd); border-radius:16px; padding:16px;}
+.hero{border:1px solid var(--bd); border-radius:16px; padding:18px 18px 8px;
+      background: radial-gradient(1200px 380px at 20% -10%, rgba(80,120,255,.08), transparent);}
+.kpi{border:1px solid var(--bd); border-radius:14px; padding:14px; margin-bottom:10px;}
+.kpi h3{margin:0 0 6px 0; font-size:.95rem; opacity:.8}
+.kpi .v{font-size:1.6rem; font-weight:800; letter-spacing:.2px}
+.pill{display:inline-block; padding:4px 10px; border-radius:999px; font-weight:700; font-size:.78rem;
+      border:1px solid var(--bd); margin-right:6px}
+.pill.ok{background:#e8f7ee; color:#136c3a; border-color:#b3e2c4}
+.pill.info{background:#e7f1ff; color:#174ea6; border-color:#c6dcff}
+.pill.warn{background:#fff3cd; color:#8a6d1d; border-color:#ffe69b}
+.small{font-size:.92rem; opacity:.9}
+.legend{font-size:.86rem; opacity:.75}
+.section-title{margin-top:6px; margin-bottom:6px}
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("# 📤 Pareto & Export")
-st.caption("Todo lo que ves aquí usa **los candidatos reales generados**. Explora la **frontera de Pareto** (agua/energía/crew), mira **predicciones** y **exportá** el plan elegido.")
+# ======== HERO ========
+st.markdown("""
+<div class="hero">
+  <h1 style="margin:0 0 6px 0">📤 Pareto & Export</h1>
+  <div class="small" style="margin-bottom:10px">
+    Explorá el trade-off **Energía ↔ Agua ↔ Crew** con datos reales de tus candidatos.
+    Elegí uno y exportá el plan. Todo conectado al objetivo definido en <b>2) Target</b>.
+  </div>
+  <div class="legend">
+    <span class="pill info">Paso 1 — Explorar</span>
+    <span class="pill info">Paso 2 — Seleccionar</span>
+    <span class="pill ok">Paso 3 — Exportar</span>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
-# ======== tabla base y saneo robusto (derivado de candidates reales) ========
+# ======== tabla base (derivada de candidates reales) ========
 df_raw = compare_table(cands, target, crew_time_low=target.get("crew_time_low", False)).copy()
 
+# Normalización robusta de nombres
 rename_map = {}
 for col in df_raw.columns:
     low = col.lower().strip()
-    if low in ["energia (kwh)", "energía (kwh)", "energia kwh"]:
-        rename_map[col] = "Energía (kWh)"
-    if low in ["agua (l)", "agua l", "agua"]:
-        rename_map[col] = "Agua (L)"
-    if low in ["crew (min)", "crew min", "crew"]:
-        rename_map[col] = "Crew (min)"
-    if low in ["masa (kg)", "masa kg", "kg"]:
-        rename_map[col] = "Masa (kg)"
-    if low == "materiales":
-        rename_map[col] = "Materiales"
-    if low == "proceso":
-        rename_map[col] = "Proceso"
-    if low in ["opción","opcion"]:
-        rename_map[col] = "Opción"
-    if low == "score":
-        rename_map[col] = "Score"
+    if low in ["energia (kwh)", "energía (kwh)", "energia kwh"]: rename_map[col] = "Energía (kWh)"
+    if low in ["agua (l)", "agua l", "agua"]: rename_map[col] = "Agua (L)"
+    if low in ["crew (min)", "crew min", "crew"]: rename_map[col] = "Crew (min)"
+    if low in ["masa (kg)", "masa kg", "kg"]: rename_map[col] = "Masa (kg)"
+    if low in ["opción","opcion"]: rename_map[col] = "Opción"
+    if low == "materiales": rename_map[col] = "Materiales"
+    if low == "proceso": rename_map[col] = "Proceso"
+    if low == "score": rename_map[col] = "Score"
 df_raw.rename(columns=rename_map, inplace=True)
 
-for k in ["Opción","Score","Proceso","Materiales","Energía (kWh)","Agua (L)","Crew (min)"]:
-    if k not in df_raw.columns:
-        df_raw[k] = np.nan
-
-df_raw["Materiales"] = df_raw["Materiales"].apply(
-    lambda v: ", ".join(v) if isinstance(v, (list, tuple)) else (str(v) if pd.notna(v) else "")
-)
+# Tipos y saneo
 for k in ["Score","Energía (kWh)","Agua (L)","Crew (min)","Masa (kg)"]:
-    if k in df_raw.columns:
-        df_raw[k] = pd.to_numeric(df_raw[k], errors="coerce")
+    if k in df_raw: df_raw[k] = pd.to_numeric(df_raw[k], errors="coerce")
+if "Materiales" in df_raw:
+    df_raw["Materiales"] = df_raw["Materiales"].apply(
+        lambda v: ", ".join(v) if isinstance(v, (list,tuple)) else (str(v) if pd.notna(v) else "")
+    )
 
 df_plot = df_raw.dropna(subset=["Energía (kWh)","Agua (L)","Crew (min)","Score"]).copy()
 
 # ======== KPIs ========
 colA, colB, colC, colD = st.columns(4)
-with colA:
-    st.markdown(f'<div class="kpi"><h3>Opciones válidas</h3><div class="v">{len(df_plot)}</div><div class="hint">Con métricas completas</div></div>', unsafe_allow_html=True)
-with colB:
-    st.markdown(f'<div class="kpi"><h3>Score máximo</h3><div class="v">{df_plot["Score"].max():.2f}</div><div class="hint">Tope actual</div></div>', unsafe_allow_html=True)
-with colC:
-    st.markdown(f'<div class="kpi"><h3>Mín. Agua</h3><div class="v">{df_plot["Agua (L)"].min():.2f} L</div><div class="hint">Menor consumo</div></div>', unsafe_allow_html=True)
-with colD:
-    st.markdown(f'<div class="kpi"><h3>Mín. Energía</h3><div class="v">{df_plot["Energía (kWh)"].min():.2f} kWh</div><div class="hint">Menor consumo</div></div>', unsafe_allow_html=True)
+with colA: st.markdown(f'<div class="kpi"><h3>Opciones válidas</h3><div class="v">{len(df_plot)}</div></div>', unsafe_allow_html=True)
+with colB: st.markdown(f'<div class="kpi"><h3>Score máximo</h3><div class="v">{df_plot["Score"].max():.2f}</div></div>', unsafe_allow_html=True)
+with colC: st.markdown(f'<div class="kpi"><h3>Mín. Agua</h3><div class="v">{df_plot["Agua (L)"].min():.2f} L</div></div>', unsafe_allow_html=True)
+with colD: st.markdown(f'<div class="kpi"><h3>Mín. Energía</h3><div class="v">{df_plot["Energía (kWh)"].min():.2f} kWh</div></div>', unsafe_allow_html=True)
 
-# ======== What-If de límites (todo deriva de df_plot) ========
-st.markdown("### 🎛️ What-If (filtro visual de límites)")
+# ======== What-If de límites ========
+st.markdown("### 🎛️ What-If (filtro visual)")
 f1, f2, f3 = st.columns(3)
-with f1:
-    lim_e = st.number_input("Límite de Energía (kWh)", min_value=0.0, value=float(target["max_energy_kwh"]), step=0.1)
-with f2:
-    lim_w = st.number_input("Límite de Agua (L)", min_value=0.0, value=float(target["max_water_l"]), step=0.1)
-with f3:
-    lim_c = st.number_input("Límite de Crew (min)", min_value=0.0, value=float(target["max_crew_min"]), step=1.0)
+with f1: lim_e = st.number_input("Límite de Energía (kWh)", 0.0, 999.0, float(target["max_energy_kwh"]), 0.1)
+with f2: lim_w = st.number_input("Límite de Agua (L)", 0.0, 999.0, float(target["max_water_l"]), 0.1)
+with f3: lim_c = st.number_input("Límite de Crew (min)", 0.0, 999.0, float(target["max_crew_min"]), 1.0)
 
-mask_ok = (df_plot["Energía (kWh)"] <= lim_e) & (df_plot["Agua (L)"] <= lim_w) & (df_plot["Crew (min)"] <= lim_c)
+mask_ok = (df_plot["Energía (kWh)"]<=lim_e) & (df_plot["Agua (L)"]<=lim_w) & (df_plot["Crew (min)"]<=lim_c)
 df_view = df_plot.copy()
 df_view["Dentro_límites"] = np.where(mask_ok, "Dentro de límites", "Excede límites")
 
-# ======== Frontera de Pareto (sobre datos reales) ========
+# ======== Frontera de Pareto ========
 try:
-    front_idx = pareto_front(df_plot)  # índices de df_plot
+    front_idx = pareto_front(df_plot)
     front_mask = df_plot.index.isin(front_idx)
 except Exception:
+    # fallback estable si el usuario sube columnas raras
     front_mask = df_plot["Score"].rank(ascending=False, method="first") <= 5
 df_view["Pareto"] = np.where(front_mask, "Pareto", "No Pareto")
+df_view["ScorePos"] = np.clip(df_view["Score"].fillna(0.0), 0.01, None)
 
-# ======== Tabs ========
 tab_pareto, tab_trials, tab_objectives, tab_export = st.tabs(
     ["🌌 Pareto Explorer", "🔮 Predicciones de ensayo (demo)", "🎯 Objetivos por eje", "📦 Export Center"]
 )
 
-# ---------- TAB 1: PARETO ----------
+# ---------- TAB 1: Pareto Explorer ----------
 with tab_pareto:
-    st.markdown("#### Explorador 3D (Energía vs Agua vs Crew)")
-    df_view["ScorePos"] = np.clip(df_view["Score"].fillna(0.0), 0.01, None)
+    st.markdown('<h3 class="section-title">Explorador 3D</h3>', unsafe_allow_html=True)
     usable = df_view.dropna(subset=["Energía (kWh)","Agua (L)","Crew (min)","ScorePos"]).copy()
 
     if usable.empty:
-        st.info("No hay suficientes datos válidos para dibujar el 3D.")
+        st.info("No hay suficientes datos para graficar.")
     else:
         fig3d = px.scatter_3d(
             usable,
@@ -141,109 +142,142 @@ with tab_pareto:
         fig3d.update_layout(margin=dict(l=10,r=10,t=10,b=10), height=520)
         st.plotly_chart(fig3d, use_container_width=True)
 
-        st.markdown("##### Tabla — Frontera de Pareto")
-        table_pareto = usable[usable["Pareto"] == "Pareto"].sort_values("Score", ascending=False)
-        st.dataframe(table_pareto[["Opción","Score","Proceso","Materiales","Energía (kWh)","Agua (L)","Crew (min)"]],
-                     use_container_width=True, hide_index=True)
+    st.markdown("""
+<div class="legend">
+<b>Cómo leerlo (criollo):</b> querés puntos <b>abajo/izquierda</b> (menos energía/agua) y <b>adelante</b> (menos crew).
+La capa “Pareto” marca los que no pueden mejorarse en un eje sin empeorar otro.
+</div>
+""", unsafe_allow_html=True)
 
-        # ---- Selección del candidato (basada en datos reales) ----
-        st.markdown("##### Seleccionar candidato desde la frontera")
-        opciones = table_pareto["Opción"].astype(int).tolist()
-        if opciones:
-            pick_opt = st.selectbox("Elegí Opción #", opciones, index=0, key="pick_from_pareto")
-            if st.button("✅ Usar como seleccionado"):
-                idx = int(pick_opt) - 1
-                if 0 <= idx < len(cands):
-                    selected = cands[idx]
-                    # Recalcular banderas de seguridad reales
-                    flags = check_safety(selected["materials"], selected["process_name"], selected["process_id"])
-                    st.session_state["selected"] = {"data": selected, "safety": flags}
-                    st.success(f"Candidato #{pick_opt} seleccionado. Ya podés ir a **4) Resultados** o **5) Comparar & Explicar**.")
-                else:
-                    st.warning("Opción fuera de rango respecto a la lista de candidates.")
+    st.markdown('<h4 class="section-title">Tabla — Frontera de Pareto</h4>', unsafe_allow_html=True)
+    table_pareto = df_view[df_view["Pareto"]=="Pareto"].sort_values("Score", ascending=False)
+    st.dataframe(
+        table_pareto[["Opción","Score","Proceso","Materiales","Energía (kWh)","Agua (L)","Crew (min)"]],
+        use_container_width=True, hide_index=True
+    )
 
-    st.markdown('<span class="pill info">Tip</span> En el 3D buscá **abajo/izquierda** (menos agua/energía) y **adelante** (menos crew). Si estás en modo *Crew-time Low*, priorizá el eje **Crew**.',
-                unsafe_allow_html=True)
+    st.markdown('<h4 class="section-title">Seleccionar candidato</h4>', unsafe_allow_html=True)
+    opciones = table_pareto["Opción"].astype(int).tolist()
+    if opciones:
+        pick_opt = st.selectbox("Elegí Opción #", opciones, index=0, key="pick_from_pareto")
+        if st.button("✅ Usar como seleccionado"):
+            idx = int(pick_opt) - 1
+            if 0 <= idx < len(cands):
+                selected = cands[idx]
+                flags = check_safety(selected["materials"], selected["process_name"], selected["process_id"])
+                st.session_state["selected"] = {"data": selected, "safety": flags}
+                st.success(f"Candidato #{pick_opt} seleccionado. Abrí **4) Resultados** o **5) Comparar & Explicar**.")
+            else:
+                st.warning("Opción fuera de rango respecto a la lista de candidates.")
+    else:
+        st.info("No hay puntos en la frontera con datos completos.")
 
-# ---------- TAB 2: PREDICCIONES DE ENSAYO (DEMO, sobre df_view real) ----------
+# ---------- TAB 2: Predicciones de ensayo (demo conectada a datos) ----------
 with tab_trials:
-    st.markdown("#### Score predictions — barras de confianza")
-    st.caption("Usa los **scores reales** de tus candidatos y aplica un intervalo de confianza proporcional (demo visual).")
+    st.markdown('<h3 class="section-title">Score predictions — barras de confianza</h3>', unsafe_allow_html=True)
+    st.caption("Usa los **scores reales** y les aplica un ±CI porcentual para visualizar la variabilidad esperable (demo).")
 
     ci_pct = st.slider("Intervalo de confianza (± % de Score)", 5, 50, 20, step=5)
-    top_n  = st.slider("Mostrar Top-N por Score", 3, max(3, len(df_view)), min(8, len(df_view)))
+    top_n  = st.slider("Top-N por Score", 3, max(3, len(df_view)), min(8, len(df_view)))
 
     df_trials = df_view.sort_values("Score", ascending=False).head(top_n).copy()
-    df_trials["y"] = df_trials["Score"]
-    df_trials["y_err"] = (df_trials["Score"].abs() * (ci_pct/100.0)).clip(lower=0.05)
-
     if df_trials.empty:
         st.info("No hay candidatos suficientes para graficar.")
     else:
+        yerr = (df_trials["Score"].abs() * (ci_pct/100.0)).clip(lower=0.05)
         fig = go.Figure()
         fig.add_trace(go.Scatter(
             x=df_trials["Opción"].astype(str),
-            y=df_trials["y"],
-            error_y=dict(type='data', array=df_trials["y_err"], thickness=1.2, width=4),
+            y=df_trials["Score"],
+            error_y=dict(type='data', array=yerr, thickness=1.2, width=4),
             mode="markers",
             marker=dict(size=10),
             name="Predicted trial score"
         ))
-        fig.update_layout(yaxis_title="Score ± CI", xaxis_title="Opción", height=460, margin=dict(l=10,r=10,t=10,b=10))
+        fig.update_layout(yaxis_title="Score ± CI", xaxis_title="Opción", height=420, margin=dict(l=10,r=10,t=10,b=10))
         st.plotly_chart(fig, use_container_width=True)
 
-# ---------- TAB 3: OBJETIVOS POR EJE (sobre df_view real) ----------
+    st.markdown("""
+<div class="legend"><b>Interpretación:</b> si dos opciones se solapan mucho en su CI, tal vez requieras otra señal (p. ej., menos agua) para decidir.
+</div>
+""", unsafe_allow_html=True)
+
+# ---------- TAB 3: Objetivos por eje ----------
 with tab_objectives:
-    st.markdown("#### Métricas por componente del objetivo")
+    st.markdown('<h3 class="section-title">Métricas por componente del objetivo</h3>', unsafe_allow_html=True)
     col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown("**Energía (kWh)**")
-        if "Energía (kWh)" in df_view:
+    if "Energía (kWh)" in df_view:
+        with col1:
+            st.markdown("**Energía (kWh)**")
             e_fig = px.histogram(df_view, x="Energía (kWh)")
             e_fig.update_layout(height=280, margin=dict(l=10,r=10,t=10,b=10))
             st.plotly_chart(e_fig, use_container_width=True)
-    with col2:
-        st.markdown("**Agua (L)**")
-        if "Agua (L)" in df_view:
+    if "Agua (L)" in df_view:
+        with col2:
+            st.markdown("**Agua (L)**")
             w_fig = px.histogram(df_view, x="Agua (L)")
             w_fig.update_layout(height=280, margin=dict(l=10,r=10,t=10,b=10))
             st.plotly_chart(w_fig, use_container_width=True)
-    with col3:
-        st.markdown("**Crew (min)**")
-        if "Crew (min)" in df_view:
+    if "Crew (min)" in df_view:
+        with col3:
+            st.markdown("**Crew (min)**")
             c_fig = px.histogram(df_view, x="Crew (min)")
             c_fig.update_layout(height=280, margin=dict(l=10,r=10,t=10,b=10))
             st.plotly_chart(c_fig, use_container_width=True)
 
-# ---------- TAB 4: EXPORT (todo desde estado real) ----------
-with tab_export:
-    st.markdown("#### Exportar resultados")
-    colL, colR = st.columns([1.1, 1.0])
-    with colL:
-        st.markdown("**Exportar tabla**")
-        csv_all = df_view.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ CSV — Vista actual", data=csv_all, file_name="pareto_view.csv", mime="text/csv")
+    st.markdown("""
+<div class="legend"><b>Ejemplo:</b> si tu objetivo prioriza tiempo de tripulación,
+mirá la cola izquierda del histograma de <i>Crew (min)</i> y elegí opciones con menor valor.
+</div>
+""", unsafe_allow_html=True)
 
-        usable = df_view.dropna(subset=["Energía (kWh)","Agua (L)","Crew (min)","Score"]).copy()
-        table_pareto = usable[usable["Pareto"] == "Pareto"].sort_values("Score", ascending=False)
+# ---------- TAB 4: Export Center ----------
+with tab_export:
+    st.markdown('<h3 class="section-title">Exportar resultados</h3>', unsafe_allow_html=True)
+    colL, colR = st.columns([1.1, 1.0])
+
+    with colL:
+        st.markdown("**Exportar tabla actual**")
+        csv_all = df_view.to_csv(index=False).encode("utf-8")
+        st.download_button("⬇️ CSV — Vista filtrada", data=csv_all,
+                           file_name="pareto_view.csv", mime="text/csv")
+
+        table_pareto = df_view[df_view["Pareto"]=="Pareto"].sort_values("Score", ascending=False)
         if not table_pareto.empty:
             csv_front = table_pareto.to_csv(index=False).encode("utf-8")
-            st.download_button("⬇️ CSV — Frontera Pareto", data=csv_front, file_name="pareto_frontier.csv", mime="text/csv")
+            st.download_button("⬇️ CSV — Frontera Pareto", data=csv_front,
+                               file_name="pareto_frontier.csv", mime="text/csv")
+        st.markdown("""
+<div class="legend">La tabla exportada conserva columnas clave (energía/agua/crew/score).
+Podés adjuntarla a un PR o a una revisión de diseño.</div>
+""", unsafe_allow_html=True)
 
     with colR:
-        st.markdown("**Exportar candidato elegido**")
+        st.markdown("**Exportar candidato seleccionado**")
         if not state_sel:
-            st.info("Seleccioná una opción (arriba) para habilitar export de plan.")
+            st.info("Seleccioná una opción en **Pareto** para habilitar export de plan.")
         else:
             selected = state_sel["data"]
             safety   = state_sel["safety"]
             try:
                 json_bytes = candidate_to_json(selected, target, safety)
-                st.download_button("⬇️ JSON — Plan completo", data=json_bytes, file_name="candidate_plan.json", mime="application/json")
+                st.download_button("⬇️ JSON — Plan completo", data=json_bytes,
+                                   file_name="candidate_plan.json", mime="application/json")
             except Exception as e:
                 st.warning(f"No se pudo construir JSON: {e}")
             try:
                 csv_bytes  = candidate_to_csv(selected)
-                st.download_button("⬇️ CSV — Resumen candidato", data=csv_bytes, file_name="candidate_summary.csv", mime="text/csv")
+                st.download_button("⬇️ CSV — Resumen candidato", data=csv_bytes,
+                                   file_name="candidate_summary.csv", mime="text/csv")
             except Exception as e:
                 st.warning(f"No se pudo construir CSV: {e}")
+
+    st.markdown("---")
+    st.markdown("""
+<div class="block">
+  <b>Checklist de trazabilidad</b><br/>
+  • ¿El candidato exportado coincide con la <i>Opción</i> elegida? ✔️<br/>
+  • ¿Materiales incluyen entradas problemáticas NASA y (si aplica) <b>MGS-1</b>? ✔️<br/>
+  • ¿Los límites del objetivo (agua/energía/crew) se respetan o se justifican? ✔️<br/>
+</div>
+""", unsafe_allow_html=True)
