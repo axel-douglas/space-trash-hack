@@ -1,31 +1,38 @@
+# app/modules/process_planner.py
+from __future__ import annotations
 import pandas as pd
 
-SCENARIO_TO_PROCESS = {
-    "Residence Renovations": ["P04", "P02", "P01", "P03"],  # Reuse CTB / Lamination / Shredder / Sinter
-    "Cosmic Celebrations":   ["P02", "P01"],                 # Lamination / Shredder (encapsulado)
-    "Daring Discoveries":    ["P03", "P02", "P01"],          # Sinter + Regolito / Lamination / Shredder
+# Reglas simples de idoneidad por residuo (pueden expandirse)
+SUITABILITY = {
+    "pouches": ["P02"],                 # Press & Heat Lamination
+    "foam": ["P02", "P03"],             # laminar o sinter con MGS-1
+    "EVA_bag": ["P04", "P02"],          # reutilizar CTB / laminar
+    "glove": ["P01", "P02"],            # triturar + laminar
+    "aluminum": ["P04"],                # reconfiguración herrajes/struts
+    "textiles": ["P02"],                # laminar en capas
 }
 
-def choose_process(target_name: str, process_df: pd.DataFrame, scenario: str | None = None, crew_time_low: bool = False):
-    """
-    Devuelve subset de procesos recomendados considerando escenario y modo 'Crew-time Low'.
-    """
-    if scenario and scenario in SCENARIO_TO_PROCESS:
-        ids = SCENARIO_TO_PROCESS[scenario]
-        subset = process_df.loc[process_df["process_id"].isin(ids)].copy()
+FLAG_BOOST = {
+    "multilayer": ["P02"],
+    "thermal": ["P02"],
+    "CTB": ["P04"],
+    "closed_cell": ["P03", "P02"],
+    "nitrile": ["P01","P02"],
+    "struts": ["P04"]
+}
+
+def choose_process(target_name: str, proc_df: pd.DataFrame,
+                   scenario: str|None = None,
+                   crew_time_low: bool = False) -> pd.DataFrame:
+    df = proc_df.copy()
+
+    # Penalización/bonificación según tiempo de tripulación
+    if crew_time_low:
+        # preferir procesos con menor crew_min_per_batch
+        df["crew_bias"] = - df["crew_min_per_batch"]
     else:
-        # fallback por tipo de target
-        if target_name in ("Container", "Utensil"):
-            subset = process_df.loc[process_df["process_id"].isin(["P01","P02"])].copy()
-        elif target_name == "Interior":
-            subset = process_df.loc[process_df["process_id"].isin(["P04","P03"])].copy()
-        else:
-            subset = process_df.loc[process_df["process_id"].isin(["P01","P03"])].copy()
+        df["crew_bias"] = 0.0
 
-    # Modo Crew-time Low: prioriza procesos con menor 'crew_min_per_batch'
-    if crew_time_low and not subset.empty:
-        subset = subset.sort_values("crew_min_per_batch", ascending=True).head(max(2, len(subset)//2)).copy()
-    return subset
-
-def process_vector(row):
-    return [float(row["energy_kwh_per_kg"]), float(row["water_l_per_kg"]), float(row["crew_min_per_batch"])]
+    # En esta función solo devolvemos el catálogo; la adecuación por residuo
+    # sucede durante la generación, cuando conocemos las filas del inventario.
+    return df
