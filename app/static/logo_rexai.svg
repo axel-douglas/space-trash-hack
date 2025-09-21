@@ -1,61 +1,68 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg width="100%" height="100%" viewBox="0 0 820 140" xmlns="http://www.w3.org/2000/svg">
-  <title>Rex-AI — Wordmark Minimalista</title>
-  <desc>Logo minimalista para Rex-AI, wordmark geométrico con trazos limpios sin tipografías externas.</desc>
-
-  <!-- Ajustes globales -->
-  <g fill="none" stroke="currentColor" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
-
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 160" fill="none">
+  <!--
+    REX-AI — Minimal tech wordmark for "Rex-AI"
+    Style notes:
+      - Stroke-only geometry (no fills) for a SpaceX/Tesla-esque precision feel
+      - Rounded caps/joins for premium finish
+      - Built on a 160px cap-height with consistent stroke
+      - Uses currentColor so you can recolor via CSS or the 'color' attribute
+  -->
+  <g stroke="currentColor" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
     <!-- R -->
-    <g transform="translate(20,30)">
-      <path d="M0,0 V80" />
-      <path d="M0,0 H42 L0,36" />
-      <path d="M0,36 L48,80" />
+    <g transform="translate(30,16)">
+      <!-- Vertical stem -->
+      <path d="M10,10 L10,128" />
+      <!-- Upper bowl (angular, minimal) -->
+      <path d="M10,10 L86,10 L104,28 L104,42 L86,60 L10,60" />
+      <!-- Leg -->
+      <path d="M48,86 L112,128" />
     </g>
 
     <!-- E -->
-    <g transform="translate(120,30)">
-      <path d="M0,0 H64" />
-      <path d="M0,40 H52" />
-      <path d="M0,80 H64" />
-      <path d="M0,0 V80" />
+    <g transform="translate(180,16)">
+      <!-- Stem -->
+      <path d="M10,10 L10,128" />
+      <!-- Top bar -->
+      <path d="M10,10 L96,10" />
+      <!-- Mid bar (shorter for hierarchy) -->
+      <path d="M10,70 L80,70" />
+      <!-- Bottom bar -->
+      <path d="M10,128 L96,128" />
     </g>
 
-    <!-- X -->
-    <g transform="translate(220,30)">
-      <path d="M0,0 L72,80" />
-      <path d="M72,0 L0,80" />
+    <!-- X (split like a trajectory; small gap in center) -->
+    <g transform="translate(330,16)">
+      <!-- Diagonal 1 (two segments with center gap) -->
+      <path d="M6,10 L72,72" />
+      <path d="M92,90 L148,128" />
+      <!-- Diagonal 2 (two segments with center gap) -->
+      <path d="M148,10 L92,58" />
+      <path d="M72,74 L6,128" />
     </g>
 
-    <!-- guion -->
-    <g transform="translate(320,70)">
-      <path d="M0,0 H40" />
+    <!-- Hyphen -->
+    <g transform="translate(520,16)">
+      <path d="M0,70 L50,70" />
     </g>
 
-    <!-- A (sin barra central, estilo aero) -->
-    <g transform="translate(380,30)">
-      <path d="M0,80 L36,0 L72,80" />
-      <!-- barra minimal con corte (eco/high-tech) -->
-      <path d="M14,48 H58" />
+    <!-- A (open apex + floating crossbar) -->
+    <g transform="translate(590,16)">
+      <!-- Left leg -->
+      <path d="M10,128 L66,10" />
+      <!-- Right leg -->
+      <path d="M122,128 L66,10" />
+      <!-- Crossbar (slim) -->
+      <path d="M40,86 L92,86" />
     </g>
 
-    <!-- I -->
-    <g transform="translate(480,30)">
-      <path d="M0,0 V80" />
+    <!-- I (with minimal end caps) -->
+    <g transform="translate(750,16)">
+      <!-- Top cap -->
+      <path d="M-6,10 L42,10" />
+      <!-- Stem -->
+      <path d="M18,10 L18,128" />
+      <!-- Bottom cap -->
+      <path d="M-6,128 L42,128" />
     </g>
-
-    <!-- Punto tecnológico (acentúa el AI) -->
-    <g transform="translate(520,110)">
-      <circle cx="0" cy="0" r="6" />
-    </g>
-
-    <!-- Tagline/marker opcional (símbolo de “upcycle” con flecha sutil) -->
-    <g transform="translate(720,30)">
-      <path d="M0,40 C0,18 18,0 40,0" />
-      <path d="M40,0 L32,8" />
-      <path d="M40,0 L40,12" />
-      <path d="M0,40 C0,62 18,80 40,80" />
-    </g>
-
   </g>
 </svg>
