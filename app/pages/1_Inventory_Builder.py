@@ -1,85 +1,100 @@
-# app/pages/1_Inventory_Builder.py
+# --- path guard para Streamlit Cloud ---
 import sys, pathlib
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(__file__).resolve().parents[1]  # carpeta raíz del repo
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+# ---------------------------------------
 
 import streamlit as st
 import pandas as pd
 from app.modules.io import load_waste_df, save_waste_df
 
+# ⚠️ Debe ser la PRIMERA llamada de Streamlit en la página
 st.set_page_config(page_title="Inventario", page_icon="🧱", layout="wide")
 
-st.title("1) Inventario — Datos NASA")
-st.caption("Usando directamente: `data/waste_inventory_sample.csv` (id, category, material_family, mass_kg, volume_l, flags).")
+st.title("1) Inventario de residuos")
+st.caption("Este inventario refleja los ítems no-metabólicos que NASA identifica como problemáticos: empaques multicapa, espumas técnicas (ZOTEK F30), bolsas EVA/CTB, textiles/wipes técnicos y guantes de nitrilo.")
 
-df = load_waste_df()
+with st.expander("¿Por qué estos ítems? (resumen rápido)", expanded=True):
+    st.markdown("""
+- **Pouches PE–PET–Al** (multicapa térmico) → difíciles de reciclar por capas incompatibles.
+- **Espumas ZOTEK F30 (PE reticulado)** → celdas cerradas, baja densidad, voluminosas.
+- **EVA/CTB (Nomex/Nylon/Polyester)** → textiles técnicos con recubrimientos.
+- **Guantes de nitrilo** → elastómeros con aditivos.
+- **Estructuras de Al** → muy valiosas para **reuso** o como refuerzo en compuestos.
+- **Regolito MGS-1** se usa como **carga mineral** en procesos de sinterizado/compuesto.
+""")
 
-# --------- Panel de filtros (residuos problemáticos) ----------
-with st.sidebar:
-    st.header("🔎 Filtros")
-    only_problem = st.toggle("Mostrar solo ‘residuos problemáticos’", value=False,
-                             help="Pouches multicapa, térmicos, EVA/CTB, espuma ZOTEK F30, guantes nitrilo, aluminio/struts, etc.")
-    text = st.text_input("Buscar por texto (category/material/flags)", "")
+# --- Carga y normalización ligera para edición amigable ---
+df_raw = load_waste_df().copy()
 
-view = df.copy()
-if only_problem:
-    view = view[view["_problematic"]]
+# Aseguramos nombres amigables para edición sin romper downstream
+df = df_raw.rename(columns={
+    "id": "id",
+    "category": "category",
+    "material_family": "material_family",
+    "mass_kg": "mass_kg",
+    "volume_l": "volume_l",
+    "flags": "flags",
+})
+# Derivados útiles para otras páginas (sin cambiar nombres originales)
+df["_problematic"] = False
 
-if text.strip():
-    t = text.lower()
-    view = view[
-        view["material"].str.lower().str.contains(t) |
-        view["notes"].str.lower().str.contains(t) |
-        view["_source_category"].str.lower().str.contains(t) |
-        view["_source_material_family"].str.lower().str.contains(t)
+def _is_problematic(row: pd.Series) -> bool:
+    cat = str(row.get("category", "")).lower()
+    fam = str(row.get("material_family", "")).lower()
+    flg = str(row.get("flags", "")).lower()
+    # Heurística NASA: multicapa, foam técnico, EVA/CTB, nitrilo, wipes técnicos
+    rules = [
+        "pouches" in cat or "multilayer" in flg or "pe-pet-al" in fam,
+        "foam" in cat or "zotek" in fam or "closed_cell" in flg,
+        "eva" in cat or "ctb" in flg or "nomex" in fam or "nylon" in fam or "polyester" in fam,
+        "glove" in cat or "nitrile" in fam,
+        "wipe" in flg or "textile" in cat
     ]
+    return any(rules)
 
-# --------- Métricas de cobertura “residuo problema” ----------
-total_kg = df["kg"].sum()
-prob_kg  = df.loc[df["_problematic"], "kg"].sum()
-coverage = 0.0 if total_kg == 0 else 100.0 * prob_kg / total_kg
+df["_problematic"] = df.apply(_is_problematic, axis=1)
 
-c1, c2, c3 = st.columns(3)
-c1.metric("Kg totales", f"{total_kg:.2f}")
-c2.metric("Kg problemáticos", f"{prob_kg:.2f}")
-c3.metric("Cobertura problemática", f"{coverage:.1f}%")
+# Métricas rápidas para “sabor laboratorio”
+c1,c2,c3,c4 = st.columns(4)
+c1.metric("Ítems", len(df))
+c2.metric("Masa total (kg)", f"{df['mass_kg'].sum():.2f}")
+c3.metric("Volumen (L)", f"{df['volume_l'].sum():.1f}")
+c4.metric("Problemáticos", int(df["_problematic"].sum()))
 
-st.markdown("—")
-
-st.subheader("📦 Tabla editable (vista NASA → UI)")
-st.caption("Columnas UI: **material** (category — material_family), **kg** (mass_kg), **notes** (flags). Se preserva la proveniencia en columnas ocultas.")
+st.markdown("### Editar inventario")
+st.caption("Tip: los **problemáticos** se resaltan en la vista previa. Podés ajustar `flags`/`category` para reflejar mejor la realidad de tu lote.")
 
 edited = st.data_editor(
-    view,
+    df[["id","category","material_family","mass_kg","volume_l","flags"]],
     num_rows="dynamic",
     use_container_width=True,
-    hide_index=True,
-    column_config={
-        "material": st.column_config.TextColumn("Material (category — family)"),
-        "kg": st.column_config.NumberColumn("Masa (kg)", min_value=0.0, step=0.1),
-        "notes": st.column_config.TextColumn("Flags/Notas"),
-        "_source_id": st.column_config.TextColumn("ID NASA", help="id original del lote"),
-        "_source_category": st.column_config.TextColumn("category"),
-        "_source_material_family": st.column_config.TextColumn("material_family"),
-        "_source_volume_l": st.column_config.NumberColumn("volume_l"),
-        "_source_flags": st.column_config.TextColumn("flags"),
-        "_problematic": st.column_config.CheckboxColumn("Problemático")
-    },
-    disabled=["_problematic"],  # derivado
+    key="inv_editor",
 )
 
-# Importante: guardamos SIEMPRE el DF completo (no la vista filtrada)
-if st.button("💾 Guardar inventario (formato NASA)", type="primary"):
-    # Volvemos a mezclar los cambios en ‘view’ dentro del DF base por índice
-    df.loc[edited.index, :] = edited
-    save_waste_df(df)
-    st.success("Inventario guardado en `data/waste_inventory_sample.csv` (esquema NASA).")
+colA, colB = st.columns([1,1])
+with colA:
+    if st.button("💾 Guardar inventario", type="primary"):
+        # Persistimos SOLO columnas originales esperadas por el pipeline
+        save_waste_df(edited)
+        st.success("Inventario guardado.")
 
-with st.expander("ℹ️ ¿Qué datos estamos usando y para qué sirven?"):
-    st.markdown("""
-- **`id`**: identifica el lote (trazabilidad en toda la demo).
-- **`category`** y **`material_family`**: definen el **tipo de residuo** (pouches multicapa, textiles, espuma ZOTEK F30, EVA/CTB, guantes nitrilo, aluminio, etc.).
-- **`mass_kg`** y **`volume_l`**: cuánto hay disponible (masa y volumen).
-- **`flags`**: etiquetas críticas (ej. `multilayer`, `thermal`, `CTB`, `closed_cell`, `nitrile`, `struts`) que activan reglas del planificador de procesos y de seguridad.
-    """)
+with colB:
+    if st.button("↺ Recalcular 'problemáticos' para vista previa"):
+        st.experimental_rerun()
+
+st.markdown("---")
+st.subheader("Vista previa con resaltado de 'problemáticos'")
+
+# Re-generamos 'problematic' sobre la versión editada para la vista previa:
+prev = edited.copy()
+prev["_problematic"] = prev.apply(_is_problematic, axis=1)
+
+def _row_style(s: pd.Series):
+    return ['background-color: #FFF3CD' if s["_problematic"] else '' for _ in s]
+
+styled = prev.style.apply(_row_style, axis=1).hide(axis="columns", subset=["_problematic"])
+st.dataframe(styled, use_container_width=True)
+
+st.info("**Siguiente paso** → Abrí **2) Objetivo** para definir el target. El generador priorizará consumir ítems 'problemáticos' y propondrá procesos que pueden mezclar **regolito MGS-1** (p.ej., *Sinter with MGS-1*).")
