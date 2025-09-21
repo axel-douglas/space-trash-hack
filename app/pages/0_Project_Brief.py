@@ -12,7 +12,7 @@ if str(repo_root) not in sys.path:
 import streamlit as st
 import pandas as pd
 
-# ⚠️ primero
+# ⚠️ Primero
 st.set_page_config(page_title="REX-AI Mars — Brief", page_icon="🛰️", layout="wide")
 
 from app.modules.branding import inject_branding
@@ -75,7 +75,17 @@ with st.container():
             </div>
             """, unsafe_allow_html=True
         )
-        st.page_link("app/pages/1_Inventory_Builder.py", label="Abrir Inventario →", icon="🧱")
+        # Navegación robusta: si page_link falla, no rompemos la app
+        try:
+            # Nota: según la configuración, Streamlit puede esperar "pages/..." o "app/pages/..."
+            # Probamos ambas rutas.
+            try:
+                st.page_link("pages/1_Inventory_Builder.py", label="Abrir Inventario →", icon="🧱")
+            except Exception:
+                st.page_link("app/pages/1_Inventory_Builder.py", label="Abrir Inventario →", icon="🧱")
+        except Exception:
+            st.caption("Abrí **1) Inventario** desde la barra lateral (menú de páginas).")
+
     with b:
         st.markdown(
             """
@@ -119,6 +129,18 @@ st.plotly_chart(fig, use_container_width=True)
 st.markdown("---")
 colL, colR = st.columns([1,1])
 with colL:
-    st.page_link("app/pages/1_Inventory_Builder.py", label="Ir a 1) Inventario", icon="🧱")
+    try:
+        try:
+            st.page_link("pages/1_Inventory_Builder.py", label="Ir a 1) Inventario", icon="🧱")
+        except Exception:
+            st.page_link("app/pages/1_Inventory_Builder.py", label="Ir a 1) Inventario", icon="🧱")
+    except Exception:
+        st.caption("Abrí **1) Inventario** desde la barra lateral →")
 with colR:
-    st.page_link("app/pages/2_Target_Designer.py", label="Ir a 2) Objetivo", icon="🎯")
+    try:
+        try:
+            st.page_link("pages/2_Target_Designer.py", label="Ir a 2) Objetivo", icon="🎯")
+        except Exception:
+            st.page_link("app/pages/2_Target_Designer.py", label="Ir a 2) Objetivo", icon="🎯")
+    except Exception:
+        st.caption("Abrí **2) Objetivo** desde la barra lateral →")
