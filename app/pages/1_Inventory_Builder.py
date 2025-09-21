@@ -98,15 +98,32 @@ with colB:
         st.rerun()
 
 st.markdown("---")
-st.subheader("Vista previa con resaltado de 'problemáticos'")
+st.subheader("Vista previa con indicadores de 'problemáticos'")
 
 preview = edited.copy()
 preview["_problematic"] = preview.apply(_is_problematic_row, axis=1)
 
-def _row_style(s: pd.Series):
-    return ['background-color: #FFF3CD' if s.get("_problematic", False) else '' for _ in s]
+# Columna indicador no intrusiva (sin pintar el fondo)
+preview.insert(
+    0,
+    "Indicador",
+    preview["_problematic"].map(lambda v: "⚠️ Problemático" if v else "✓ OK")
+)
 
-styled = preview.style.apply(_row_style, axis=1).hide(axis="columns", subset=["_problematic"])
+# Estilo: solo color de texto en la columna Indicador (sin fondos que quiten contraste)
+def _indicator_style(val: str):
+    if isinstance(val, str) and "Problemático" in val:
+        return "color: #d9534f; font-weight: 600;"  # rojo suave, buena lectura en temas claro/oscuro
+    if isinstance(val, str) and "OK" in val:
+        return "color: #1f9d55; font-weight: 600;"  # verde suave
+    return ""
+
+styled = (
+    preview.style
+    .map(_indicator_style, subset=["Indicador"])
+    .hide(axis="columns", subset=["_problematic"])  # ocultamos helper
+)
+
 st.dataframe(styled, use_container_width=True)
 
-st.info("**Siguiente paso** → Abrí **2) Objetivo**. El generador priorizará consumir ítems problemáticos y usará **P03 (Sinter with MGS-1)** para mezclar regolito cuando sea adecuado.")
+st.info("**Siguiente paso** → Abrí **2) Objetivo**. El generador prioriza ítems problemáticos y usa **P03 (Sinter with MGS-1)** con regolito cuando corresponde.")
