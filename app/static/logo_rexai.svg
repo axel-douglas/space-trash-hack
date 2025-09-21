@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="100%" height="100%" viewBox="0 0 820 140" xmlns="http://www.w3.org/2000/svg">
+  <title>Rex-AI — Wordmark Minimalista</title>
+  <desc>Logo minimalista para Rex-AI, wordmark geométrico con trazos limpios sin tipografías externas.</desc>
+
+  <!-- Ajustes globales -->
+  <g fill="none" stroke="currentColor" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+
+    <!-- R -->
+    <g transform="translate(20,30)">
+      <path d="M0,0 V80" />
+      <path d="M0,0 H42 L0,36" />
+      <path d="M0,36 L48,80" />
+    </g>
+
+    <!-- E -->
+    <g transform="translate(120,30)">
+      <path d="M0,0 H64" />
+      <path d="M0,40 H52" />
+      <path d="M0,80 H64" />
+      <path d="M0,0 V80" />
+    </g>
+
+    <!-- X -->
+    <g transform="translate(220,30)">
+      <path d="M0,0 L72,80" />
+      <path d="M72,0 L0,80" />
+    </g>
+
+    <!-- guion -->
+    <g transform="translate(320,70)">
+      <path d="M0,0 H40" />
+    </g>
+
+    <!-- A (sin barra central, estilo aero) -->
+    <g transform="translate(380,30)">
+      <path d="M0,80 L36,0 L72,80" />
+      <!-- barra minimal con corte (eco/high-tech) -->
+      <path d="M14,48 H58" />
+    </g>
+
+    <!-- I -->
+    <g transform="translate(480,30)">
+      <path d="M0,0 V80" />
+    </g>
+
+    <!-- Punto tecnológico (acentúa el AI) -->
+    <g transform="translate(520,110)">
+      <circle cx="0" cy="0" r="6" />
+    </g>
+
+    <!-- Tagline/marker opcional (símbolo de “upcycle” con flecha sutil) -->
+    <g transform="translate(720,30)">
+      <path d="M0,40 C0,18 18,0 40,0" />
+      <path d="M40,0 L32,8" />
+      <path d="M40,0 L40,12" />
+      <path d="M0,40 C0,62 18,80 40,80" />
+    </g>
+
+  </g>
+</svg>
