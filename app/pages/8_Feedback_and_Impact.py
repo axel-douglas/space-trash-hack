@@ -1,77 +1,145 @@
-# --- path guard universal (funciona en Home.py y en pages/*) ---
+# app/pages/8_Feedback_and_Impact.py
+# --- path guard para Streamlit Cloud ---
 import sys, pathlib
-_here = pathlib.Path(__file__).resolve()
-p = _here.parent
-while p.name != "app" and p.parent != p:
-    p = p.parent
-repo_root = p.parent if p.name == "app" else _here.parent  # fallback
-if str(repo_root) not in sys.path:
-    sys.path.insert(0, str(repo_root))
-# ----------------------------------------------------------------
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+# ---------------------------------------
 
+# ⚠️ Debe ser la PRIMERA llamada Streamlit:
 import streamlit as st
-
-# ⚠️ Primero
 st.set_page_config(page_title="Feedback & Impact", page_icon="📝", layout="wide")
 
+import pandas as pd
 from datetime import datetime
+from io import StringIO
+
 from app.modules.impact import (
     ImpactEntry, FeedbackEntry, append_impact, append_feedback,
     load_impact_df, load_feedback_df, summarize_impact
 )
 
-st.title("8) Feedback del astronauta & Impacto acumulado")
+# ========= estilos SpaceX/NASA-like =========
+st.markdown("""
+<style>
+:root{ --bd: rgba(140,140,160,.28); --ink:#0f172a; --muted: rgba(15,23,42,.65); }
+.hero{border:1px solid var(--bd); border-radius:18px; padding:18px;
+      background: radial-gradient(900px 260px at 25% -10%, rgba(80,120,255,.10), transparent);}
+.pill{display:inline-block; padding:4px 10px; border-radius:999px; font-weight:700; font-size:.78rem;
+      border:1px solid var(--bd); margin-right:6px}
+.pill.ok{background:#e8f7ee; color:#136c3a; border-color:#b3e2c4}
+.pill.info{background:#e7f1ff; color:#174ea6; border-color:#c6dcff}
+.pill.warn{background:#fff3cd; color:#8a6d1d; border-color:#ffe69b}
+.block{border:1px solid var(--bd); border-radius:16px; padding:16px;}
+.kpi{border:1px solid var(--bd); border-radius:14px; padding:14px; margin-bottom:10px;}
+.kpi h3{margin:0 0 6px 0; font-size:.95rem; opacity:.8}
+.kpi .v{font-size:1.6rem; font-weight:800; letter-spacing:.2px}
+.small{font-size:.92rem; opacity:.9}
+.legend{font-size:.9rem; opacity:.8}
+hr{border:none;height:1px;background:var(--bd); margin:8px 0 16px 0}
+table{font-size:0.95rem}
+</style>
+""", unsafe_allow_html=True)
 
-# --- Bloque A: Registrar impacto del candidato seleccionado ---
-state_sel = st.session_state.get("selected", None)
-target = st.session_state.get("target", None)
+# ========= estado compartido =========
+target      = st.session_state.get("target", None)
+state_sel   = st.session_state.get("selected", None)
+candidato   = state_sel["data"] if state_sel else None
+props       = candidato["props"] if candidato else None
+regolith_pct = (candidato.get("regolith_pct", 0.0) if candidato else 0.0)
 
-st.subheader("A) Registrar impacto de la corrida")
-if not state_sel or not target:
-    st.info("Seleccioná y registra una opción desde **3) Generador** / **4) Resultados** antes de guardar impacto.")
-else:
-    sel = state_sel["data"]; p = sel["props"]
-    col1, col2 = st.columns(2)
-    with col1:
-        st.write(f"**Escenario:** {target.get('scenario','-')}")
-        st.write(f"**Target:** {target.get('name','-')}")
-        st.write(f"**Proceso:** {sel['process_id']} {sel['process_name']}")
-        st.write(f"**Materiales:** {', '.join(sel['materials'])}")
+# ========= HERO =========
+st.markdown("""
+<div class="hero">
+  <h1 style="margin:0 0 6px 0">📝 Feedback & Impact (HIL — Human-in-the-Loop)</h1>
+  <div class="small">
+    Esta consola registra el <b>impacto real</b> de cada corrida y el <b>feedback técnico</b> de materiales
+    (rigidez, porosidad, superficie, unión, fallas), para que Rex-AI aprenda día a día.
+    Todo conecta con tus datos: target, candidato y proceso seleccionados.
+  </div>
+  <div class="legend" style="margin-top:8px">
+    <span class="pill info">1) Registra impacto</span>
+    <span class="pill info">2) Envia feedback de materiales</span>
+    <span class="pill ok">3) Visualiza métricas acumuladas</span>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
-    with col2:
-        st.write(f"**Masa final (kg):** {p.mass_final_kg:.2f}")
-        st.write(f"**Energía (kWh):** {p.energy_kwh:.2f}")
-        st.write(f"**Agua (L):** {p.water_l:.2f}")
-        st.write(f"**Crew (min):** {p.crew_min:.0f}")
-        st.write(f"**Score:** {sel['score']:.2f}")
+# ========= Panel A: Registrar IMPACTO de la corrida =========
+st.markdown("### A) Registrar impacto de la corrida")
 
-    if st.button("💾 Guardar impacto de esta corrida", type="primary"):
+colA, colB = st.columns([1.2, 1.0])
+with colA:
+    if not candidato or not target:
+        st.info("Seleccioná un candidato en **3) Generador** / **6) Pareto** para habilitar registro con datos reales.")
+    else:
+        st.markdown("**Contexto**")
+        st.write(f"- Escenario: **{target.get('scenario','-')}**")
+        st.write(f"- Target: **{target.get('name','-')}**")
+        st.write(f"- Proceso: **{candidato['process_id']} {candidato['process_name']}**")
+        st.write(f"- Materiales: **{', '.join(candidato['materials'])}**")
+        if regolith_pct > 0:
+            st.write(f"- MGS-1 (regolito): **{regolith_pct*100:.0f}%** de la mezcla")
+
+with colB:
+    if props:
+        st.markdown("**Recursos/outputs de la corrida (predicción base)**")
+        c1,c2,c3,c4,c5 = st.columns(5)
+        c1.metric("Masa (kg)", f"{props.mass_final_kg:.2f}")
+        c2.metric("kWh", f"{props.energy_kwh:.2f}")
+        c3.metric("Agua (L)", f"{props.water_l:.2f}")
+        c4.metric("Crew (min)", f"{props.crew_min:.0f}")
+        c5.metric("Score", f"{candidato['score']:.2f}")
+
+st.markdown("")
+colBtn1, colBtn2 = st.columns([1,2])
+with colBtn1:
+    if candidato and target and st.button("💾 Guardar impacto de esta corrida", type="primary"):
+        p = props
         entry = ImpactEntry(
             ts_iso=datetime.utcnow().isoformat(),
             scenario=target.get("scenario","-"),
             target_name=target.get("name","-"),
-            materials="|".join(sel["materials"]),
-            weights="|".join(map(str, sel["weights"])),
-            process_id=sel["process_id"],
-            process_name=sel["process_name"],
-            mass_final_kg=p.mass_final_kg,
-            energy_kwh=p.energy_kwh, water_l=p.water_l, crew_min=p.crew_min,
-            score=sel["score"]
+            materials="|".join(candidato.get("materials", [])),
+            weights="|".join(map(str, candidato.get("weights", []))),
+            process_id=candidato.get("process_id","-"),
+            process_name=candidato.get("process_name","-"),
+            mass_final_kg=float(p.mass_final_kg),
+            energy_kwh=float(p.energy_kwh),
+            water_l=float(p.water_l),
+            crew_min=float(p.crew_min),
+            score=float(candidato.get("score", 0.0)),
+            extra=f"regolith_pct={regolith_pct:.2f}"
         )
         append_impact(entry)
-        st.success("Impacto registrado.")
+        st.success("Impacto registrado en el log.")
+
+with colBtn2:
+    st.caption("Tip: registra impacto tras cada corrida para construir una curva de aprendizaje de materiales (y detectar desvíos).")
 
 st.markdown("---")
 
-# --- Bloque B: Feedback humano en el loop ---
-st.subheader("B) Feedback del astronauta")
+# ========= Panel B: Feedback TÉCNICO de MATERIALES =========
+st.markdown("### B) Feedback técnico (materiales) — nivel laboratorio")
+
 with st.form("feedback_form"):
-    astronaut = st.text_input("Nombre (opcional para registro)", "")
-    option_idx = st.number_input("Opción elegida #", min_value=1, step=1, value=1)
-    rigidity_ok = st.toggle("La rigidez fue suficiente", value=True)
-    ease_ok = st.toggle("El proceso fue fácil de ejecutar", value=True)
-    issues = st.text_input("Problemas observados (bordes, olor, slip, etc.)", "")
-    notes = st.text_area("Notas libres", "")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        astronaut = st.text_input("Operador / Astronauta", "")
+        option_idx = st.number_input("Opción elegida #", min_value=1, step=1, value=1)
+        overall = st.slider("Satisfacción global", 0, 10, 8, help="0=Malísimo, 10=Excelente")
+    with col2:
+        rigid_ok = st.slider("Rigidez percibida", 0, 10, 8)
+        porosity = st.slider("Porosidad / compactación", 0, 10, 3, help="0=baja porosidad (mejor), 10=muy poroso")
+        surface  = st.slider("Calidad de superficie", 0, 10, 7)
+    with col3:
+        bonding  = st.slider("Unión entre capas / partículas", 0, 10, 7)
+        failure  = st.selectbox("Modo de falla observado", ["-", "Fragil", "Dúctil", "Delaminación", "Agarre insuficiente", "Fatiga"])
+        ease_ok  = st.slider("Facilidad de proceso (ejecución)", 0, 10, 8)
+
+    issues = st.text_area("Problemas específicos (bordes, olor, slip, etc.)", "")
+    notes  = st.text_area("Notas libres / setup / parámetros", "")
+
     submitted = st.form_submit_button("Enviar feedback")
     if submitted:
         entry = FeedbackEntry(
@@ -80,26 +148,84 @@ with st.form("feedback_form"):
             scenario=target.get("scenario","-") if target else "-",
             target_name=target.get("name","-") if target else "-",
             option_idx=int(option_idx),
-            rigidity_ok=bool(rigidity_ok),
-            ease_ok=bool(ease_ok),
+            rigidity_ok=bool(rigid_ok >= 6),
+            ease_ok=bool(ease_ok >= 6),
             issues=issues,
-            notes=notes
+            notes=notes,
+            # campos extendidos en `.extra` (si tu dataclass no los tiene, se guardan como texto)
+            extra=f"overall={overall};porosity={porosity};surface={surface};bonding={bonding};failure={failure}"
         )
         append_feedback(entry)
-        st.success("Feedback guardado. Los próximos cálculos podrán ajustar pesos/penalizaciones con estas señales.")
+        st.success("Feedback guardado. Rex-AI utilizará estas señales para ajustar pesos/penalizaciones y recomendaciones.")
 
 st.markdown("---")
 
-# --- Bloque C: Panel de impacto acumulado ---
-st.subheader("C) Panel de impacto acumulado")
-idf = load_impact_df()
-sumy = summarize_impact(idf)
-c1,c2,c3,c4,c5 = st.columns(5)
-c1.metric("Corridas", sumy["runs"])
-c2.metric("Kg valorizados", f"{sumy['kg']:.2f} kg")
-c3.metric("Energía total", f"{sumy['kwh']:.2f} kWh")
-c4.metric("Agua total", f"{sumy['water_l']:.2f} L")
-c5.metric("Crew total", f"{sumy['crew_min']:.0f} min")
+# ========= Panel C: Impacto ACUMULADO y ANALÍTICA =========
+st.markdown("### C) Panel de impacto acumulado (conecta a tus logs)")
 
-st.caption("Debajo: detalle por corrida")
-st.dataframe(idf, use_container_width=True)
+idf = load_impact_df()
+fdf = load_feedback_df()
+sumy = summarize_impact(idf) if idf is not None and len(idf) else {"runs":0,"kg":0,"kwh":0,"water_l":0,"crew_min":0}
+
+k1,k2,k3,k4,k5 = st.columns(5)
+k1.metric("Corridas", int(sumy["runs"]))
+k2.metric("Kg valorizados", f"{sumy['kg']:.2f} kg")
+k3.metric("Energía total", f"{sumy['kwh']:.2f} kWh")
+k4.metric("Agua total", f"{sumy['water_l']:.2f} L")
+k5.metric("Crew total", f"{sumy['crew_min']:.0f} min")
+
+if idf is not None and len(idf):
+    # Normalizamos timestamp a día para tendencias
+    tmp = idf.copy()
+    tmp["date"] = pd.to_datetime(tmp["ts_iso"]).dt.date
+
+    cL, cR = st.columns([1.1, 1.0])
+
+    with cL:
+        st.markdown("**Tendencia diaria (kg / kWh / L / crew)**")
+        trend = tmp.groupby("date").agg({
+            "mass_final_kg":"sum",
+            "energy_kwh":"sum",
+            "water_l":"sum",
+            "crew_min":"sum"
+        }).reset_index().rename(columns={
+            "mass_final_kg":"Kg",
+            "energy_kwh":"kWh",
+            "water_l":"Agua (L)",
+            "crew_min":"Crew (min)"
+        })
+        st.line_chart(trend.set_index("date"))
+
+    with cR:
+        st.markdown("**Distribución por proceso (n corridas)**")
+        dist = tmp.groupby(["process_id","process_name"]).size().reset_index(name="runs").sort_values("runs", ascending=False)
+        st.bar_chart(dist.set_index("process_name")["runs"])
+        st.caption("¿Dónde estamos invirtiendo tiempo? ¿Vale la pena mover corridas a procesos más eficientes?")
+
+    st.markdown("**Detalle de corridas (impact log)**")
+    st.dataframe(idf, use_container_width=True, hide_index=True)
+
+    # Export
+    csv_buf = StringIO(); idf.to_csv(csv_buf, index=False)
+    st.download_button("⬇️ Descargar impacto (CSV)", data=csv_buf.getvalue().encode("utf-8"),
+                       file_name="impact_log.csv", mime="text/csv")
+else:
+    st.info("Aún no hay corridas registradas en el log de impacto.")
+
+st.markdown("---")
+st.markdown("### D) Lectura rápida para aprendices (¿por qué esto importa?)")
+g1, g2 = st.columns(2)
+with g1:
+    st.markdown("""
+- **Impacto = realidad**: qué tanto residuo convertimos en producto y a qué costo (energía/agua/crew).
+- **Feedback ≠ opinión suelta**: capturamos señales de materiales (rigidez, porosidad, unión) que Rex-AI usa para ajustar decisiones.
+- **Efecto MGS-1**: cuando el proceso es sinterizado, verás en el log `extra=regolith_pct=XX`. El regolito tiende a subir rigidez y bajar estanqueidad; si percibís más porosidad, anotarlo aquí ayuda.
+""")
+with g2:
+    st.markdown("""
+- **Cómo usarlo**: tras cada corrida, registra impacto (1 click) y cuelga feedback (2 min).  
+- **Cómo leerlo**: mirá la tendencia diaria; si los kWh suben por pieza, hay algo en el setup.  
+- **Qué permite**: cerrar el loop *plan → ejecutar → medir → aprender* como en un banco de pruebas de SpaceX/NASA.
+""")
+
+st.caption("¿Ideas para nuevas métricas? Podemos agregar dureza Shore, módulo aparente, densidad aparente, etc., si pasan a formar parte de la captura del laboratorio.")
