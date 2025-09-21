@@ -2,8 +2,6 @@ from __future__ import annotations
 from dataclasses import dataclass, asdict
 from pathlib import Path
 import pandas as pd
-import json
-from datetime import datetime
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 LOG_FILE = DATA_DIR / "impact_log.csv"
@@ -23,6 +21,7 @@ class ImpactEntry:
     water_l: float
     crew_min: float
     score: float
+    extra: str = ""
 
 @dataclass
 class FeedbackEntry:
@@ -35,40 +34,66 @@ class FeedbackEntry:
     ease_ok: bool
     issues: str
     notes: str
+    extra: str = ""
 
 def _ensure_files():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    if not LOG_FILE.exists():
-        pd.DataFrame(columns=list(ImpactEntry.__annotations__.keys())).to_csv(LOG_FILE, index=False)
-    if not FEEDBACK_FILE.exists():
-        pd.DataFrame(columns=list(FeedbackEntry.__annotations__.keys())).to_csv(FEEDBACK_FILE, index=False)
+    impact_columns = list(ImpactEntry.__annotations__.keys())
+    feedback_columns = list(FeedbackEntry.__annotations__.keys())
+
+    def _ensure_file(path: Path, columns: list[str]):
+        if not path.exists():
+            pd.DataFrame(columns=columns).to_csv(path, index=False)
+            return
+        df = pd.read_csv(path)
+        updated = False
+        missing = [col for col in columns if col not in df.columns]
+        if missing:
+            for col in missing:
+                df[col] = ""
+            updated = True
+        # Reordenamos columnas para mantener consistencia
+        ordered = df.reindex(columns=columns)
+        if not ordered.equals(df):
+            df = ordered
+            updated = True
+        if updated:
+            df.to_csv(path, index=False)
+
+    _ensure_file(LOG_FILE, impact_columns)
+    _ensure_file(FEEDBACK_FILE, feedback_columns)
 
 def append_impact(entry: ImpactEntry):
     _ensure_files()
     df = pd.read_csv(LOG_FILE)
-    df.loc[len(df)] = [
-        entry.ts_iso, entry.scenario, entry.target_name, entry.materials, entry.weights,
-        entry.process_id, entry.process_name, entry.mass_final_kg, entry.energy_kwh,
-        entry.water_l, entry.crew_min, entry.score
-    ]
+    if "extra" not in df.columns:
+        df["extra"] = ""
+    payload = asdict(entry)
+    df.loc[len(df)] = [payload.get(col, "") for col in df.columns]
     df.to_csv(LOG_FILE, index=False)
 
 def append_feedback(entry: FeedbackEntry):
     _ensure_files()
     df = pd.read_csv(FEEDBACK_FILE)
-    df.loc[len(df)] = [
-        entry.ts_iso, entry.astronaut, entry.scenario, entry.target_name, entry.option_idx,
-        entry.rigidity_ok, entry.ease_ok, entry.issues, entry.notes
-    ]
+    if "extra" not in df.columns:
+        df["extra"] = ""
+    payload = asdict(entry)
+    df.loc[len(df)] = [payload.get(col, "") for col in df.columns]
     df.to_csv(FEEDBACK_FILE, index=False)
 
 def load_impact_df() -> pd.DataFrame:
     _ensure_files()
-    return pd.read_csv(LOG_FILE)
+    df = pd.read_csv(LOG_FILE)
+    if "extra" not in df.columns:
+        df["extra"] = ""
+    return df
 
 def load_feedback_df() -> pd.DataFrame:
     _ensure_files()
-    return pd.read_csv(FEEDBACK_FILE)
+    df = pd.read_csv(FEEDBACK_FILE)
+    if "extra" not in df.columns:
+        df["extra"] = ""
+    return df
 
 def summarize_impact(df: pd.DataFrame) -> dict:
     if df.empty:
