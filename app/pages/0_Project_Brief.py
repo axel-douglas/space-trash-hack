@@ -11,14 +11,12 @@ if str(repo_root) not in sys.path:
 
 import streamlit as st
 import pandas as pd
-from pathlib import Path
 
 # ⚠️ primero
 st.set_page_config(page_title="REX-AI Mars — Brief", page_icon="🛰️", layout="wide")
 
-from app.modules.branding import inject_branding, PRIMARY, OK, WARN, RISK
+from app.modules.branding import inject_branding
 from app.modules.charts import predictions_ci_chart
-from app.modules.io import load_waste_df, load_process_df, load_targets
 
 inject_branding()
 
@@ -38,7 +36,7 @@ with st.container():
         )
     with c2:
         st.markdown(
-            f"""
+            """
             <div class="rex-card">
               <b>Restricciones clave</b>
               <ul>
@@ -51,13 +49,16 @@ with st.container():
             """, unsafe_allow_html=True
         )
     with c3:
+        inv_ok  = (repo_root/'data/waste_inventory_sample.csv').exists()
+        proc_ok = (repo_root/'data/process_catalog.csv').exists()
+        tgt_ok  = (repo_root/'data/targets_presets.json').exists()
         st.markdown(
             f"""
             <div class="rex-card">
               <b>Estado</b><br/>
-              <div class="rex-chip">Inventario: {'✅' if (repo_root/'data/waste_inventory_sample.csv').exists() else '❌'}</div>
-              <div class="rex-chip">Procesos: {'✅' if (repo_root/'data/process_catalog.csv').exists() else '❌'}</div>
-              <div class="rex-chip">Targets: {'✅' if (repo_root/'data/targets_presets.json').exists() else '❌'}</div>
+              <div class="rex-chip {'ok' if inv_ok else ''}">Inventario: {'✅' if inv_ok else '❌'}</div>
+              <div class="rex-chip {'ok' if proc_ok else ''}">Procesos: {'✅' if proc_ok else '❌'}</div>
+              <div class="rex-chip {'ok' if tgt_ok  else ''}">Targets: {'✅' if tgt_ok  else '❌'}</div>
             </div>
             """, unsafe_allow_html=True
         )
@@ -70,18 +71,18 @@ with st.container():
             """
             <div class="rex-card">
               <b>Ingredientes (residuos)</b><br/>
-              Tabla NASA simplificada con tejidos, empaques, EVA, aluminio, etc.<br/><br/>
-              <a href="#/page=1">Abrir Inventario →</a>
+              Tabla NASA simplificada con tejidos, empaques, EVA, aluminio, etc.
             </div>
             """, unsafe_allow_html=True
         )
+        st.page_link("app/pages/1_Inventory_Builder.py", label="Abrir Inventario →", icon="🧱")
     with b:
         st.markdown(
             """
             <div class="rex-card">
               <b>Literatura</b><br/>
               Enlaces al dossier de recursos NASA/MGS-1 y opciones de reuso inmediato.
-              <br/><br/>Incluye tablas de equivalentes comerciales.
+              Incluye tablas de equivalentes comerciales.
             </div>
             """, unsafe_allow_html=True
         )
@@ -91,20 +92,17 @@ with st.container():
             <div class="rex-card">
               <b>Regulatorio/Seguridad</b><br/>
               Checklists para evitar PFAS/microplásticos y compatibilidad con O₂/CO₂.
-              <br/><br/>Integrado al validador de seguridad de los procesos.
+              Integrado al validador de seguridad de los procesos.
             </div>
             """, unsafe_allow_html=True
         )
 
 st.markdown("### Predicciones de ensayo (demo)")
-# Datos demo: si ya hay candidatos generados los usamos, sino generamos placeholder
 cands = st.session_state.get("candidates", [])
 if cands:
-    # usar score como mean, CI ±(5-15) en escala arbitraria
     rows = []
     for i,c in enumerate(cands, start=1):
-        m = float(c["score"])
-        d = 5 + (i % 3) * 5
+        m = float(c["score"]); d = 5 + (i % 3) * 5
         rows.append(dict(batch=f"B{i:02d}", mean=m, lo=m-d, hi=m+d))
     dfp = pd.DataFrame(rows)
 else:
@@ -121,8 +119,6 @@ st.plotly_chart(fig, use_container_width=True)
 st.markdown("---")
 colL, colR = st.columns([1,1])
 with colL:
-    st.markdown("#### Empezar ahora")
-    st.button("Ir a 1) Inventario", type="primary")
+    st.page_link("app/pages/1_Inventory_Builder.py", label="Ir a 1) Inventario", icon="🧱")
 with colR:
-    st.markdown("#### Atajos")
-    st.markdown("• Ir a 2) Objetivo (Target) desde la barra lateral →")
+    st.page_link("app/pages/2_Target_Designer.py", label="Ir a 2) Objetivo", icon="🎯")
