@@ -10,6 +10,7 @@ if str(ROOT) not in sys.path:
 import streamlit as st
 st.set_page_config(page_title="Feedback & Impact", page_icon="📝", layout="wide")
 
+import json
 import pandas as pd
 from datetime import datetime
 from io import StringIO
@@ -18,6 +19,57 @@ from app.modules.impact import (
     ImpactEntry, FeedbackEntry, append_impact, append_feedback,
     load_impact_df, load_feedback_df, summarize_impact
 )
+
+
+def _parse_extra_blob(blob: str) -> dict:
+    """Convierte el campo `extra` a un dict manejando texto plano o JSON."""
+    if not isinstance(blob, str):
+        return {}
+    text = blob.strip()
+    if not text:
+        return {}
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
+        return {"raw": parsed}
+    except json.JSONDecodeError:
+        pass
+
+    data = {}
+    leftovers: list[str] = []
+    for chunk in text.split(";"):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if "=" in chunk:
+            key, value = chunk.split("=", 1)
+            data[key.strip()] = value.strip()
+        else:
+            leftovers.append(chunk)
+    if leftovers and "raw" not in data:
+        data["raw"] = "; ".join(leftovers)
+    return data
+
+
+def _with_extra_columns(df: pd.DataFrame, rename_map: dict[str, str] | None = None) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    work = df.copy()
+    if "extra" not in work.columns:
+        work["extra"] = ""
+        return work
+    meta_df = pd.DataFrame(work["extra"].fillna("").map(_parse_extra_blob).tolist())
+    if meta_df.empty:
+        return work
+    if rename_map:
+        meta_df = meta_df.rename(columns=rename_map)
+    for column in meta_df.columns:
+        if column in work.columns:
+            work[f"extra_{column}"] = meta_df[column]
+        else:
+            work[column] = meta_df[column]
+    return work
 
 # ========= estilos SpaceX/NASA-like =========
 st.markdown("""
@@ -203,7 +255,12 @@ if idf is not None and len(idf):
         st.caption("¿Dónde estamos invirtiendo tiempo? ¿Vale la pena mover corridas a procesos más eficientes?")
 
     st.markdown("**Detalle de corridas (impact log)**")
-    st.dataframe(idf, use_container_width=True, hide_index=True)
+    impact_display = _with_extra_columns(idf, {"regolith_pct": "Regolith (%)"})
+    if "Regolith (%)" in impact_display.columns:
+        impact_display["Regolith (%)"] = impact_display["Regolith (%)"].apply(
+            lambda v: f"{float(v) * 100:.0f}%" if isinstance(v, str) and v.replace('.', '', 1).isdigit() else v
+        )
+    st.dataframe(impact_display, use_container_width=True, hide_index=True)
 
     # Export
     csv_buf = StringIO(); idf.to_csv(csv_buf, index=False)
@@ -211,6 +268,26 @@ if idf is not None and len(idf):
                        file_name="impact_log.csv", mime="text/csv")
 else:
     st.info("Aún no hay corridas registradas en el log de impacto.")
+
+st.markdown("---")
+
+st.markdown("### C.1) Feedback capturado (metadatos completos)")
+if fdf is not None and len(fdf):
+    feedback_display = _with_extra_columns(fdf, {
+        "overall": "Satisfacción", "porosity": "Porosidad",
+        "surface": "Superficie", "bonding": "Unión",
+        "failure": "Falla observada"
+    })
+    # Para registros antiguos sin `extra`, mostramos '-'
+    for col in ["Satisfacción", "Porosidad", "Superficie", "Unión", "Falla observada"]:
+        if col in feedback_display.columns:
+            feedback_display[col] = feedback_display[col].replace({"": "-"}).fillna("-")
+    st.dataframe(feedback_display, use_container_width=True, hide_index=True)
+    csv_buf_fb = StringIO(); fdf.to_csv(csv_buf_fb, index=False)
+    st.download_button("⬇️ Descargar feedback (CSV)", data=csv_buf_fb.getvalue().encode("utf-8"),
+                       file_name="feedback_log.csv", mime="text/csv")
+else:
+    st.info("Aún no hay feedback registrado.")
 
 st.markdown("---")
 st.markdown("### D) Lectura rápida para aprendices (¿por qué esto importa?)")
