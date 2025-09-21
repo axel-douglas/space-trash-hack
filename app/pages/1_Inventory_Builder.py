@@ -127,3 +127,13 @@ styled = (
 st.dataframe(styled, use_container_width=True)
 
 st.info("**Siguiente paso** → Abrí **2) Objetivo**. El generador prioriza ítems problemáticos y usa **P03 (Sinter with MGS-1)** con regolito cuando corresponde.")
+
+show_only_prob = st.toggle("Mostrar solo problemáticos", value=False)
+preview_view = preview[preview["_problematic"]] if show_only_prob else preview
+styled = (
+    preview_view.style
+    .map(_indicator_style, subset=["Indicador"])
+    .hide(axis="columns", subset=["_problematic"])
+)
+st.dataframe(styled, use_container_width=True)
+
