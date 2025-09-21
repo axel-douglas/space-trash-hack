@@ -69,3 +69,9 @@ st.markdown(f"""
 """)
 
 st.info(f"Recursos estimados — Energía: {p.energy_kwh:.2f} kWh • Agua: {p.water_l:.2f} L • Tiempo tripulación: {p.crew_min:.0f} min")
+
+st.markdown("**Trazabilidad (NASA)**")
+st.write("IDs usados:", ", ".join(sel.get("source_ids", [])))
+st.write("Categorías:", ", ".join(map(str, sel.get("source_categories", []))))
+st.write("Flags:", ", ".join(map(str, sel.get("source_flags", []))))
+
