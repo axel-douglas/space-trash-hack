@@ -162,6 +162,11 @@ left, right = st.columns([1.2, 1.1])
 with left:
     section("Control del generador", "Elegí cuántas opciones querés probar.")
     n = st.slider("Número de candidatos a generar", 3, 12, 6)
+    opt_evals = st.slider(
+        "Evaluaciones del optimizador (BO/MILP)",
+        0, 80, 24,
+        help="Cantidad de iteraciones adicionales para refinar el frente Pareto."
+    )
 
 with right:
     section("Tips de uso", "Para quienes no son expertos:")
@@ -173,16 +178,23 @@ with right:
 
 # CTA principal
 if st.button("🚀 Generar opciones", type="primary", use_container_width=True):
-    cands = generate_candidates(
+    result = generate_candidates(
         waste_df, proc_filtered, target, n=n,
-        crew_time_low=target.get("crew_time_low", False)
+        crew_time_low=target.get("crew_time_low", False),
+        optimizer_evals=opt_evals
     )
+    if isinstance(result, tuple):
+        cands, history = result
+    else:
+        cands, history = result, pd.DataFrame()
     st.session_state["candidates"] = cands
+    st.session_state["optimizer_history"] = history
 
 st.markdown('<div class="hr-micro"></div>', unsafe_allow_html=True)
 
 # -------------------- Si no hay candidatos aún --------------------
 cands = st.session_state.get("candidates", [])
+history_df = st.session_state.get("optimizer_history", pd.DataFrame())
 if not cands:
     st.info("Todavía no hay candidatos. Configurá el número y presioná **Generar opciones**. "
             "Recomendación: asegurate de que tu inventario tenga pouches, espumas, EVA/CTB, textiles o nitrilo; "
@@ -202,6 +214,20 @@ def _res_bar(current: float, limit: float) -> float:
     if limit is None or float(limit) <= 0:
         return 0.0
     return max(0.0, min(1.0, current/float(limit)))
+
+if isinstance(history_df, pd.DataFrame) and not history_df.empty:
+    st.subheader("Convergencia del optimizador")
+    st.caption("Seguimiento rápido de hipervolumen y porcentaje de soluciones dominadas.")
+    valid_hist = history_df.dropna(subset=["hypervolume"])
+    if not valid_hist.empty:
+        last = valid_hist.iloc[-1]
+        m1, m2, m3 = st.columns([1, 1, 1])
+        m1.metric("Hipervolumen", f"{last['hypervolume']:.3f}")
+        m2.metric("Dominancia", f"{last['dominance_ratio']*100:.1f}%")
+        m3.metric("Tamaño Pareto", f"{int(last['pareto_size'])}")
+        chart_data = valid_hist.set_index("iteration")["hypervolume"].to_frame()
+        chart_data["dominancia"] = valid_hist.set_index("iteration")["dominance_ratio"]
+        st.line_chart(chart_data)
 
 st.subheader("Resultados del generador")
 st.caption("Cada ‘Opción’ es una combinación concreta de residuos + proceso, con predicción de propiedades y consumo de recursos. "
