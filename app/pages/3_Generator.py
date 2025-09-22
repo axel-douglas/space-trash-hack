@@ -9,9 +9,16 @@ import streamlit as st
 import pandas as pd
 from app.modules.ui_blocks import inject_css, pill, section, card
 from app.modules.io import load_waste_df, load_process_df
+from app.modules.impact import load_impact_df, load_feedback_df
 from app.modules.process_planner import choose_process
 from app.modules.generator import generate_candidates
 from app.modules.safety import check_safety, safety_badge
+from app.modules.learning import (
+    prepare_learning_bundle,
+    train_acceptance_model,
+    score_candidates,
+    attach_learning_signals,
+)
 
 # 1) st.set_page_config DEBE ir primero
 st.set_page_config(page_title="Generador", page_icon="⚙️", layout="wide")
@@ -173,11 +180,18 @@ with right:
 
 # CTA principal
 if st.button("🚀 Generar opciones", type="primary", use_container_width=True):
-    cands = generate_candidates(
+    raw_cands = generate_candidates(
         waste_df, proc_filtered, target, n=n,
         crew_time_low=target.get("crew_time_low", False)
     )
+    bundle = prepare_learning_bundle(load_impact_df(), load_feedback_df())
+    model = train_acceptance_model(bundle.dataset)
+    signals = score_candidates(raw_cands, model, bundle.baseline_score, bundle.has_supervision)
+    cands = attach_learning_signals(raw_cands, signals)
+    for idx, cand in enumerate(cands, start=1):
+        cand["option_idx"] = idx
     st.session_state["candidates"] = cands
+    st.session_state["learning_baseline"] = bundle.baseline_score
 
 st.markdown('<div class="hr-micro"></div>', unsafe_allow_html=True)
 
@@ -209,7 +223,10 @@ st.caption("Cada ‘Opción’ es una combinación concreta de residuos + proces
 
 for i, c in enumerate(cands):
     p = c["props"]
-    header = f"Opción {i+1} — Score {c['score']} — Proceso {c['process_id']} {c['process_name']}"
+    header = (
+        f"Opción {c.get('option_idx', i+1)} — Score {c['score']} — "
+        f"Proceso {c['process_id']} {c['process_name']}"
+    )
     with st.expander(header, expanded=(i == 0)):
         # Línea de badges
         badges = []
@@ -225,6 +242,11 @@ for i, c in enumerate(cands):
         ])
         if problem_present:
             badges.append("♻️ Valorización de problemáticos")
+        prob = c.get("acceptance_prob")
+        if prob is not None:
+            badges.append(f"🧑‍🚀 P(aceptación) {prob*100:0.0f}%")
+        if c.get("active_priority"):
+            badges.append("🤖 Prioridad Active Learning")
         if badges:
             st.markdown(" ".join([f'<span class="badge">{b}</span>' for b in badges]), unsafe_allow_html=True)
 
@@ -259,6 +281,14 @@ for i, c in enumerate(cands):
             colB3.progress(_res_bar(p.crew_min, target["max_crew_min"]))
             colB3.caption(f"{p.crew_min:.0f} / {target['max_crew_min']}")
 
+        # Señal del modelo de aceptación
+        if prob is not None:
+            st.markdown("**🧠 Señales Human-in-the-Loop**")
+            colP1, colP2, colP3 = st.columns(3)
+            colP1.metric("Prob. aceptación", f"{prob*100:.1f}%")
+            colP2.metric("Incertidumbre", f"{c.get('uncertainty', 0.0):.2f}")
+            colP3.metric("Expected improvement", f"{c.get('expected_improvement', 0.0):.3f}")
+
         st.markdown('<div class="hr-micro"></div>', unsafe_allow_html=True)
 
         # Trazabilidad NASA
@@ -279,8 +309,12 @@ for i, c in enumerate(cands):
             pill("OK", "ok"); st.success(badge["detail"])
 
         # Botón de selección
-        if st.button(f"✅ Seleccionar Opción {i+1}", key=f"pick_{i}"):
-            st.session_state["selected"] = {"data": c, "safety": badge}
+        if st.button(f"✅ Seleccionar Opción {c.get('option_idx', i+1)}", key=f"pick_{i}"):
+            st.session_state["selected"] = {
+                "data": c,
+                "safety": badge,
+                "option_idx": c.get("option_idx", i + 1),
+            }
             st.success("Opción seleccionada. Abrí **4) Resultados**, **5) Comparar & Explicar** o **6) Pareto & Export**.")
 
         # Explicación en criollo (mini narrativa) — evitar anidar expanders

@@ -14,6 +14,7 @@ class ImpactEntry:
     ts_iso: str
     scenario: str
     target_name: str
+    option_idx: int
     materials: str
     weights: str
     process_id: str
@@ -23,6 +24,10 @@ class ImpactEntry:
     water_l: float
     crew_min: float
     score: float
+    pred_rigidity: float
+    pred_tightness: float
+    regolith_pct: float = 0.0
+    extra: str = ""
 
 @dataclass
 class FeedbackEntry:
@@ -35,6 +40,12 @@ class FeedbackEntry:
     ease_ok: bool
     issues: str
     notes: str
+    overall: float = 0.0
+    porosity: float = 0.0
+    surface: float = 0.0
+    bonding: float = 0.0
+    failure_mode: str = "-"
+    extra: str = ""
 
 def _ensure_files():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -43,32 +54,60 @@ def _ensure_files():
     if not FEEDBACK_FILE.exists():
         pd.DataFrame(columns=list(FeedbackEntry.__annotations__.keys())).to_csv(FEEDBACK_FILE, index=False)
 
+def _ensure_columns(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    missing = [c for c in cols if c not in df.columns]
+    for c in missing:
+        df[c] = pd.NA
+    return df
+
 def append_impact(entry: ImpactEntry):
     _ensure_files()
     df = pd.read_csv(LOG_FILE)
-    df.loc[len(df)] = [
-        entry.ts_iso, entry.scenario, entry.target_name, entry.materials, entry.weights,
-        entry.process_id, entry.process_name, entry.mass_final_kg, entry.energy_kwh,
-        entry.water_l, entry.crew_min, entry.score
-    ]
+    cols = list(ImpactEntry.__annotations__.keys())
+    df = _ensure_columns(df, cols)
+    record = asdict(entry)
+    df.loc[len(df), cols] = [record.get(c, pd.NA) for c in cols]
     df.to_csv(LOG_FILE, index=False)
 
 def append_feedback(entry: FeedbackEntry):
     _ensure_files()
     df = pd.read_csv(FEEDBACK_FILE)
-    df.loc[len(df)] = [
-        entry.ts_iso, entry.astronaut, entry.scenario, entry.target_name, entry.option_idx,
-        entry.rigidity_ok, entry.ease_ok, entry.issues, entry.notes
-    ]
+    cols = list(FeedbackEntry.__annotations__.keys())
+    df = _ensure_columns(df, cols)
+    record = asdict(entry)
+    df.loc[len(df), cols] = [record.get(c, pd.NA) for c in cols]
     df.to_csv(FEEDBACK_FILE, index=False)
 
 def load_impact_df() -> pd.DataFrame:
     _ensure_files()
-    return pd.read_csv(LOG_FILE)
+    df = pd.read_csv(LOG_FILE)
+    df = _ensure_columns(df, list(ImpactEntry.__annotations__.keys()))
+    for col in ["mass_final_kg", "energy_kwh", "water_l", "crew_min", "score",
+                "pred_rigidity", "pred_tightness", "regolith_pct"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    if "regolith_pct" in df.columns and df["regolith_pct"].isna().all() and "extra" in df.columns:
+        extracted = df["extra"].astype(str).str.extract(r"regolith_pct=([0-9\.]+)")
+        df.loc[df["regolith_pct"].isna(), "regolith_pct"] = pd.to_numeric(extracted[0], errors="coerce")
+    if "option_idx" in df.columns:
+        df["option_idx"] = pd.to_numeric(df["option_idx"], errors="coerce").fillna(0).astype(int)
+    return df
 
 def load_feedback_df() -> pd.DataFrame:
     _ensure_files()
-    return pd.read_csv(FEEDBACK_FILE)
+    df = pd.read_csv(FEEDBACK_FILE)
+    df = _ensure_columns(df, list(FeedbackEntry.__annotations__.keys()))
+    bool_cols = ["rigidity_ok", "ease_ok"]
+    for col in bool_cols:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.lower().isin(["true", "1", "yes", "t"])
+    num_cols = ["overall", "porosity", "surface", "bonding"]
+    for col in num_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    if "option_idx" in df.columns:
+        df["option_idx"] = pd.to_numeric(df["option_idx"], errors="coerce").fillna(0).astype(int)
+    return df
 
 def summarize_impact(df: pd.DataFrame) -> dict:
     if df.empty:

@@ -11,12 +11,17 @@ import streamlit as st
 st.set_page_config(page_title="Feedback & Impact", page_icon="📝", layout="wide")
 
 import pandas as pd
+import altair as alt
 from datetime import datetime
 from io import StringIO
 
 from app.modules.impact import (
     ImpactEntry, FeedbackEntry, append_impact, append_feedback,
     load_impact_df, load_feedback_df, summarize_impact
+)
+from app.modules.learning import (
+    prepare_learning_bundle,
+    pareto_shift_data,
 )
 
 # ========= estilos SpaceX/NASA-like =========
@@ -47,6 +52,7 @@ state_sel   = st.session_state.get("selected", None)
 candidato   = state_sel["data"] if state_sel else None
 props       = candidato["props"] if candidato else None
 regolith_pct = (candidato.get("regolith_pct", 0.0) if candidato else 0.0)
+option_idx_sel = state_sel.get("option_idx", 0) if state_sel else 0
 
 # ========= HERO =========
 st.markdown("""
@@ -100,6 +106,7 @@ with colBtn1:
             ts_iso=datetime.utcnow().isoformat(),
             scenario=target.get("scenario","-"),
             target_name=target.get("name","-"),
+            option_idx=int(option_idx_sel or 0),
             materials="|".join(candidato.get("materials", [])),
             weights="|".join(map(str, candidato.get("weights", []))),
             process_id=candidato.get("process_id","-"),
@@ -109,7 +116,9 @@ with colBtn1:
             water_l=float(p.water_l),
             crew_min=float(p.crew_min),
             score=float(candidato.get("score", 0.0)),
-            extra=f"regolith_pct={regolith_pct:.2f}"
+            pred_rigidity=float(p.rigidity),
+            pred_tightness=float(p.tightness),
+            regolith_pct=float(regolith_pct)
         )
         append_impact(entry)
         st.success("Impacto registrado en el log.")
@@ -126,7 +135,7 @@ with st.form("feedback_form"):
     col1, col2, col3 = st.columns(3)
     with col1:
         astronaut = st.text_input("Operador / Astronauta", "")
-        option_idx = st.number_input("Opción elegida #", min_value=1, step=1, value=1)
+        option_idx = st.number_input("Opción elegida #", min_value=1, step=1, value=int(option_idx_sel or 1))
         overall = st.slider("Satisfacción global", 0, 10, 8, help="0=Malísimo, 10=Excelente")
     with col2:
         rigid_ok = st.slider("Rigidez percibida", 0, 10, 8)
@@ -152,8 +161,11 @@ with st.form("feedback_form"):
             ease_ok=bool(ease_ok >= 6),
             issues=issues,
             notes=notes,
-            # campos extendidos en `.extra` (si tu dataclass no los tiene, se guardan como texto)
-            extra=f"overall={overall};porosity={porosity};surface={surface};bonding={bonding};failure={failure}"
+            overall=float(overall),
+            porosity=float(porosity),
+            surface=float(surface),
+            bonding=float(bonding),
+            failure_mode=str(failure)
         )
         append_feedback(entry)
         st.success("Feedback guardado. Rex-AI utilizará estas señales para ajustar pesos/penalizaciones y recomendaciones.")
@@ -212,19 +224,62 @@ if idf is not None and len(idf):
 else:
     st.info("Aún no hay corridas registradas en el log de impacto.")
 
+# ========= Panel D: Feedback → desplazamiento de la frontera de Pareto =========
+bundle = prepare_learning_bundle(idf, fdf)
+shift = pareto_shift_data(bundle.merged)
 st.markdown("---")
-st.markdown("### D) Lectura rápida para aprendices (¿por qué esto importa?)")
+st.markdown("### D) Feedback → desplazamiento de la frontera de Pareto")
+if shift:
+    scatter = shift["scatter"]
+    base = alt.Chart(scatter).mark_circle(size=90, opacity=0.65).encode(
+        x="Energía (kWh)",
+        y="Score",
+        color=alt.Color("accepted", title="Resultado"),
+        tooltip=["Energía (kWh)", "Agua (L)", "Crew (min)", "Score", "accepted"],
+    )
+    chart = base
+    for label, front_df in shift["fronts"].items():
+        color = "#ff9f1c" if label == "Aceptado" else "#2ec4b6"
+        layer = (
+            alt.Chart(front_df)
+            .mark_line(point=alt.OverlayMarkDef(filled=True, size=85))
+            .encode(
+                x="Energía (kWh)",
+                y="Score",
+                color=alt.value(color),
+                tooltip=["Energía (kWh)", "Agua (L)", "Crew (min)", "Score"],
+            )
+        )
+        chart = chart + layer
+    st.altair_chart(chart, use_container_width=True)
+    st.caption(
+        "La curva naranja es la Pareto usando sólo ensayos aceptados; si se mueve a la izquierda/arriba respecto al histórico "
+        "(turquesa), el feedback está guiando hacia recetas con menos consumo y mejor Score."
+    )
+
+    if not bundle.dataset.empty and not bundle.merged[bundle.merged["accepted"] == 1].empty:
+        aceptadas = bundle.merged[bundle.merged["accepted"] == 1]
+        media = aceptadas[["score", "energy_kwh", "water_l", "crew_min"]].mean()
+        st.markdown(
+            f"**Resumen HIL** → Score medio aceptado: {media['score']:.2f} | kWh: {media['energy_kwh']:.2f} | "
+            f"Agua: {media['water_l']:.2f} L | Crew: {media['crew_min']:.1f} min"
+        )
+else:
+    st.info("Registrá feedback y corridas para analizar el desplazamiento de la Pareto.")
+
+st.markdown("---")
+st.markdown("### E) Lectura rápida para aprendices (¿por qué esto importa?)")
 g1, g2 = st.columns(2)
 with g1:
     st.markdown("""
 - **Impacto = realidad**: qué tanto residuo convertimos en producto y a qué costo (energía/agua/crew).
 - **Feedback ≠ opinión suelta**: capturamos señales de materiales (rigidez, porosidad, unión) que Rex-AI usa para ajustar decisiones.
-- **Efecto MGS-1**: cuando el proceso es sinterizado, verás en el log `extra=regolith_pct=XX`. El regolito tiende a subir rigidez y bajar estanqueidad; si percibís más porosidad, anotarlo aquí ayuda.
+- **Efecto MGS-1**: cuando el proceso es sinterizado, verás el % de regolito registrado automáticamente; si percibís más porosidad, anotarlo aquí ayuda.
 """)
 with g2:
     st.markdown("""
-- **Cómo usarlo**: tras cada corrida, registra impacto (1 click) y cuelga feedback (2 min).  
-- **Cómo leerlo**: mirá la tendencia diaria; si los kWh suben por pieza, hay algo en el setup.  
+- **Cómo usarlo**: tras cada corrida, registra impacto (1 click) y cuelga feedback (2 min).
+- **Cómo leerlo**: mirá la tendencia diaria; si los kWh suben por pieza, hay algo en el setup.
 - **Qué permite**: cerrar el loop *plan → ejecutar → medir → aprender* como en un banco de pruebas de SpaceX/NASA.
 """)
 
