@@ -1,0 +1,44 @@
+{
+  "trained_at": "2025-09-22T02:11:30.838671+00:00",
+  "n_samples": 1200,
+  "feature_columns": [
+    "process_id",
+    "regolith_pct",
+    "total_mass_kg",
+    "density_kg_m3",
+    "moisture_frac",
+    "difficulty_index",
+    "problematic_mass_frac",
+    "problematic_item_frac",
+    "aluminum_frac",
+    "foam_frac",
+    "eva_frac",
+    "textile_frac",
+    "multilayer_frac",
+    "polyethylene_frac",
+    "carbon_fiber_frac",
+    "hydrogen_rich_frac",
+    "packaging_frac",
+    "gas_recovery_index",
+    "logistics_reuse_index",
+    "oxide_sio2",
+    "oxide_feot",
+    "oxide_mgo",
+    "oxide_cao",
+    "oxide_so3",
+    "oxide_h2o"
+  ],
+  "targets": [
+    "rigidez",
+    "estanqueidad",
+    "energy_kwh",
+    "water_l",
+    "crew_min"
+  ],
+  "model_name": "rexai-mlp-nasa-v2",
+  "dataset_path": "processed/rexai_training_dataset.parquet",
+  "autoencoder": {
+    "latent_dim": 8,
+    "path": "rexai_autoencoder.pt"
+  }
+}

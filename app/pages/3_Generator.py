@@ -267,6 +267,15 @@ for i, c in enumerate(cands):
             colA1.metric("Rigidez", f"{p.rigidity:.2f}")
             colA2.metric("Estanqueidad", f"{p.tightness:.2f}")
             colA3.metric("Masa final", f"{p.mass_final_kg:.2f} kg")
+            source = getattr(p, "source", "heuristic")
+            if source.startswith("rexai"):
+                meta = c.get("ml_prediction", {}).get("metadata", {})
+                trained_at = meta.get("trained_at", "?")
+                latent = c.get("latent_vector", [])
+                latent_note = "" if not latent else f" · Vector latente {len(latent)}D Rex-AI"
+                st.caption(f"Predicción por modelo ML (**{source}**, entrenado {trained_at}){latent_note}.")
+            else:
+                st.caption("Predicción heurística basada en reglas.")
 
         with colB:
             st.markdown("**🔧 Proceso**")
@@ -294,6 +303,21 @@ for i, c in enumerate(cands):
         st.write("Flags:", ", ".join(map(str, c.get("source_flags", []))) or "—")
         if c.get("regolith_pct", 0) > 0:
             st.write(f"**MGS-1 agregado:** {c['regolith_pct']*100:.0f}%")
+        feat = c.get("features", {})
+        if feat:
+            feat_summary = {
+                "Masa total (kg)": feat.get("total_mass_kg"),
+                "Densidad (kg/m³)": feat.get("density_kg_m3"),
+                "Humedad": feat.get("moisture_frac"),
+                "Dificultad": feat.get("difficulty_index"),
+                "Recupero gas": feat.get("gas_recovery_index"),
+                "Reuso logístico": feat.get("logistics_reuse_index"),
+            }
+            feat_df = pd.DataFrame([feat_summary])
+            st.markdown("**Features NASA/ML (alimentan la IA)**")
+            st.dataframe(feat_df, hide_index=True, use_container_width=True)
+            if feat.get("latent_vector"):
+                st.caption("Latente Rex-AI incluido para análisis generativo.")
 
         # Seguridad (badges)
         st.markdown("**🛡️ Seguridad**")

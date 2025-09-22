@@ -58,6 +58,13 @@ with topL:
         f"**Materiales:** {', '.join(sel['materials'])}"
         + (f" &nbsp;&nbsp;·&nbsp;&nbsp;**MGS-1**: {int(sel.get('regolith_pct', 0)*100)}%" if sel.get("regolith_pct", 0) > 0 else "")
     )
+    src = getattr(p, "source", "heuristic")
+    if src.startswith("rexai"):
+        meta = sel.get("ml_prediction", {}).get("metadata", {})
+        trained_at = meta.get("trained_at", "?")
+        st.caption(f"Predicciones por modelo Rex-AI (**{src}**, entrenado {trained_at}).")
+    else:
+        st.caption("Predicciones heurísticas basadas en reglas NASA.")
 
 with topR:
     # Estado de seguridad (pill + popover de explicación)
@@ -200,6 +207,25 @@ with tab4:
     st.markdown("**Categorías:** " + ", ".join(map(str, sel.get("source_categories", []) or ["—"])))
     st.markdown("**Flags:** " + ", ".join(map(str, sel.get("source_flags", []) or ["—"])))
     st.caption("Esto permite demostrar que estamos atacando pouches multilayer, espumas ZOTEK, EVA/CTB, nitrilo, etc.")
+    feat = sel.get("features", {})
+    if feat:
+        feat_view = {
+            "Masa total (kg)": feat.get("total_mass_kg"),
+            "Densidad (kg/m³)": feat.get("density_kg_m3"),
+            "Humedad": feat.get("moisture_frac"),
+            "Dificultad": feat.get("difficulty_index"),
+            "Recupero gas": feat.get("gas_recovery_index"),
+            "Reuso logístico": feat.get("logistics_reuse_index"),
+            "SiO₂ (regolito)": feat.get("oxide_sio2"),
+            "FeOT (regolito)": feat.get("oxide_feot"),
+        }
+        st.markdown("**Features NASA/ML**")
+        st.dataframe(pd.DataFrame([feat_view]), hide_index=True, use_container_width=True)
+    latent = sel.get("latent_vector") or feat.get("latent_vector")
+    if latent:
+        st.info(
+            f"Vector latente Rex-AI de {len(latent)} dimensiones listo para clustering o búsqueda de recetas similares."
+        )
 
 # ======== Bloque final de educación rápida ========
 st.markdown("---")
