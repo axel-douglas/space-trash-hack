@@ -4,10 +4,54 @@ import os
 import random
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Dict, Tuple
 from typing import Any, Dict
 
 import numpy as np
 import pandas as pd
+import os
+
+try:  # Lazy import to avoid circular dependency during training pipelines
+    from app.modules.ml_models import MODEL_REGISTRY
+except Exception:  # pragma: no cover - fallback when models are not available
+    MODEL_REGISTRY = None
+
+DATASETS_ROOT = Path(__file__).resolve().parents[2] / "datasets"
+
+try:  # Preload regolith composition and mission coefficients for feature parity
+    _REGOLITH_VECTOR = (
+        pd.read_csv(DATASETS_ROOT / "raw" / "mgs1_oxides.csv")
+        .assign(oxide=lambda df: df["oxide"].str.lower())
+        .set_index("oxide")["wt_percent"]
+        .div(100.0)
+        .to_dict()
+    )
+except Exception:  # pragma: no cover - fallback constants
+    _REGOLITH_VECTOR = {
+        "sio2": 0.48,
+        "feot": 0.18,
+        "mgo": 0.13,
+        "cao": 0.055,
+        "so3": 0.07,
+        "h2o": 0.032,
+    }
+
+try:
+    _GAS_METRICS = pd.read_csv(DATASETS_ROOT / "raw" / "nasa_trash_to_gas.csv")
+    _GAS_MEAN_YIELD = float(
+        (_GAS_METRICS["o2_ch4_yield_kg"] / _GAS_METRICS["water_makeup_kg"].clip(lower=1e-6)).mean()
+    )
+except Exception:  # pragma: no cover - fallback constant
+    _GAS_MEAN_YIELD = 6.0
+
+try:
+    _LOGISTICS = pd.read_csv(DATASETS_ROOT / "raw" / "logistics_to_living.csv")
+    _LOGISTICS["reuse_efficiency"] = (
+        (_LOGISTICS["outfitting_replaced_kg"] - _LOGISTICS["residual_waste_kg"]) / _LOGISTICS["packaging_kg"].clip(lower=1e-6)
+    ).clip(lower=0)
+    _MEAN_REUSE = float(_LOGISTICS["reuse_efficiency"].mean())
+except Exception:  # pragma: no cover - fallback constant
+    _MEAN_REUSE = 0.6
 
 try:  # Lazy import to avoid circular dependency during training pipelines
     from app.modules.ml_models import MODEL_REGISTRY
@@ -64,7 +108,10 @@ class PredProps:
     water_l: float
     crew_min: float
     source: str = "heuristic"
-
+    uncertainty: dict[str, float] | None = None
+    confidence_interval: dict[str, tuple[float, float]] | None = None
+    feature_importance: list[tuple[str, float]] | None = None
+    comparisons: dict[str, dict[str, float]] | None = None
 
 # --- utilidades de compatibilidad con DF (nombres de columnas) ---
 def _col(df: pd.DataFrame, candidates: list[str], default=None):
@@ -121,6 +168,20 @@ def _ensure_compat(df: pd.DataFrame) -> pd.DataFrame:
         out["pct_volume"] = pd.to_numeric(out[pvol_col], errors="coerce").fillna(0.0)
     elif "pct_volume" not in out.columns:
         out["pct_volume"] = 0.0
+    # Key materials text for embeddings
+    if "key_materials" not in out.columns:
+        out["key_materials"] = out["material"].astype(str)
+    out["tokens"] = (
+        out["material"].astype(str).str.lower()
+        + " "
+        + out["category"].astype(str).str.lower()
+        + " "
+        + out["flags"].astype(str).str.lower()
+        + " "
+        + out["key_materials"].astype(str).str.lower()
+    )
+    volume_m3 = (out["volume_l"].replace(0, np.nan) / 1000.0).fillna(0.001)
+    out["density_kg_m3"] = out["kg"].astype(float) / volume_m3
     # Flags
     flg_col = _col(out, ["flags", "Flags"])
     if flg_col != "flags":
@@ -163,6 +224,13 @@ def _is_problematic(row: pd.Series) -> bool:
     ]
     return any(rules)
 
+def _pick_materials(
+    df: pd.DataFrame,
+    n: int = 2,
+    problematic_bias: float = 2.0,
+) -> pd.DataFrame:
+    # Preferimos masa y problemáticos (boost configurable)
+    w = df["kg"].clip(lower=0.01) + df["_problematic"].astype(int) * float(problematic_bias)
 
 def _pick_materials(df: pd.DataFrame, n: int = 2) -> pd.DataFrame:
     # Preferimos masa y problemáticos (boost)
@@ -191,6 +259,21 @@ def generate_candidates(
         return [], pd.DataFrame()
 
     df = _ensure_compat(waste_df)
+    process_ids = (
+        sorted(proc_df["process_id"].astype(str).unique().tolist())
+        if proc_df is not None and not proc_df.empty
+        else []
+    )
+    def _sampler(override: dict[str, Any] | None = None) -> dict | None:
+        override = override or {}
+        bias = float(override.get("problematic_bias", 2.0))
+        picks = _pick_materials(df, n=random.choice([2, 3]), problematic_bias=bias)
+        tuning: dict[str, Any] = {}
+        if "regolith_pct" in override:
+            tuning["regolith_pct"] = float(override["regolith_pct"])
+        if "process_choice" in override:
+            tuning["process_choice"] = override["process_choice"]
+        return _build_candidate(picks, proc_df, target, crew_time_low, tuning)
 
     def _sampler() -> dict | None:
         picks = _pick_materials(df, n=random.choice([2, 3]))
@@ -209,6 +292,11 @@ def generate_candidates(
             from app.modules.optimizer import optimize_candidates
 
             pareto, history = optimize_candidates(
+                initial_candidates=out,
+                sampler=_sampler,
+                target=target,
+                n_evals=int(optimizer_evals),
+                process_ids=process_ids,
                 initial_candidates=out, sampler=_sampler, target=target, n_evals=int(optimizer_evals)
             )
             out = pareto
@@ -280,6 +368,7 @@ def _derive_features(
 
     features: Dict[str, Any] = {
         "process_id": str(proc["process_id"]),
+        "total_mass_kg": total_kg,
         # Ambos nombres por compatibilidad
         "total_mass_kg": total_kg,
         "mass_input_kg": total_kg,
@@ -287,6 +376,8 @@ def _derive_features(
         "num_items": int(len(picks)),
         "moisture_frac": float(np.clip(np.dot(weights, moisture), 0.0, 1.0)),
         "difficulty_index": float(np.clip(np.dot(weights, difficulty), 0.0, 1.0)),
+        "problematic_mass_frac": float(np.clip(np.dot(weights, pct_mass), 0.0, 1.0)),
+        "problematic_item_frac": float(np.clip(np.dot(weights, pct_volume), 0.0, 1.0)),
         # Vistas alternativas (porcentajes declarados vs. flags problemáticos)
         "problematic_mass_frac": float(
             np.clip(max(problematic_mass / total_kg, float(np.dot(weights, pct_mass))), 0.0, 1.0)
@@ -318,11 +409,17 @@ def _derive_features(
 
 
 def _build_candidate(
+    picks: pd.DataFrame,
+    proc_df: pd.DataFrame,
+    target: dict,
+    crew_time_low: bool = False,
+    tuning: dict[str, Any] | None = None,
     picks: pd.DataFrame, proc_df: pd.DataFrame, target: dict, crew_time_low: bool = False
 ) -> dict | None:
     if picks is None or picks.empty or proc_df is None or proc_df.empty:
         return None
 
+    tuning = tuning or {}
     total_kg = max(0.001, float(picks["kg"].sum()))
     weights = (picks["kg"] / total_kg).round(2).tolist()
     base_weights = weights.copy()
@@ -332,7 +429,8 @@ def _build_candidate(
     used_flags = picks["_source_flags"].tolist()
     used_mats = picks["material"].tolist()
 
-    proc = _select_process(proc_df, used_cats, used_flags, used_mats)
+    preferred_process = tuning.get("process_choice")
+    proc = _select_process(proc_df, used_cats, used_flags, used_mats, preferred_process)
 
     mass_final = total_kg * 0.90
     energy = float(proc["energy_kwh_per_kg"]) * mass_final
@@ -345,12 +443,13 @@ def _build_candidate(
     rigidity = min(1.0, 0.5 + (0.2 if "al" in mats_join or "aluminum" in mats_join else 0.0))
     tightness = min(1.0, 0.5 + (0.2 if "pouches" in cats_join or "pe-pet-al" in mats_join else 0.0))
 
-    regolith_pct = 0.0
+    regolith_pct = float(tuning.get("regolith_pct", 0.0))
     materials_for_plan = used_mats.copy()
     weights_for_plan = weights.copy()
 
-    if str(proc["process_id"]).upper() == "P03":
+    if regolith_pct <= 0.0 and str(proc["process_id"]).upper() == "P03":
         regolith_pct = 0.2
+    if regolith_pct > 0:
         materials_for_plan.append("MGS-1_regolith")
         weights_for_plan = [round(w * (1.0 - regolith_pct), 2) for w in weights_for_plan]
         weights_for_plan.append(round(regolith_pct, 2))
@@ -362,6 +461,7 @@ def _build_candidate(
 
     features = _derive_features(picks, base_weights, proc, regolith_pct)
 
+    heuristic_props = PredProps(
     props = PredProps(
         rigidity=rigidity,
         tightness=tightness,
@@ -371,6 +471,23 @@ def _build_candidate(
         crew_min=crew,
     )
 
+    props = heuristic_props
+
+    force_heuristic = os.getenv("REXAI_FORCE_HEURISTIC", "").lower() in {"1", "true", "yes"}
+    prediction: dict[str, Any] = {}
+    if not force_heuristic and MODEL_REGISTRY is not None and MODEL_REGISTRY.ready:
+        prediction = MODEL_REGISTRY.predict(features)
+        if prediction:
+            prediction = dict(prediction)
+            prediction["sources"] = {
+                "ids": used_ids,
+                "categories": used_cats,
+                "flags": used_flags,
+            }
+            uncertainty = prediction.get("uncertainty") or {}
+            confidence_interval = prediction.get("confidence_interval") or {}
+            importance = prediction.get("feature_importance") or []
+            comparisons = prediction.get("comparisons") or {}
     force_heuristic = os.getenv("REXAI_FORCE_HEURISTIC", "").lower() in {"1", "true", "yes"}
     if not force_heuristic and MODEL_REGISTRY is not None and MODEL_REGISTRY.ready:
         prediction = MODEL_REGISTRY.predict(features)
@@ -383,10 +500,27 @@ def _build_candidate(
                 water_l=float(prediction.get("water_l", water)),
                 crew_min=float(prediction.get("crew_min", crew)),
                 source=str(prediction.get("source", "ml")),
+                uncertainty={k: float(v) for k, v in uncertainty.items()},
+                confidence_interval={k: tuple(v) for k, v in confidence_interval.items()},
+                feature_importance=[(str(k), float(v)) for k, v in importance],
+                comparisons=comparisons,
             )
             # Guardamos info adicional para trazabilidad de la UI
             features["prediction_model"] = props.source
             features["model_metadata"] = prediction.get("metadata", {})
+            features["uncertainty"] = props.uncertainty
+            features["confidence_interval"] = props.confidence_interval
+            features["feature_importance"] = props.feature_importance
+            features["model_variants"] = props.comparisons
+    else:
+        prediction = {}
+
+    if MODEL_REGISTRY is not None and MODEL_REGISTRY.ready:
+        latent = MODEL_REGISTRY.embed(features)
+        if latent:
+            features["latent_vector"] = latent
+    else:
+        latent = []
     else:
         prediction = {}
 
@@ -409,6 +543,7 @@ def _build_candidate(
         "process_id": str(proc["process_id"]),
         "process_name": str(proc["name"]),
         "props": props,
+        "heuristic_props": heuristic_props,
         "score": round(float(score), 3),
         "source_ids": used_ids,
         "source_categories": used_cats,
@@ -418,10 +553,24 @@ def _build_candidate(
         "prediction_source": props.source,
         "ml_prediction": prediction,
         "latent_vector": latent,
+        "uncertainty": props.uncertainty,
+        "confidence_interval": props.confidence_interval,
+        "feature_importance": props.feature_importance,
+        "model_variants": props.comparisons,
     }
 
 
 def _select_process(
+    proc_df: pd.DataFrame,
+    used_cats: list[str],
+    used_flags: list[str],
+    used_mats: list[str],
+    preferred: str | None = None,
+) -> pd.Series:
+    if preferred:
+        forced = proc_df[proc_df["process_id"].astype(str) == str(preferred)]
+        if not forced.empty:
+            return forced.iloc[0]
     proc_df: pd.DataFrame, used_cats: list[str], used_flags: list[str], used_mats: list[str]
 ) -> pd.Series:
     proc = proc_df.sample(1).iloc[0]
