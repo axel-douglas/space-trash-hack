@@ -58,6 +58,13 @@ with topL:
         f"**Materiales:** {', '.join(sel['materials'])}"
         + (f" &nbsp;&nbsp;·&nbsp;&nbsp;**MGS-1**: {int(sel.get('regolith_pct', 0)*100)}%" if sel.get("regolith_pct", 0) > 0 else "")
     )
+    src = getattr(p, "source", "heuristic")
+    if src.startswith("rexai"):
+        meta = sel.get("ml_prediction", {}).get("metadata", {})
+        trained_at = meta.get("trained_at", "?")
+        st.caption(f"Predicciones por modelo Rex-AI (**{src}**, entrenado {trained_at}).")
+    else:
+        st.caption("Predicciones heurísticas basadas en reglas NASA.")
 
 with topR:
     # Estado de seguridad (pill + popover de explicación)

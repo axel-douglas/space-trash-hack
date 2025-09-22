@@ -12,6 +12,8 @@ from .data_pipeline import (
     load_process_logs,
     persist_dataset,
 )
+from .ml_models import MODEL_REGISTRY, ModelRegistry
+from .model_training import train_and_save
 
 __all__ = [
     "DataPipeline",
@@ -23,4 +25,7 @@ __all__ = [
     "load_process_catalog",
     "load_process_logs",
     "persist_dataset",
+    "MODEL_REGISTRY",
+    "ModelRegistry",
+    "train_and_save",
 ]
