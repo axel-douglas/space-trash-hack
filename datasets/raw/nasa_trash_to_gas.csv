@@ -1,0 +1,7 @@
+mission,category,kg_per_cm_day,gas_mix_h2_pct,gas_mix_co_pct,gas_mix_co2_pct,o2_ch4_yield_kg,water_makeup_kg,isp_resistojet_s,isp_cold_gas_s,delta_v_ms
+Gateway Phase I,Aggregate,1.45,10,22,68,490,90,134,64,15
+Gateway Phase II,Aggregate,1.45,10,22,68,990,150,134,64,15
+Mars Transit,Aggregate,1.45,10,22,68,1750,270,134,64,25
+Gateway Phase I,Trash-to-Supply,1.45,59,0,0,350,48,260,0,15
+Gateway Phase II,Trash-to-Supply,1.45,59,0,0,700,78,260,0,15
+Mars Transit,Trash-to-Supply,1.45,59,0,0,1180,130,260,0,25
