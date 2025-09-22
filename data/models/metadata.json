@@ -10,16 +10,25 @@
     "process_id",
     "regolith_pct",
     "total_mass_kg",
+  "trained_at": "2025-09-22T02:33:10.465503+00:00",
+  "n_samples": 600,
+  "feature_columns": [
+    "process_id",
+    "total_mass_kg",
+    "mass_input_kg",
+    "num_items",
     "density_kg_m3",
     "moisture_frac",
     "difficulty_index",
     "problematic_mass_frac",
     "problematic_item_frac",
+    "regolith_pct",
     "aluminum_frac",
     "foam_frac",
     "eva_frac",
     "textile_frac",
     "multilayer_frac",
+    "glove_frac",
     "polyethylene_frac",
     "carbon_fiber_frac",
     "hydrogen_rich_frac",
@@ -520,4 +529,7 @@
     "latent_dim": 12,
     "path": "rexai_autoencoder.pt"
   }
+}
+  "model_name": "rexai-rf-v2",
+  "dataset_path": "processed/ml/synthetic_runs.parquet"
 }
