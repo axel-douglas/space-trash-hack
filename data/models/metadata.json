@@ -1,19 +1,51 @@
 {
-  "model_name": "rexai-rf-ensemble",
-  "trained_at": "2025-09-22T03:49:37.996488+00:00",
-  "n_samples": 1600,
+  "artifacts": {
+    "autoencoder": {},
+    "pipeline": "rexai_regressor.joblib",
+    "tabtransformer": {},
+    "xgboost": {
+      "metrics": {
+        "crew_min": {
+          "mae": 0.019125188980298146,
+          "r2": 0.9999903464993217,
+          "rmse": 0.025873501479834173
+        },
+        "energy_kwh": {
+          "mae": 1.5708103853411461,
+          "r2": 0.9999878831072518,
+          "rmse": 2.105618422937801
+        },
+        "estanqueidad": {
+          "mae": 0.00036618157103657684,
+          "r2": 0.9998785171164303,
+          "rmse": 0.0006371050043418497
+        },
+        "overall": {
+          "mae": 0.3475499635073092,
+          "r2": 0.9999629554882435,
+          "rmse": 0.47045069936238715
+        },
+        "rigidez": {
+          "mae": 0.00039693190902471406,
+          "r2": 0.99996324307519,
+          "rmse": 0.0006579614706456396
+        },
+        "water_l": {
+          "mae": 0.14705112973504053,
+          "r2": 0.9999947876430235,
+          "rmse": 0.21946650591931285
+        }
+      },
+      "path": "rexai_xgboost.joblib"
+    }
+  },
   "dataset": {
-    "path": "processed/rexai_training_dataset.parquet",
-    "hash": "2119cf641314593b893d84b20ccbc7c9c2db5c7f"
+    "hash": "d0436ddd69fc298b5287a0fbbdf96d9a379aef5e",
+    "path": "processed/rexai_training_dataset.parquet"
   },
   "feature_columns": [
     "process_id",
     "regolith_pct",
-    "total_mass_kg",
-  "trained_at": "2025-09-22T02:33:10.465503+00:00",
-  "n_samples": 600,
-  "feature_columns": [
-    "process_id",
     "total_mass_kg",
     "mass_input_kg",
     "num_items",
@@ -22,7 +54,6 @@
     "difficulty_index",
     "problematic_mass_frac",
     "problematic_item_frac",
-    "regolith_pct",
     "aluminum_frac",
     "foam_frac",
     "eva_frac",
@@ -42,13 +73,74 @@
     "oxide_so3",
     "oxide_h2o"
   ],
-  "targets": [
-    "rigidez",
-    "estanqueidad",
-    "energy_kwh",
-    "water_l",
-    "crew_min"
-  ],
+  "feature_means": {
+    "cat__process_id_P01": 0.25078125,
+    "cat__process_id_P02": 0.25859375,
+    "cat__process_id_P03": 0.23671875,
+    "cat__process_id_P04": 0.25390625,
+    "num__aluminum_frac": 0.819555398419495,
+    "num__carbon_fiber_frac": 0.3880568647456434,
+    "num__density_kg_m3": 2.4502679909651475,
+    "num__difficulty_index": 4.849938796612207,
+    "num__eva_frac": 0.19621945139457114,
+    "num__foam_frac": 0.8941659950474314,
+    "num__gas_recovery_index": 1.5230903948493224,
+    "num__glove_frac": 0.13546600656836577,
+    "num__hydrogen_rich_frac": 2.2264347997768383,
+    "num__logistics_reuse_index": 1.0310274322555446,
+    "num__mass_input_kg": 2.7333627915507717,
+    "num__moisture_frac": 0.36226948347760496,
+    "num__multilayer_frac": 0.42173109839493417,
+    "num__num_items": 5.007965333305293,
+    "num__oxide_cao": 0.5377380393533399,
+    "num__oxide_feot": 0.5377380393533399,
+    "num__oxide_h2o": 0.5377380393533399,
+    "num__oxide_mgo": 0.5377380393533399,
+    "num__oxide_sio2": 0.5377380393533399,
+    "num__oxide_so3": 0.5377380393533399,
+    "num__packaging_frac": 0.9976832558906074,
+    "num__polyethylene_frac": 1.205518664737567,
+    "num__problematic_item_frac": 2.484663652920997,
+    "num__problematic_mass_frac": 2.352351635398087,
+    "num__regolith_pct": 0.5377380393533399,
+    "num__textile_frac": 0.8804505775964853,
+    "num__total_mass_kg": 2.7333627915507717
+  },
+  "feature_stds": {
+    "cat__process_id_P01": 0.43346381806914003,
+    "cat__process_id_P02": 0.43786287600764506,
+    "cat__process_id_P03": 0.42506921028916733,
+    "cat__process_id_P04": 0.43524560503369536,
+    "num__aluminum_frac": 1.0000010000000032,
+    "num__carbon_fiber_frac": 1.0000010000000001,
+    "num__density_kg_m3": 1.0000010000000026,
+    "num__difficulty_index": 1.000001,
+    "num__eva_frac": 1.0000010000000006,
+    "num__foam_frac": 1.0000009999999993,
+    "num__gas_recovery_index": 1.000001,
+    "num__glove_frac": 1.000001000000015,
+    "num__hydrogen_rich_frac": 1.0000009999999997,
+    "num__logistics_reuse_index": 1.0000009999999997,
+    "num__mass_input_kg": 1.0000009999999984,
+    "num__moisture_frac": 1.0000010000000015,
+    "num__multilayer_frac": 1.0000009999999886,
+    "num__num_items": 1.0000010000000006,
+    "num__oxide_cao": 1.0000009999999937,
+    "num__oxide_feot": 1.0000009999999937,
+    "num__oxide_h2o": 1.000000999999994,
+    "num__oxide_mgo": 1.0000009999999937,
+    "num__oxide_sio2": 1.0000009999999937,
+    "num__oxide_so3": 1.0000009999999937,
+    "num__packaging_frac": 1.000001000000001,
+    "num__polyethylene_frac": 1.0000009999999997,
+    "num__problematic_item_frac": 1.0000010000000001,
+    "num__problematic_mass_frac": 1.0000009999999995,
+    "num__regolith_pct": 1.0000009999999937,
+    "num__textile_frac": 1.0000009999999948,
+    "num__total_mass_kg": 1.0000009999999984
+  },
+  "model_name": "rexai-rf-ensemble",
+  "n_samples": 1600,
   "post_transform_features": [
     "cat__process_id_P01",
     "cat__process_id_P02",
@@ -56,6 +148,8 @@
     "cat__process_id_P04",
     "num__regolith_pct",
     "num__total_mass_kg",
+    "num__mass_input_kg",
+    "num__num_items",
     "num__density_kg_m3",
     "num__moisture_frac",
     "num__difficulty_index",
@@ -66,6 +160,7 @@
     "num__eva_frac",
     "num__textile_frac",
     "num__multilayer_frac",
+    "num__glove_frac",
     "num__polyethylene_frac",
     "num__carbon_fiber_frac",
     "num__hydrogen_rich_frac",
@@ -79,459 +174,454 @@
     "num__oxide_so3",
     "num__oxide_h2o"
   ],
-  "feature_means": {
-    "cat__process_id_P01": 0.25562500953674316,
-    "cat__process_id_P02": 0.2581250071525574,
-    "cat__process_id_P03": 0.23250000178813934,
-    "cat__process_id_P04": 0.2537499964237213,
-    "num__regolith_pct": 7.525086687110161e-08,
-    "num__total_mass_kg": 2.1755695911451767e-08,
-    "num__density_kg_m3": 1.3895332884317213e-08,
-    "num__moisture_frac": -1.206994113545079e-07,
-    "num__difficulty_index": -2.039596402880761e-08,
-    "num__problematic_mass_frac": 7.63684493421124e-09,
-    "num__problematic_item_frac": -1.3993121328326197e-08,
-    "num__aluminum_frac": -2.257525899551638e-08,
-    "num__foam_frac": -1.7028301613208896e-07,
-    "num__eva_frac": -3.0476599022222217e-07,
-    "num__textile_frac": -6.064772861691381e-08,
-    "num__multilayer_frac": 6.433576515973982e-08,
-    "num__polyethylene_frac": -2.38418573772492e-09,
-    "num__carbon_fiber_frac": -9.927898503292454e-08,
-    "num__hydrogen_rich_frac": 3.360212019742903e-08,
-    "num__packaging_frac": -6.191432788682505e-08,
-    "num__gas_recovery_index": -7.264316259636416e-09,
-    "num__logistics_reuse_index": 2.7567148563889532e-08,
-    "num__oxide_sio2": 7.525086687110161e-08,
-    "num__oxide_feot": 7.525086687110161e-08,
-    "num__oxide_mgo": 7.525086687110161e-08,
-    "num__oxide_cao": 7.525086687110161e-08,
-    "num__oxide_so3": 7.525086687110161e-08,
-    "num__oxide_h2o": 7.525086687110161e-08
-  },
-  "feature_stds": {
-    "cat__process_id_P01": 0.43620961904525757,
-    "cat__process_id_P02": 0.43760478496551514,
-    "cat__process_id_P03": 0.42242637276649475,
-    "cat__process_id_P04": 0.4351577162742615,
-    "num__regolith_pct": 1.0000039339065552,
-    "num__total_mass_kg": 0.9999994039535522,
-    "num__density_kg_m3": 1.0000001192092896,
-    "num__moisture_frac": 1.0000014305114746,
-    "num__difficulty_index": 0.9999986290931702,
-    "num__problematic_mass_frac": 1.0000001192092896,
-    "num__problematic_item_frac": 1.0000004768371582,
-    "num__aluminum_frac": 0.9999972581863403,
-    "num__foam_frac": 1.0000026226043701,
-    "num__eva_frac": 1.0000112056732178,
-    "num__textile_frac": 0.9999988675117493,
-    "num__multilayer_frac": 1.000002384185791,
-    "num__polyethylene_frac": 1.0000017881393433,
-    "num__carbon_fiber_frac": 0.999991238117218,
-    "num__hydrogen_rich_frac": 0.9999964237213135,
-    "num__packaging_frac": 0.9999998807907104,
-    "num__gas_recovery_index": 0.9999997615814209,
-    "num__logistics_reuse_index": 0.9999978542327881,
-    "num__oxide_sio2": 1.0000039339065552,
-    "num__oxide_feot": 1.0000039339065552,
-    "num__oxide_mgo": 1.0000039339065552,
-    "num__oxide_cao": 1.0000039339065552,
-    "num__oxide_so3": 1.0000039339065552,
-    "num__oxide_h2o": 1.0000039339065552
-  },
-  "residual_std": {
-    "rigidez": 0.018086060701668513,
-    "estanqueidad": 0.009323728325862287,
-    "energy_kwh": 12.731717907166013,
-    "water_l": 2.980252026287229,
-    "crew_min": 1.2986677427490187
-  },
   "random_forest": {
-    "metrics": {
-      "overall": {
-        "mae": 2.057206161413863,
-        "rmse": 5.887011657304824,
-        "r2": 0.9897071117801908
-      },
-      "per_target": {
-        "rigidez": {
-          "mae": 0.012348583346228481,
-          "rmse": 0.018087749040197075,
-          "r2": 0.9915634435005944
-        },
-        "estanqueidad": {
-          "mae": 0.005853538717840477,
-          "rmse": 0.009332069756128193,
-          "r2": 0.9943800475032726
-        },
-        "energy_kwh": {
-          "mae": 7.974207950961707,
-          "rmse": 12.756001886495461,
-          "r2": 0.996999415621904
-        },
-        "water_l": {
-          "mae": 1.1689434620007788,
-          "rmse": 2.980267217006407,
-          "r2": 0.9922254196031939
-        },
-        "crew_min": {
-          "mae": 1.1246772720427607,
-          "rmse": 1.2986686255486255,
-          "r2": 0.973367232671988
-        }
-      }
-    },
     "feature_importance": {
       "average": [
         [
-          "num__multilayer_frac",
-          0.1524844069267896
+          "cat__process_id_P03",
+          0.16905706101275642
         ],
         [
           "num__aluminum_frac",
-          0.14619228415792768
+          0.1064467603140829
+        ],
+        [
+          "num__mass_input_kg",
+          0.06349749866984919
         ],
         [
           "num__total_mass_kg",
-          0.12227399474361367
-        ],
-        [
-          "cat__process_id_P03",
-          0.06271966800854674
-        ],
-        [
-          "cat__process_id_P02",
-          0.06081073552432281
-        ],
-        [
-          "num__oxide_h2o",
-          0.052836495028782085
-        ],
-        [
-          "num__hydrogen_rich_frac",
-          0.04341545182515974
-        ],
-        [
-          "num__oxide_so3",
-          0.043178505690457746
-        ],
-        [
-          "num__oxide_sio2",
-          0.042198196299406666
-        ],
-        [
-          "num__oxide_mgo",
-          0.039522272257618826
-        ],
-        [
-          "num__regolith_pct",
-          0.03708389815619227
-        ],
-        [
-          "cat__process_id_P01",
-          0.03669647521185131
-        ],
-        [
-          "num__oxide_cao",
-          0.03495479356979486
-        ],
-        [
-          "num__oxide_feot",
-          0.03089554334520228
-        ],
-        [
-          "num__density_kg_m3",
-          0.023139826292962656
-        ],
-        [
-          "num__difficulty_index",
-          0.018350555814570933
-        ],
-        [
-          "num__carbon_fiber_frac",
-          0.014409382836811726
-        ],
-        [
-          "num__foam_frac",
-          0.01253237767655244
+          0.06302495902560475
         ],
         [
           "num__moisture_frac",
-          0.011033372080335977
+          0.06250347241554471
         ],
         [
-          "cat__process_id_P04",
-          0.006611881848984501
+          "cat__process_id_P02",
+          0.06092841543895352
+        ],
+        [
+          "num__multilayer_frac",
+          0.05993260672489763
+        ],
+        [
+          "num__hydrogen_rich_frac",
+          0.05287209853699026
+        ],
+        [
+          "num__regolith_pct",
+          0.04182578630970035
+        ],
+        [
+          "num__oxide_sio2",
+          0.04158559076295771
+        ],
+        [
+          "cat__process_id_P01",
+          0.038377979613770936
+        ],
+        [
+          "num__oxide_mgo",
+          0.035218403783178316
+        ],
+        [
+          "num__oxide_cao",
+          0.03502568441785368
         ],
         [
           "num__textile_frac",
-          0.0038590121565733825
+          0.03437517837684672
         ],
         [
-          "num__gas_recovery_index",
-          0.0027681562442540553
+          "num__oxide_so3",
+          0.03405618440353424
         ],
         [
-          "num__problematic_item_frac",
-          0.0006153598307254004
-        ],
-        [
-          "num__problematic_mass_frac",
-          0.0006106420017169007
-        ],
-        [
-          "num__polyethylene_frac",
-          0.0003414036223758657
-        ],
-        [
-          "num__logistics_reuse_index",
-          0.000254360737484412
-        ],
-        [
-          "num__packaging_frac",
-          0.00018392500377272235
-        ],
-        [
-          "num__eva_frac",
-          2.7023107212724547e-05
+          "num__oxide_feot",
+          0.033415275240927134
         ]
       ],
       "per_target": {
-        "rigidez": {
-          "cat__process_id_P01": 4.996239803722982e-05,
-          "cat__process_id_P02": 3.674607386532209e-05,
-          "cat__process_id_P03": 0.0005020627659566091,
-          "cat__process_id_P04": 5.5152027366731314e-05,
-          "num__regolith_pct": 0.0007655150480809002,
-          "num__total_mass_kg": 0.00030795214296500416,
-          "num__density_kg_m3": 0.11312350835938541,
-          "num__moisture_frac": 0.0002563560047355505,
-          "num__difficulty_index": 0.0006125875760077133,
-          "num__problematic_mass_frac": 0.0003244299175041461,
-          "num__problematic_item_frac": 0.0009911697797624318,
-          "num__aluminum_frac": 0.7286206634212986,
-          "num__foam_frac": 0.060821310663240515,
-          "num__eva_frac": 2.836985526768645e-05,
-          "num__textile_frac": 0.0002973425698425443,
-          "num__multilayer_frac": 0.001075627177870121,
-          "num__polyethylene_frac": 0.00017531435693991928,
-          "num__carbon_fiber_frac": 0.07144631280571856,
-          "num__hydrogen_rich_frac": 0.004171399737618346,
-          "num__packaging_frac": 0.00010544981038462675,
-          "num__gas_recovery_index": 0.010997264734008522,
-          "num__logistics_reuse_index": 0.00010581600922597393,
-          "num__oxide_sio2": 0.0009191128135962702,
-          "num__oxide_feot": 0.0008550475436395808,
-          "num__oxide_mgo": 0.0008378297045050617,
-          "num__oxide_cao": 0.0008756442830539141,
-          "num__oxide_so3": 0.000819575736878476,
-          "num__oxide_h2o": 0.0008224766832442313
-        },
-        "estanqueidad": {
-          "cat__process_id_P01": 2.7095304149805358e-05,
-          "cat__process_id_P02": 5.144266551482226e-05,
-          "cat__process_id_P03": 0.0005400826552975363,
-          "cat__process_id_P04": 4.3953688981189935e-05,
-          "num__regolith_pct": 0.0012106018010957303,
-          "num__total_mass_kg": 0.00015677211628016072,
-          "num__density_kg_m3": 0.0006367194206759881,
-          "num__moisture_frac": 0.0015499308479087783,
-          "num__difficulty_index": 0.00013425033385649032,
-          "num__problematic_mass_frac": 0.00021920623565523017,
-          "num__problematic_item_frac": 0.00031007671597930433,
-          "num__aluminum_frac": 0.0004961600967674906,
-          "num__foam_frac": 0.0002834266490326443,
-          "num__eva_frac": 3.830397092990726e-06,
-          "num__textile_frac": 0.01254177784503603,
-          "num__multilayer_frac": 0.7609170028135852,
-          "num__polyethylene_frac": 0.00036795668919782827,
-          "num__carbon_fiber_frac": 4.3988921634846666e-05,
-          "num__hydrogen_rich_frac": 0.21136138171807742,
-          "num__packaging_frac": 0.00026490231244962023,
-          "num__gas_recovery_index": 0.0011693557518609394,
-          "num__logistics_reuse_index": 0.00018355161295369117,
-          "num__oxide_sio2": 0.001235687187042543,
-          "num__oxide_feot": 0.001251539676083944,
-          "num__oxide_mgo": 0.0012503712297095453,
-          "num__oxide_cao": 0.0011978064090379774,
-          "num__oxide_so3": 0.001281179027835161,
-          "num__oxide_h2o": 0.0012699498772071741
-        },
-        "energy_kwh": {
-          "cat__process_id_P01": 0.0021467351958883714,
-          "cat__process_id_P02": 0.2508279747907251,
-          "cat__process_id_P03": 0.05008119815993425,
-          "cat__process_id_P04": 0.0027012551920259946,
-          "num__regolith_pct": 0.03943962964419151,
-          "num__total_mass_kg": 0.42491597204153897,
-          "num__density_kg_m3": 0.0002651189771975889,
-          "num__moisture_frac": 9.971254042680451e-05,
-          "num__difficulty_index": 0.0014478402379802223,
-          "num__problematic_mass_frac": 0.0004823612970700643,
-          "num__problematic_item_frac": 0.0001093275036148587,
-          "num__aluminum_frac": 5.883329418399709e-05,
-          "num__foam_frac": 0.0001974147169802264,
-          "num__eva_frac": 3.740930626929584e-05,
-          "num__textile_frac": 9.741897343800716e-05,
-          "num__multilayer_frac": 1.5236681060739625e-05,
-          "num__polyethylene_frac": 0.0002338364998460078,
-          "num__carbon_fiber_frac": 1.9635904457447076e-05,
-          "num__hydrogen_rich_frac": 6.566610961990021e-05,
-          "num__packaging_frac": 4.793669538395818e-05,
-          "num__gas_recovery_index": 0.0006370318780505563,
-          "num__logistics_reuse_index": 5.338766477486678e-05,
-          "num__oxide_sio2": 0.038376568855104154,
-          "num__oxide_feot": 0.0322638040541453,
-          "num__oxide_mgo": 0.04109667770773775,
-          "num__oxide_cao": 0.030983453368376043,
-          "num__oxide_so3": 0.03963078320314645,
-          "num__oxide_h2o": 0.043667779506831664
-        },
-        "water_l": {
-          "cat__process_id_P01": 1.783290180189715e-05,
-          "cat__process_id_P02": 1.1746340396436113e-05,
-          "cat__process_id_P03": 0.17624791185043565,
-          "cat__process_id_P04": 6.847306342141482e-06,
-          "num__regolith_pct": 0.07294961281494895,
-          "num__total_mass_kg": 0.18353933687307658,
-          "num__density_kg_m3": 0.00014922780101830096,
-          "num__moisture_frac": 0.05195213711657914,
-          "num__difficulty_index": 0.0003301928226889337,
-          "num__problematic_mass_frac": 0.000692436902414823,
-          "num__problematic_item_frac": 0.0003977338310674698,
-          "num__aluminum_frac": 6.866565364890851e-05,
-          "num__foam_frac": 0.00014226492246963488,
-          "num__eva_frac": 1.9017458686205786e-05,
-          "num__textile_frac": 0.004816294501015009,
-          "num__multilayer_frac": 2.889460638580961e-05,
-          "num__polyethylene_frac": 0.0001571763313877275,
-          "num__carbon_fiber_frac": 1.6273696462743246e-05,
-          "num__hydrogen_rich_frac": 5.431014815851666e-05,
-          "num__packaging_frac": 4.916271299429637e-05,
-          "num__gas_recovery_index": 0.00024040695301809774,
-          "num__logistics_reuse_index": 0.0002302956652150439,
-          "num__oxide_sio2": 0.09190024406336045,
-          "num__oxide_feot": 0.059827474934585755,
-          "num__oxide_mgo": 0.07877632564909068,
-          "num__oxide_cao": 0.07879679448943364,
-          "num__oxide_so3": 0.08503284337673701,
-          "num__oxide_h2o": 0.11354853827658026
-        },
-        "crew_min": {
-          "cat__process_id_P01": 0.18124075025937922,
-          "cat__process_id_P02": 0.05312576775111238,
-          "cat__process_id_P03": 0.08622708461110967,
-          "cat__process_id_P04": 0.030252201030206448,
-          "num__regolith_pct": 0.07105413147264425,
-          "num__total_mass_kg": 0.002449940544207689,
-          "num__density_kg_m3": 0.0015245569065359898,
-          "num__moisture_frac": 0.0013087238920296152,
-          "num__difficulty_index": 0.0892279081023213,
-          "num__problematic_mass_frac": 0.00133477565594024,
-          "num__problematic_item_frac": 0.001268491323202937,
-          "num__aluminum_frac": 0.0017170983237394456,
-          "num__foam_frac": 0.0012174714310391782,
-          "num__eva_frac": 4.648851874744393e-05,
-          "num__textile_frac": 0.0015422268935353237,
-          "num__multilayer_frac": 0.0003852733550462638,
-          "num__polyethylene_frac": 0.0007727342345078456,
-          "num__carbon_fiber_frac": 0.0005207028557850314,
-          "num__hydrogen_rich_frac": 0.001424501412324542,
-          "num__packaging_frac": 0.00045217348765111024,
-          "num__gas_recovery_index": 0.0007967219043321613,
-          "num__logistics_reuse_index": 0.0006987527352524843,
-          "num__oxide_sio2": 0.0785593685779299,
-          "num__oxide_feot": 0.06027985051755683,
-          "num__oxide_mgo": 0.07565015699705112,
-          "num__oxide_cao": 0.06292026929907274,
-          "num__oxide_so3": 0.08912814710769164,
-          "num__oxide_h2o": 0.10487373080004708
-        }
+        "crew_min": [
+          [
+            "cat__process_id_P03",
+            0.3469875798752776
+          ],
+          [
+            "cat__process_id_P01",
+            0.1877660885112094
+          ],
+          [
+            "num__difficulty_index",
+            0.09889019066181864
+          ],
+          [
+            "num__oxide_sio2",
+            0.06225130072670218
+          ],
+          [
+            "num__oxide_mgo",
+            0.04380299539023568
+          ],
+          [
+            "num__regolith_pct",
+            0.04178746070493202
+          ],
+          [
+            "cat__process_id_P02",
+            0.04037569154656897
+          ],
+          [
+            "num__oxide_cao",
+            0.036149403593122194
+          ],
+          [
+            "num__oxide_feot",
+            0.03560446650644797
+          ],
+          [
+            "num__oxide_so3",
+            0.034017917377151936
+          ],
+          [
+            "cat__process_id_P04",
+            0.028504328751870922
+          ],
+          [
+            "num__num_items",
+            0.021646682140721428
+          ],
+          [
+            "num__oxide_h2o",
+            0.0203477437498461
+          ],
+          [
+            "num__foam_frac",
+            0.0009314242797331551
+          ],
+          [
+            "num__polyethylene_frac",
+            0.0001423703414737949
+          ],
+          [
+            "num__mass_input_kg",
+            0.00010326860461079429
+          ]
+        ],
+        "energy_kwh": [
+          [
+            "cat__process_id_P02",
+            0.26067522421515293
+          ],
+          [
+            "num__mass_input_kg",
+            0.18516989202414552
+          ],
+          [
+            "num__total_mass_kg",
+            0.18132043489031152
+          ],
+          [
+            "cat__process_id_P03",
+            0.1153893219704411
+          ],
+          [
+            "num__oxide_mgo",
+            0.03802693825404199
+          ],
+          [
+            "num__oxide_cao",
+            0.0377800533683422
+          ],
+          [
+            "num__regolith_pct",
+            0.03597139315994805
+          ],
+          [
+            "num__oxide_so3",
+            0.035259273912128214
+          ],
+          [
+            "num__oxide_sio2",
+            0.034935187328407974
+          ],
+          [
+            "num__oxide_feot",
+            0.034387854666062395
+          ],
+          [
+            "num__oxide_h2o",
+            0.030018512842133777
+          ],
+          [
+            "num__difficulty_index",
+            0.004061177666155075
+          ],
+          [
+            "cat__process_id_P04",
+            0.002399499981132139
+          ],
+          [
+            "cat__process_id_P01",
+            0.001861785848768803
+          ],
+          [
+            "num__foam_frac",
+            0.0005676473070852849
+          ],
+          [
+            "num__problematic_mass_frac",
+            0.00030593759646871
+          ]
+        ],
+        "estanqueidad": [
+          [
+            "num__multilayer_frac",
+            0.28464145907900756
+          ],
+          [
+            "num__moisture_frac",
+            0.2243645178900415
+          ],
+          [
+            "num__textile_frac",
+            0.16805008897597307
+          ],
+          [
+            "num__mass_input_kg",
+            0.04429017445562188
+          ],
+          [
+            "num__total_mass_kg",
+            0.042478848162339905
+          ],
+          [
+            "num__aluminum_frac",
+            0.03198094768398613
+          ],
+          [
+            "num__regolith_pct",
+            0.022813626567982293
+          ],
+          [
+            "cat__process_id_P03",
+            0.018625757260893605
+          ],
+          [
+            "num__oxide_h2o",
+            0.0185997714625398
+          ],
+          [
+            "num__oxide_feot",
+            0.0174574898778661
+          ],
+          [
+            "num__oxide_mgo",
+            0.016839135495749613
+          ],
+          [
+            "num__oxide_cao",
+            0.01646843042051513
+          ],
+          [
+            "num__oxide_sio2",
+            0.01633846755707573
+          ],
+          [
+            "num__oxide_so3",
+            0.015291075521908636
+          ],
+          [
+            "num__difficulty_index",
+            0.010849804383672544
+          ],
+          [
+            "num__problematic_item_frac",
+            0.008361342622135714
+          ]
+        ],
+        "rigidez": [
+          [
+            "num__aluminum_frac",
+            0.4939788108548054
+          ],
+          [
+            "num__hydrogen_rich_frac",
+            0.2608984544160787
+          ],
+          [
+            "cat__process_id_P03",
+            0.03105659047561126
+          ],
+          [
+            "num__regolith_pct",
+            0.025224940121737333
+          ],
+          [
+            "num__total_mass_kg",
+            0.020797153719568907
+          ],
+          [
+            "num__oxide_so3",
+            0.01838056960654861
+          ],
+          [
+            "num__mass_input_kg",
+            0.018244325074796952
+          ],
+          [
+            "num__oxide_sio2",
+            0.017647769738992534
+          ],
+          [
+            "num__oxide_mgo",
+            0.016910469842968862
+          ],
+          [
+            "num__oxide_feot",
+            0.01602806078279995
+          ],
+          [
+            "num__oxide_h2o",
+            0.015986219707379196
+          ],
+          [
+            "num__carbon_fiber_frac",
+            0.014801538298187804
+          ],
+          [
+            "num__oxide_cao",
+            0.01447083827711144
+          ],
+          [
+            "num__multilayer_frac",
+            0.011489106742046664
+          ],
+          [
+            "num__density_kg_m3",
+            0.006934624198451244
+          ],
+          [
+            "num__problematic_mass_frac",
+            0.004850024247952971
+          ]
+        ],
+        "water_l": [
+          [
+            "cat__process_id_P03",
+            0.32326171957820066
+          ],
+          [
+            "num__moisture_frac",
+            0.08446884784618788
+          ],
+          [
+            "num__regolith_pct",
+            0.08086627125936961
+          ],
+          [
+            "num__oxide_sio2",
+            0.07430414601476514
+          ],
+          [
+            "num__oxide_cao",
+            0.06819525923545912
+          ],
+          [
+            "num__total_mass_kg",
+            0.06681362524578499
+          ],
+          [
+            "num__mass_input_kg",
+            0.06593724827833115
+          ],
+          [
+            "num__oxide_so3",
+            0.06532479138252217
+          ],
+          [
+            "num__oxide_feot",
+            0.061628985767450004
+          ],
+          [
+            "num__oxide_mgo",
+            0.058436683730279576
+          ],
+          [
+            "num__oxide_h2o",
+            0.04512635301575569
+          ],
+          [
+            "num__textile_frac",
+            0.0017997069733566614
+          ],
+          [
+            "num__problematic_item_frac",
+            0.0007792547053420661
+          ],
+          [
+            "num__problematic_mass_frac",
+            0.0006756831906073434
+          ],
+          [
+            "num__density_kg_m3",
+            0.0005055541357083522
+          ],
+          [
+            "num__hydrogen_rich_frac",
+            0.00034572152598157547
+          ]
+        ]
+      }
+    },
+    "metrics": {
+      "crew_min": {
+        "mae": 0.1025412765513261,
+        "r2": 0.9994631007940106,
+        "rmse": 0.18827058480882383
+      },
+      "energy_kwh": {
+        "mae": 16.38295437197866,
+        "r2": 0.9981454625729874,
+        "rmse": 24.104542960154294
+      },
+      "estanqueidad": {
+        "mae": 0.005504965531430807,
+        "r2": 0.8813678111797432,
+        "rmse": 0.018763543442526263
+      },
+      "overall": {
+        "mae": 3.868779461158531,
+        "r2": 0.9714615670216974,
+        "rmse": 6.886311277323621
+      },
+      "rigidez": {
+        "mae": 0.0016309399801594717,
+        "r2": 0.9916205089477695,
+        "rmse": 0.009622842838520107
+      },
+      "water_l": {
+        "mae": 2.851265751751082,
+        "r2": 0.9867109516139758,
+        "rmse": 10.11035645537394
       }
     },
     "n_estimators": 240
   },
-  "xgboost": {
-    "metrics": {
-      "rigidez": {
-        "mae": 0.006769255641890934,
-        "rmse": 0.010230688793048441,
-        "r2": 0.997300981135511
-      },
-      "estanqueidad": {
-        "mae": 0.002967045379030333,
-        "rmse": 0.004843962804233917,
-        "r2": 0.9984858172612262
-      },
-      "energy_kwh": {
-        "mae": 5.216811936221136,
-        "rmse": 12.123551154648638,
-        "r2": 0.9972895812509828
-      },
-      "water_l": {
-        "mae": 0.8461946843951378,
-        "rmse": 2.1910740179203008,
-        "r2": 0.995797761999668
-      },
-      "crew_min": {
-        "mae": 0.7606526495338789,
-        "rmse": 0.9784320446812982,
-        "r2": 0.9848824667122634
-      },
-      "overall": {
-        "mae": 1.3666791142342145,
-        "rmse": 5.527001996533306,
-        "r2": 0.9947513216719303
-      }
-    },
-    "path": "rexai_xgboost.joblib"
+  "residual_std": {
+    "crew_min": 0.18760538378144628,
+    "energy_kwh": 24.048965810263223,
+    "estanqueidad": 0.01876003354733536,
+    "rigidez": 0.009605388627738763,
+    "water_l": 10.094619708590592
   },
-  "tabtransformer": {
-    "metrics": {
-      "overall": {
-        "mae": 1.8378570079803467,
-        "rmse": 3.271398086548598,
-        "r2": 0.6623054146766663
-      },
-      "per_target": {
-        "rigidez": {
-          "mae": 0.14189544320106506,
-          "rmse": 0.18276096742521108,
-          "r2": 0.13868290185928345
-        },
-        "estanqueidad": {
-          "mae": 0.08175148069858551,
-          "rmse": 0.10747151095040348,
-          "r2": 0.25464457273483276
-        },
-        "energy_kwh": {
-          "mae": 5.3546271324157715,
-          "rmse": 6.222526592046088,
-          "r2": 0.9992859959602356
-        },
-        "water_l": {
-          "mae": 1.8758163452148438,
-          "rmse": 3.1897586972802503,
-          "r2": 0.9910939931869507
-        },
-        "crew_min": {
-          "mae": 1.73519766330719,
-          "rmse": 2.1379630808555414,
-          "r2": 0.9278194904327393
-        }
-      }
-    },
-    "path": "rexai_tabtransformer.pt",
-    "tokens": 8,
-    "d_model": 64
-  },
-  "autoencoder": {
-    "latent_dim": 12,
-    "path": "rexai_autoencoder.pt"
-  }
-}
-}
-}
-  "model_name": "rexai-rf-v2",
-  "dataset_path": "processed/ml/synthetic_runs.parquet"
+  "targets": [
+    "rigidez",
+    "estanqueidad",
+    "energy_kwh",
+    "water_l",
+    "crew_min"
+  ],
+  "trained_at": "2025-09-22T05:26:28.903694+00:00"
 }
