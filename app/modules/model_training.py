@@ -40,16 +40,24 @@ from __future__ import annotations
 
 import json
 import os
+
 import random
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, Dict, Iterable, List, Sequence, Tuple
 from typing import Dict, Iterable, List, Sequence, Tuple
 from typing import List
 
 import joblib
 import numpy as np
 import pandas as pd
+try:  # Optional dependency for boosted trees
+    import xgboost as xgb
+    HAS_XGBOOST = True
+except ModuleNotFoundError:  # pragma: no cover - environments without xgboost
+    xgb = None  # type: ignore[assignment]
+    HAS_XGBOOST = False
 import torch
 import xgboost as xgb
 from pandas import DataFrame
@@ -60,6 +68,17 @@ from sklearn.model_selection import train_test_split
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+try:  # Optional dependency for deep models
+    import torch
+    from torch import nn
+    from torch.utils.data import DataLoader, TensorDataset
+    HAS_TORCH = True
+except ModuleNotFoundError:  # pragma: no cover - environments without torch
+    torch = None  # type: ignore[assignment]
+    nn = None  # type: ignore[assignment]
+    DataLoader = TensorDataset = None  # type: ignore[assignment]
+    HAS_TORCH = False
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -175,6 +194,8 @@ def _set_seed(seed: int | None) -> None:
     seed = seed or 21
     random.seed(seed)
     np.random.seed(seed)
+    if HAS_TORCH:
+        torch.manual_seed(seed)  # type: ignore[arg-type]
     torch.manual_seed(seed)
 
 
@@ -628,6 +649,89 @@ def _aggregate_importances(
 # ---------------------------------------------------------------------------
 
 
+class _Autoencoder(nn.Module if HAS_TORCH else object):
+    if not HAS_TORCH:  # pragma: no cover - executed only without torch
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("PyTorch is required to train the Rex-AI autoencoder")
+
+        def encode(self, *_args: object, **_kwargs: object) -> Any:
+            raise RuntimeError("PyTorch is required to train the Rex-AI autoencoder")
+
+    else:
+        def __init__(self, input_dim: int, latent_dim: int = LATENT_DIM) -> None:
+            super().__init__()
+            self.encoder = nn.Sequential(
+                nn.Linear(input_dim, 192),
+                nn.ReLU(),
+                nn.Linear(192, 96),
+                nn.ReLU(),
+                nn.Linear(96, latent_dim),
+            )
+            self.decoder = nn.Sequential(
+                nn.Linear(latent_dim, 96),
+                nn.ReLU(),
+                nn.Linear(96, 192),
+                nn.ReLU(),
+                nn.Linear(192, input_dim),
+            )
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
+            latent = self.encoder(x)
+            reconstruction = self.decoder(latent)
+            return reconstruction
+
+        def encode(self, x: torch.Tensor) -> torch.Tensor:
+            return self.encoder(x)
+
+
+class SimpleTabTransformer(nn.Module if HAS_TORCH else object):
+    """Compact transformer-style regressor for tabular data."""
+
+    if not HAS_TORCH:  # pragma: no cover - executed only without torch
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("PyTorch is required to train the Rex-AI TabTransformer")
+
+    else:
+        def __init__(
+            self,
+            num_features: int,
+            n_tokens: int = TABTRANSFORMER_TOKENS,
+            d_model: int = TABTRANSFORMER_DIM,
+            n_heads: int = 4,
+            n_layers: int = 2,
+            dropout: float = 0.1,
+            out_dim: int = len(TARGET_COLUMNS),
+        ) -> None:
+            super().__init__()
+            self.num_features = num_features
+            self.n_tokens = n_tokens
+            self.d_model = d_model
+
+            self.token_projection = nn.Linear(num_features, n_tokens * d_model)
+            encoder_layer = nn.TransformerEncoderLayer(
+                d_model=d_model,
+                nhead=n_heads,
+                dim_feedforward=d_model * 2,
+                dropout=dropout,
+                batch_first=True,
+                activation="gelu",
+            )
+            self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+            self.norm = nn.LayerNorm(d_model)
+            self.head = nn.Sequential(
+                nn.Flatten(),
+                nn.Linear(n_tokens * d_model, 128),
+                nn.GELU(),
+                nn.Linear(128, out_dim),
+            )
+            self.positional = nn.Parameter(torch.randn(1, n_tokens, d_model))
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
+            tokens = self.token_projection(x).view(-1, self.n_tokens, self.d_model)
+            tokens = tokens + self.positional
+            encoded = self.encoder(tokens)
+            encoded = self.norm(encoded)
+            return self.head(encoded)
 class _Autoencoder(nn.Module):
     def __init__(self, input_dim: int, latent_dim: int = LATENT_DIM) -> None:
         super().__init__()
@@ -706,6 +810,8 @@ class SimpleTabTransformer(nn.Module):
 
 
 def train_autoencoder(feature_matrix: np.ndarray, latent_dim: int = LATENT_DIM) -> _Autoencoder:
+    if not HAS_TORCH:
+        raise RuntimeError("PyTorch is required to train the autoencoder")
     tensor = torch.from_numpy(feature_matrix.astype(np.float32))
     dataset = TensorDataset(tensor)
     loader = DataLoader(dataset, batch_size=64, shuffle=True)
@@ -734,6 +840,8 @@ def train_tabtransformer(
     valid_idx: np.ndarray,
     epochs: int = 120,
 ) -> Tuple[SimpleTabTransformer, Dict[str, Dict[str, float]]]:
+    if not HAS_TORCH:
+        raise RuntimeError("PyTorch is required to train the TabTransformer")
     model = SimpleTabTransformer(feature_matrix.shape[1])
     optimiser = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-4)
     loss_fn = nn.MSELoss()
@@ -793,6 +901,11 @@ def train_xgboost_models(
     targets: np.ndarray,
     train_idx: np.ndarray,
     valid_idx: np.ndarray,
+) -> Tuple[Dict[str, Any], Dict[str, Dict[str, float]]]:
+    if not HAS_XGBOOST:
+        return {}, {}
+
+    models: Dict[str, Any] = {}
 ) -> Tuple[Dict[str, xgb.XGBRegressor], Dict[str, Dict[str, float]]]:
     models: Dict[str, xgb.XGBRegressor] = {}
     metrics: Dict[str, Dict[str, float]] = {}
@@ -842,6 +955,12 @@ def persist_artifacts(
     residual_std: Sequence[float],
     importances: Dict[str, Dict[str, float] | List[Tuple[str, float]]],
     rf_metrics: Dict[str, Dict[str, float]],
+    xgb_models: Dict[str, Any],
+    xgb_metrics: Dict[str, Dict[str, float]],
+    tab_model: SimpleTabTransformer | None,
+    tab_metrics: Dict[str, Dict[str, float]],
+    autoencoder: _Autoencoder | None,
+) -> None:
     xgb_models: Dict[str, xgb.XGBRegressor],
     xgb_metrics: Dict[str, Dict[str, float]],
     tab_model: SimpleTabTransformer,
@@ -879,6 +998,27 @@ def persist_artifacts(df: pd.DataFrame, pipeline: Pipeline) -> None:
     df.to_parquet(DATASET_PATH, index=False)
     joblib.dump({"models": xgb_models, "feature_names": list(feature_names)}, XGBOOST_PATH)
 
+    if HAS_TORCH and autoencoder is not None:
+        torch.save(
+            {
+                "state_dict": autoencoder.state_dict(),
+                "input_dim": feature_matrix.shape[1],
+                "latent_dim": LATENT_DIM,
+            },
+            AUTOENCODER_PATH,
+        )
+
+    if HAS_TORCH and tab_model is not None:
+        torch.save(
+            {
+                "state_dict": tab_model.state_dict(),
+                "input_dim": feature_matrix.shape[1],
+                "n_tokens": TABTRANSFORMER_TOKENS,
+                "d_model": TABTRANSFORMER_DIM,
+                "targets": TARGET_COLUMNS,
+            },
+            TABTRANSFORMER_PATH,
+        )
     torch.save(
         {
             "state_dict": autoencoder.state_dict(),
@@ -923,12 +1063,24 @@ def persist_artifacts(df: pd.DataFrame, pipeline: Pipeline) -> None:
         "xgboost": {
             "metrics": xgb_metrics,
             "path": str(XGBOOST_PATH.relative_to(MODEL_DIR)),
+
+            "available": HAS_XGBOOST,
+        },
+    }
+    if HAS_TORCH and tab_model is not None:
+        metadata["tabtransformer"] = {
         },
         "tabtransformer": {
             "metrics": tab_metrics,
             "path": str(TABTRANSFORMER_PATH.relative_to(MODEL_DIR)),
             "tokens": TABTRANSFORMER_TOKENS,
             "d_model": TABTRANSFORMER_DIM,
+        }
+    if HAS_TORCH and autoencoder is not None:
+        metadata["autoencoder"] = {
+            "latent_dim": LATENT_DIM,
+            "path": str(AUTOENCODER_PATH.relative_to(MODEL_DIR)),
+        }
         },
         "autoencoder": {
             "latent_dim": LATENT_DIM,
@@ -984,6 +1136,26 @@ def train_and_save(n_samples: int = 1600, seed: int | None = 21) -> None:
 
     importances = _aggregate_importances(regressor, feature_names)
 
+    if not HAS_XGBOOST:
+        print("[model_training] XGBoost not available, skipping boosted ensemble.")
+    xgb_models, xgb_metrics = train_xgboost_models(
+        feature_matrix, df[TARGET_COLUMNS].to_numpy(), train_idx, valid_idx
+    )
+
+    tab_model: SimpleTabTransformer | None
+    tab_metrics: Dict[str, Dict[str, float]]
+    autoencoder: _Autoencoder | None
+
+    if HAS_TORCH:
+        tab_model, tab_metrics = train_tabtransformer(
+            feature_matrix, df[TARGET_COLUMNS].to_numpy(), train_idx, valid_idx
+        )
+        autoencoder = train_autoencoder(feature_matrix)
+    else:
+        tab_model = None
+        tab_metrics = {}
+        autoencoder = None
+        print("[model_training] PyTorch not available, skipping deep models.")
     xgb_models, xgb_metrics = train_xgboost_models(feature_matrix, df[TARGET_COLUMNS].to_numpy(), train_idx, valid_idx)
     tab_model, tab_metrics = train_tabtransformer(feature_matrix, df[TARGET_COLUMNS].to_numpy(), train_idx, valid_idx)
 

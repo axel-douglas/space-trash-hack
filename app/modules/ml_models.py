@@ -22,6 +22,15 @@ from typing import Any, Mapping
 import joblib
 import numpy as np
 import pandas as pd
+
+try:  # Optional dependency for lightweight deployments
+    import torch
+    from torch import nn
+except ModuleNotFoundError:  # pragma: no cover - fallback when torch is absent
+    torch = None  # type: ignore[assignment]
+    nn = None  # type: ignore[assignment]
+
+
 import torch
 from torch import nn
 
@@ -34,6 +43,7 @@ except Exception:  # pragma: no cover - torch is optional
     torch = None  # type: ignore
     nn = None     # type: ignore
     _HAS_TORCH = False
+
 LOGGER = logging.getLogger(__name__)
 
 DATA_ROOT = Path(__file__).resolve().parents[2] / "data"
@@ -45,7 +55,9 @@ TABTRANSFORMER_PATH = MODEL_DIR / "rexai_tabtransformer.pt"
 METADATA_PATH = MODEL_DIR / "metadata.json"
 
 TARGET_COLUMNS = ["rigidez", "estanqueidad", "energy_kwh", "water_l", "crew_min"]
+
 METADATA_PATH = MODEL_DIR / "metadata.json"
+
 
 @dataclass(slots=True)
 class PredictionResult:
@@ -78,6 +90,86 @@ class PredictionResult:
             "comparisons": self.comparisons,
             "latent_vector": list(self.latent_vector),
         }
+
+class _Autoencoder(nn.Module if torch is not None and nn is not None else object):
+    if torch is None or nn is None:  # pragma: no cover - executed only without torch
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("PyTorch is required to use the Rex-AI autoencoder")
+
+        def encode(self, *_args: object, **_kwargs: object) -> Any:  # type: ignore[override]
+            raise RuntimeError("PyTorch is required to use the Rex-AI autoencoder")
+
+    else:
+        def __init__(self, input_dim: int, latent_dim: int) -> None:
+            super().__init__()
+            self.encoder = nn.Sequential(
+                nn.Linear(input_dim, 192),
+                nn.ReLU(),
+                nn.Linear(192, 96),
+                nn.ReLU(),
+                nn.Linear(96, latent_dim),
+            )
+            self.decoder = nn.Sequential(
+                nn.Linear(latent_dim, 96),
+                nn.ReLU(),
+                nn.Linear(96, 192),
+                nn.ReLU(),
+                nn.Linear(192, input_dim),
+            )
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:  # pragma: no cover - unused forward
+            latent = self.encoder(x)
+            return self.decoder(latent)
+
+        def encode(self, x: torch.Tensor) -> torch.Tensor:
+            return self.encoder(x)
+
+
+class SimpleTabTransformer(nn.Module if torch is not None and nn is not None else object):
+    if torch is None or nn is None:  # pragma: no cover - executed only without torch
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            raise RuntimeError("PyTorch is required to use the Rex-AI TabTransformer")
+
+    else:
+        def __init__(
+            self,
+            input_dim: int,
+            n_tokens: int,
+            d_model: int,
+            out_dim: int,
+            n_heads: int = 4,
+            n_layers: int = 2,
+            dropout: float = 0.1,
+        ) -> None:
+            super().__init__()
+            self.input_dim = input_dim
+            self.n_tokens = n_tokens
+            self.d_model = d_model
+            encoder_layer = nn.TransformerEncoderLayer(
+                d_model=d_model,
+                nhead=n_heads,
+                dim_feedforward=d_model * 2,
+                dropout=dropout,
+                batch_first=True,
+                activation="gelu",
+            )
+            self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+            self.token_projection = nn.Linear(input_dim, n_tokens * d_model)
+            self.positional = nn.Parameter(torch.randn(1, n_tokens, d_model))
+            self.head = nn.Sequential(
+                nn.Flatten(),
+                nn.Linear(n_tokens * d_model, 128),
+                nn.GELU(),
+                nn.Linear(128, out_dim),
+            )
+            self.norm = nn.LayerNorm(d_model)
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
+            tokens = self.token_projection(x).view(-1, self.n_tokens, self.d_model)
+            tokens = tokens + self.positional
+            encoded = self.encoder(tokens)
+            encoded = self.norm(encoded)
+            return self.head(encoded)
 
 class _Autoencoder(nn.Module):
     def __init__(self, input_dim: int, latent_dim: int) -> None:
@@ -235,6 +327,7 @@ class ModelRegistry:
             (str(name), float(weight)) for name, weight in importance_section
         ]
 
+        if torch is not None and AUTOENCODER_PATH.exists():
         if AUTOENCODER_PATH.exists():
             try:
                 checkpoint = torch.load(AUTOENCODER_PATH, map_location="cpu")
@@ -270,6 +363,7 @@ class ModelRegistry:
                 LOGGER.warning("Unable to load XGBoost ensemble: %s", exc)
                 self.xgb_models = {}
 
+        if torch is not None and TABTRANSFORMER_PATH.exists():
         if TABTRANSFORMER_PATH.exists():
             try:
                 checkpoint = torch.load(TABTRANSFORMER_PATH, map_location="cpu")
@@ -441,6 +535,10 @@ class ModelRegistry:
                     if target in {"rigidez", "estanqueidad"}
                     else float(max(0.0, stacked[idx]))
                 )
+                for idx, target in enumerate(TARGET_COLUMNS)
+            }
+
+        if torch is not None and self.tab_model is not None:
                 target: float(max(0.0, stacked[idx])) if target not in {"rigidez", "estanqueidad"} else float(np.clip(stacked[idx], 0.0, 1.0))
                 for idx, target in enumerate(TARGET_COLUMNS)
             }
@@ -458,6 +556,7 @@ class ModelRegistry:
 
     # ------------------------------------------------------------------
     def _encode(self, frame: pd.DataFrame) -> list[float]:
+        if torch is None or self.preprocessor is None or self.autoencoder is None:
         if self.preprocessor is None or self.autoencoder is None:
     def _encode(self, frame: pd.DataFrame) -> list[float]:
         """Return latent vector if AE & preprocess are available; [] otherwise."""
@@ -504,4 +603,8 @@ class ModelRegistry:
 
 MODEL_REGISTRY = ModelRegistry()
 
+if torch is None:  # pragma: no cover - log once when optional deps missing
+    LOGGER.warning(
+        "PyTorch is not installed; latent embeddings and transformer comparisons are disabled."
+    )
 __all__ = ["MODEL_REGISTRY", "ModelRegistry", "PredictionResult"]

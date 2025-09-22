@@ -8,6 +8,7 @@ __pycache__/
 *.pyc
 
 # Machine learning artifacts (generated) – keep metadata.json
+
 data/models/*.joblib
 data/models/*.pkl
 data/models/*.onnx
@@ -16,7 +17,6 @@ data/models/*.pt
 data/models/*.pth
 data/models/*.ckpt
 !data/models/metadata.json
-
 
 # Processed datasets (generated)
 
