@@ -151,33 +151,41 @@ with st.container():
         st.caption("Predicciones heurísticas basadas en reglas NASA.")
 
 st.markdown("### 📥 Export quick facts")
-st.json(
-    {
-        "process": {"id": cand["process_id"], "name": cand["process_name"]},
-        "materials": cand["materials"],
-        "weights": cand.get("weights", []),
-        "predictions": {
-            "rigidez": props.rigidity,
-            "estanqueidad": props.tightness,
-            "energy_kwh": props.energy_kwh,
-            "water_l": props.water_l,
-            "crew_min": props.crew_min,
+top_left, top_right = st.columns([2, 1])
+with top_left:
+    st.json(
+        {
+            "process": {"id": cand["process_id"], "name": cand["process_name"]},
+            "materials": cand["materials"],
+            "weights": cand.get("weights", []),
+            "predictions": {
+                "rigidez": props.rigidity,
+                "estanqueidad": props.tightness,
+                "energy_kwh": props.energy_kwh,
+                "water_l": props.water_l,
+                "crew_min": props.crew_min,
+            },
+            "confidence_interval": ci,
+            "uncertainty": uncertainty,
+            "model_metadata": metadata,
+            "score": score,
         },
-        "confidence_interval": ci,
-        "uncertainty": uncertainty,
-        "model_metadata": metadata,
-        "score": score,
-    },
-)
-with topR:
+    )
+with top_right:
+    badge = safety
     # Estado de seguridad (pill + popover de explicación)
-    level = badge.get("level","OK").lower()
+    level = badge.get("level", "OK").lower()
     cls = "ok" if "ok" in level else ("risk" if "riesgo" in level or "risk" in level else "warn")
-    st.markdown(f'<span class="pill {cls}">Seguridad: {badge.get("level","OK")}</span>', unsafe_allow_html=True)
+    st.markdown(
+        f'<span class="pill {cls}">Seguridad: {badge.get("level", "OK")}</span>',
+        unsafe_allow_html=True,
+    )
     pop = st.popover("¿Qué chequeamos?")
     with pop:
         st.write(badge.get("detail", "Sin observaciones."))
-        st.caption("Validaciones: PFAS/microplásticos evitados, sin incineración, flags NASA (EVA/CTB, multilayers, nitrilo).")
+        st.caption(
+            "Validaciones: PFAS/microplásticos evitados, sin incineración, flags NASA (EVA/CTB, multilayers, nitrilo)."
+        )
 
 st.markdown("---")
 
