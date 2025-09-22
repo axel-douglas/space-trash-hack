@@ -142,10 +142,9 @@ with st.container():
         ),
         unsafe_allow_html=True,
     )
-    src = getattr(p, "source", "heuristic")
+    src = getattr(props, "source", "heuristic")
     if src.startswith("rexai"):
-        meta = sel.get("ml_prediction", {}).get("metadata", {})
-        trained_at = meta.get("trained_at", "?")
+        trained_at = metadata.get("trained_at", "?")
         st.caption(f"Predicciones por modelo Rex-AI (**{src}**, entrenado {trained_at}).")
     else:
         st.caption("Predicciones heurísticas basadas en reglas NASA.")
@@ -184,21 +183,21 @@ st.markdown("---")
 # ======== KPIs con contexto ========
 k1,k2,k3,k4,k5 = st.columns(5)
 with k1:
-    st.markdown('<div class="kpi"><h3>Score total</h3><div class="v">{:.2f}</div><div class="hint">Función + Recursos + Bono problemáticos</div></div>'.format(sel["score"]), unsafe_allow_html=True)
+    st.markdown('<div class="kpi"><h3>Score total</h3><div class="v">{:.2f}</div><div class="hint">Función + Recursos + Bono problemáticos</div></div>'.format(score), unsafe_allow_html=True)
 with k2:
-    st.markdown('<div class="kpi"><h3>Rigidez</h3><div class="v">{:.2f}</div><div class="hint">Objetivo: {:.2f}</div></div>'.format(p.rigidity, float(target["rigidity"])), unsafe_allow_html=True)
+    st.markdown('<div class="kpi"><h3>Rigidez</h3><div class="v">{:.2f}</div><div class="hint">Objetivo: {:.2f}</div></div>'.format(props.rigidity, float(target["rigidity"])), unsafe_allow_html=True)
 with k3:
-    st.markdown('<div class="kpi"><h3>Estanqueidad</h3><div class="v">{:.2f}</div><div class="hint">Objetivo: {:.2f}</div></div>'.format(p.tightness, float(target["tightness"])), unsafe_allow_html=True)
+    st.markdown('<div class="kpi"><h3>Estanqueidad</h3><div class="v">{:.2f}</div><div class="hint">Objetivo: {:.2f}</div></div>'.format(props.tightness, float(target["tightness"])), unsafe_allow_html=True)
 with k4:
-    st.markdown('<div class="kpi"><h3>Energía (kWh)</h3><div class="v">{:.2f}</div><div class="hint">Máx: {:.2f}</div></div>'.format(p.energy_kwh, float(target["max_energy_kwh"])), unsafe_allow_html=True)
+    st.markdown('<div class="kpi"><h3>Energía (kWh)</h3><div class="v">{:.2f}</div><div class="hint">Máx: {:.2f}</div></div>'.format(props.energy_kwh, float(target["max_energy_kwh"])), unsafe_allow_html=True)
 with k5:
-    st.markdown('<div class="kpi"><h3>Agua (L)</h3><div class="v">{:.2f}</div><div class="hint">Máx: {:.2f}</div></div>'.format(p.water_l, float(target["max_water_l"])), unsafe_allow_html=True)
+    st.markdown('<div class="kpi"><h3>Agua (L)</h3><div class="v">{:.2f}</div><div class="hint">Máx: {:.2f}</div></div>'.format(props.water_l, float(target["max_water_l"])), unsafe_allow_html=True)
 
 c1, c2, c3 = st.columns([1,1,1])
 with c1:
-    st.markdown('<div class="kpi"><h3>Crew-time (min)</h3><div class="v">{:.0f}</div><div class="hint">Máx: {:.0f}</div></div>'.format(p.crew_min, float(target["max_crew_min"])), unsafe_allow_html=True)
+    st.markdown('<div class="kpi"><h3>Crew-time (min)</h3><div class="v">{:.0f}</div><div class="hint">Máx: {:.0f}</div></div>'.format(props.crew_min, float(target["max_crew_min"])), unsafe_allow_html=True)
 with c2:
-    st.markdown('<div class="kpi"><h3>Masa final (kg)</h3><div class="v">{:.2f}</div><div class="hint">Post-proceso / mermas</div></div>'.format(p.mass_final_kg), unsafe_allow_html=True)
+    st.markdown('<div class="kpi"><h3>Masa final (kg)</h3><div class="v">{:.2f}</div><div class="hint">Post-proceso / mermas</div></div>'.format(props.mass_final_kg), unsafe_allow_html=True)
 with c3:
     # Mini ayuda para crew-time-low
     if target.get("crew_time_low", False):
@@ -212,7 +211,7 @@ tab1, tab2, tab3, tab4 = st.tabs(["🧩 Anatomía del Score", "🔀 Flujo del pr
 # --- TAB 1: Anatomía del Score ---
 with tab1:
     st.markdown("## 🧩 Anatomía del Score <span class='sub'>(explicabilidad)</span>", unsafe_allow_html=True)
-    parts = score_breakdown(p, target, crew_time_low=target.get("crew_time_low", False))
+    parts = score_breakdown(props, target, crew_time_low=target.get("crew_time_low", False))
     # Asegurar índice correcto
     if isinstance(parts, pd.DataFrame) and "component" in parts.columns and "contribution" in parts.columns:
         fig_bar = go.Figure(
@@ -248,19 +247,19 @@ with tab1:
 with tab2:
     st.markdown("## 🔀 Flujo de materiales → proceso → producto", unsafe_allow_html=True)
 
-    labels = sel["materials"] + [sel["process_name"], "Producto"]
-    src = list(range(len(sel["materials"])))
-    tgt = [len(sel["materials"])] * len(sel["materials"])
+    labels = materials + [cand["process_name"], "Producto"]
+    src = list(range(len(materials)))
+    tgt = [len(materials)] * len(materials)
     # Si vienen pesos con regolito + redondeos, normalizamos para que la suma sea 1
-    weights = sel.get("weights", [])
+    weights = cand.get("weights", [])
     if weights and abs(sum(weights) - 1.0) > 1e-6:
         s = sum(weights)
         weights = [w/s for w in weights]
     vals = [round(w*100, 1) for w in weights] if weights else [100/len(src)]*len(src)
 
     # proceso -> producto
-    src += [len(sel["materials"])]
-    tgt += [len(sel["materials"]) + 1]
+    src += [len(materials)]
+    tgt += [len(materials) + 1]
     vals += [100.0]
 
     fig = go.Figure(data=[go.Sankey(
@@ -283,17 +282,17 @@ with tab2:
 with tab3:
     st.markdown("## 🛠️ Checklist de fabricación")
     st.markdown(f"""
-1. **Preparar/Triturar**: acondicionar materiales (**{', '.join(sel['materials'])}**).
-2. **Ejecutar proceso**: **{sel['process_id']} {sel['process_name']}** con parámetros estándar del hábitat.
+1. **Preparar/Triturar**: acondicionar materiales (**{', '.join(materials)}**).
+2. **Ejecutar proceso**: **{cand['process_id']} {cand['process_name']}** con parámetros estándar del hábitat.
 3. **Enfriar & post-proceso**: verificar bordes, ajuste y *fit*.
 4. **Registrar feedback**: rigidez percibida, facilidad de uso, y problemas (bordes, olor, slip, etc.).
     """)
 
     st.markdown("### ⏱️ Recursos estimados")
     cA,cB,cC = st.columns(3)
-    cA.metric("Energía", f"{p.energy_kwh:.2f} kWh")
-    cB.metric("Agua", f"{p.water_l:.2f} L")
-    cC.metric("Crew-time", f"{p.crew_min:.0f} min")
+    cA.metric("Energía", f"{props.energy_kwh:.2f} kWh")
+    cB.metric("Agua", f"{props.water_l:.2f} L")
+    cC.metric("Crew-time", f"{props.crew_min:.0f} min")
 
     pop3 = st.popover("¿Por qué importa?")
     with pop3:
@@ -306,11 +305,11 @@ with tab3:
 with tab4:
     st.markdown("## 🛰️ Trazabilidad NASA (inputs → plan)")
     # IDs / categorías / flags para auditar que usamos lo problemático
-    st.markdown("**IDs usados:** " + ", ".join(sel.get("source_ids", []) or ["—"]))
-    st.markdown("**Categorías:** " + ", ".join(map(str, sel.get("source_categories", []) or ["—"])))
-    st.markdown("**Flags:** " + ", ".join(map(str, sel.get("source_flags", []) or ["—"])))
+    st.markdown("**IDs usados:** " + ", ".join(cand.get("source_ids", []) or ["—"]))
+    st.markdown("**Categorías:** " + ", ".join(map(str, cand.get("source_categories", []) or ["—"])))
+    st.markdown("**Flags:** " + ", ".join(map(str, cand.get("source_flags", []) or ["—"])))
     st.caption("Esto permite demostrar que estamos atacando pouches multilayer, espumas ZOTEK, EVA/CTB, nitrilo, etc.")
-    feat = sel.get("features", {})
+    feat = cand.get("features", {})
     if feat:
         feat_view = {
             "Masa total (kg)": feat.get("total_mass_kg"),
@@ -324,10 +323,10 @@ with tab4:
         }
         st.markdown("**Features NASA/ML**")
         st.dataframe(pd.DataFrame([feat_view]), hide_index=True, use_container_width=True)
-    latent = sel.get("latent_vector") or feat.get("latent_vector")
-    if latent:
+    latent_view = latent or feat.get("latent_vector")
+    if latent_view:
         st.info(
-            f"Vector latente Rex-AI de {len(latent)} dimensiones listo para clustering o búsqueda de recetas similares."
+            f"Vector latente Rex-AI de {len(latent_view)} dimensiones listo para clustering o búsqueda de recetas similares."
         )
 
 # ======== Bloque final de educación rápida ========
