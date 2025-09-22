@@ -1,5 +1,5 @@
 {
-  "trained_at": "2025-09-22T02:11:30.838671+00:00",
+  "trained_at": "2025-09-22T02:33:10.465503+00:00",
   "n_samples": 1200,
   "feature_columns": [
     "process_id",
