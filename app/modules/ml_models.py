@@ -34,7 +34,6 @@ except Exception:  # pragma: no cover - torch is optional
     torch = None  # type: ignore
     nn = None     # type: ignore
     _HAS_TORCH = False
-
 LOGGER = logging.getLogger(__name__)
 
 DATA_ROOT = Path(__file__).resolve().parents[2] / "data"
@@ -166,7 +165,6 @@ if _HAS_TORCH:
             return self.encoder(x)
 else:
     _Autoencoder = None  # type: ignore[assignment]
-
 
 class ModelRegistry:
     """Simple registry that exposes trained regression pipelines."""
@@ -438,6 +436,11 @@ class ModelRegistry:
                     preds.append(np.asarray(model.predict(matrix), dtype=float))
             stacked = np.stack(preds, axis=1)[0]
             comparisons["xgboost"] = {
+                target: (
+                    float(np.clip(stacked[idx], 0.0, 1.0))
+                    if target in {"rigidez", "estanqueidad"}
+                    else float(max(0.0, stacked[idx]))
+                )
                 target: float(max(0.0, stacked[idx])) if target not in {"rigidez", "estanqueidad"} else float(np.clip(stacked[idx], 0.0, 1.0))
                 for idx, target in enumerate(TARGET_COLUMNS)
             }

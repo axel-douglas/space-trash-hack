@@ -848,6 +848,7 @@ def persist_artifacts(
     tab_metrics: Dict[str, Dict[str, float]],
     autoencoder: _Autoencoder,
 ) -> None:
+
 def train_pipeline(df: pd.DataFrame) -> Pipeline:
     # Usamos solo columnas realmente presentes (por si alguna feature faltó).
     present_feats = [c for c in FEATURE_COLUMNS if c in df.columns]

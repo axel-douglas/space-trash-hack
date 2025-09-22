@@ -530,6 +530,7 @@
     "path": "rexai_autoencoder.pt"
   }
 }
+}
   "model_name": "rexai-rf-v2",
   "dataset_path": "processed/ml/synthetic_runs.parquet"
 }

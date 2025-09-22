@@ -358,6 +358,99 @@ for i, c in enumerate(cands):
             tooltip=["iteration", "metric", alt.Tooltip("value", format=".3f")],
         ).properties(height=280)
         st.altair_chart(chart, use_container_width=True)
+
+=======
+
+    candidates = st.session_state.get("candidates", [])
+    history_df = st.session_state.get("optimizer_history", pd.DataFrame())
+
+    if not candidates:
+        st.info("Sin recetas todavía. Ajustá los controles y presioná **Generar recomendaciones**.")
+    else:
+        st.markdown("### 🔍 Recomendaciones con trazabilidad IA")
+        for idx, cand in enumerate(candidates, start=1):
+            props = cand["props"]
+            heur = cand.get("heuristic_props", props)
+            ci = cand.get("confidence_interval") or {}
+            uncertainty = cand.get("uncertainty") or {}
+            comparisons = cand.get("model_variants") or {}
+            metadata = cand.get("ml_prediction", {}).get("metadata", {})
+            importance = cand.get("feature_importance") or []
+            history_label = metadata.get("trained_at", "—")
+            with st.container():
+                st.markdown("""
+                    <div class="candidate">
+                      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+                        <h4>Opción #{idx} · Score {score:.3f}</h4>
+                        <span class="badge-ai">Modelo: {model} · Entrenado: {trained}</span>
+                      </div>
+                """.format(
+                    idx=idx,
+                    score=cand["score"],
+                    model=cand.get("prediction_source", "heuristic"),
+                    trained=history_label,
+                ), unsafe_allow_html=True)
+
+                grid = st.columns(5)
+                labels = [
+                    ("Rigidez", props.rigidity, heur.rigidity, ci.get("rigidez")),
+                    ("Estanqueidad", props.tightness, heur.tightness, ci.get("estanqueidad")),
+                    ("Energía (kWh)", props.energy_kwh, heur.energy_kwh, ci.get("energy_kwh")),
+                    ("Agua (L)", props.water_l, heur.water_l, ci.get("water_l")),
+                    ("Crew (min)", props.crew_min, heur.crew_min, ci.get("crew_min")),
+                ]
+                for col, (label, val_ml, val_h, interval) in zip(grid, labels):
+                    delta = val_ml - val_h
+                    with col:
+                        st.markdown(f"<div class='candidate-grid'><div><strong>{val_ml:.3f}</strong><span>{label}</span></div></div>", unsafe_allow_html=True)
+                        st.markdown(f"<div class='delta'>Heurística: {val_h:.3f} · Δ {delta:+.3f}</div>", unsafe_allow_html=True)
+                        if interval:
+                            st.markdown(f"<div class='confidence'>CI 95% [{interval[0]:.3f}, {interval[1]:.3f}]</div>", unsafe_allow_html=True)
+                if uncertainty:
+                    st.caption("Desviación (modelo): " + ", ".join(f"{k} {v:.3f}" for k, v in uncertainty.items()))
+
+                if importance:
+                    df_imp = pd.DataFrame(importance, columns=["feature", "value"]).head(6)
+                    chart = alt.Chart(df_imp).mark_bar(color="#38bdf8").encode(
+                        x=alt.X("value", title="Contribución"),
+                        y=alt.Y("feature", sort="-x", title="Feature"),
+                    ).properties(height=180)
+                    st.altair_chart(chart, use_container_width=True)
+
+                if comparisons:
+                    st.caption("Modelos alternativos:")
+                    comp_df = pd.DataFrame(comparisons).T
+                    st.dataframe(comp_df.style.format("{:.3f}"), use_container_width=True)
+
+                st.caption("Materiales: " + ", ".join(cand["materials"]))
+                st.caption("Fuente NASA IDs: " + ", ".join(cand.get("source_ids", [])))
+
+                col_select, col_flags = st.columns([0.3, 0.7])
+                with col_select:
+                    if st.button(f"Seleccionar opción #{idx}", key=f"select_{idx}"):
+                        flags = check_safety(cand["materials"], cand["process_name"], cand["process_id"])
+                        badge = safety_badge(flags)
+                        st.session_state["selected"] = {"data": cand, "safety": badge}
+                        st.success("Receta enviada a Resultados.")
+                with col_flags:
+                    flags = check_safety(cand["materials"], cand["process_name"], cand["process_id"])
+                    badge = safety_badge(flags)
+                    st.info(f"Seguridad: {badge['level']} · {badge['detail']}")
+                st.markdown("</div>", unsafe_allow_html=True)
+
+    if history_df is not None and not history_df.empty:
+        st.markdown("### 📈 Evolución del optimizador bayesiano")
+        history_df = history_df.fillna(method="ffill")
+        chart = alt.Chart(history_df).transform_fold(
+            ["hypervolume", "dominance_ratio"],
+            as_=["metric", "value"]
+        ).mark_line().encode(
+            x=alt.X("iteration:Q", title="Iteración"),
+            y=alt.Y("value:Q", title="Valor"),
+            color="metric:N",
+            tooltip=["iteration", "metric", alt.Tooltip("value", format=".3f")],
+        ).properties(height=280)
+        st.altair_chart(chart, use_container_width=True)
         # Botón de selección
         if st.button(f"✅ Seleccionar Opción {i+1}", key=f"pick_{i}"):
             st.session_state["selected"] = {"data": c, "safety": badge}
@@ -386,3 +479,4 @@ with st.expander("📚 Glosario ultra rápido", expanded=False):
 - **Score**: cuánto “cierra” la opción según tu objetivo y límites de recursos/tiempo.
 """)
 st.info("Sugerencia: generá varias opciones y pasá a **4) Resultados**, **5) Comparar** y **6) Pareto & Export** para cerrar tu plan.")
+

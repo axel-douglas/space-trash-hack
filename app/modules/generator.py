@@ -98,7 +98,6 @@ try:
 except Exception:  # pragma: no cover - fallback constant
     _MEAN_REUSE = 0.6
 
-
 @dataclass
 class PredProps:
     rigidity: float
@@ -231,7 +230,6 @@ def _pick_materials(
 ) -> pd.DataFrame:
     # Preferimos masa y problemáticos (boost configurable)
     w = df["kg"].clip(lower=0.01) + df["_problematic"].astype(int) * float(problematic_bias)
-
 def _pick_materials(df: pd.DataFrame, n: int = 2) -> pd.DataFrame:
     # Preferimos masa y problemáticos (boost)
     w = df["kg"].clip(lower=0.01) + df["_problematic"].astype(int) * 2.0
@@ -274,7 +272,6 @@ def generate_candidates(
         if "process_choice" in override:
             tuning["process_choice"] = override["process_choice"]
         return _build_candidate(picks, proc_df, target, crew_time_low, tuning)
-
     def _sampler() -> dict | None:
         picks = _pick_materials(df, n=random.choice([2, 3]))
         return _build_candidate(picks, proc_df, target, crew_time_low)
@@ -336,7 +333,6 @@ def _derive_features(
     moisture = picks.get("moisture_pct", 0).to_numpy(dtype=float) / 100.0
     difficulty = picks.get("difficulty_factor", 1).to_numpy(dtype=float) / 3.0
     densities = picks.get("density_kg_m3", 0).to_numpy(dtype=float)
-
     problematic_mass = float((picks["_problematic"].astype(float) * picks["kg"]).sum())
     problematic_items = float(picks["_problematic"].astype(float).mean())
 
