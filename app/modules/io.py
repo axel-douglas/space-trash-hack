@@ -119,6 +119,11 @@ def load_process_df() -> pd.DataFrame:
     _ensure_exists()
     return pd.read_csv(PROC_CSV)
 
+
+def load_process_catalog() -> pd.DataFrame:
+    """Alias legada para compatibilidad."""
+    return load_process_df()
+
 def load_targets() -> list[dict]:
     _ensure_exists()
     return json.loads(TARGETS_JSON.read_text(encoding="utf-8"))

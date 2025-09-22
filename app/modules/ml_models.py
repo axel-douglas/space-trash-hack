@@ -19,6 +19,16 @@ import joblib
 import numpy as np
 import pandas as pd
 
+try:  # Optional dependency for embeddings
+    import torch
+    from torch import nn
+
+    HAS_TORCH = True
+except Exception:  # pragma: no cover - optional dependency missing
+    torch = None  # type: ignore[assignment]
+    nn = None  # type: ignore[assignment]
+    HAS_TORCH = False
+
 LOGGER = logging.getLogger(__name__)
 
 # Rutas estándar
@@ -27,6 +37,8 @@ MODEL_DIR = DATA_ROOT / "models"
 PIPELINE_PATH = MODEL_DIR / "rexai_regressor.joblib"
 METADATA_PATH = MODEL_DIR / "metadata.json"
 XGBOOST_PATH = MODEL_DIR / "rexai_xgboost.joblib"   # opcional
+AUTOENCODER_PATH = MODEL_DIR / "rexai_autoencoder.pt"
+TABTRANSFORMER_PATH = MODEL_DIR / "rexai_tabtransformer.pt"
 
 # Orden y nombres de objetivos que espera la UI
 TARGET_COLUMNS: List[str] = ["rigidez", "estanqueidad", "energy_kwh", "water_l", "crew_min"]
@@ -82,6 +94,10 @@ class ModelRegistry:
         self.residual_std: np.ndarray | None = None
         self.feature_importance_avg: List[Tuple[str, float]] = []
         self.xgb_models: Dict[str, Any] = {}   # comparador opcional
+        self.autoencoder = None
+        self.autoencoder_meta: Dict[str, Any] = {}
+        self.tabtransformer = None
+        self.tab_meta: Dict[str, Any] = {}
         self._load()
 
     # -------------------------- Estado --------------------------------
@@ -160,6 +176,8 @@ class ModelRegistry:
             except Exception as exc:
                 LOGGER.warning("No se pudo cargar ensemble XGBoost: %s", exc)
                 self.xgb_models = {}
+
+        self._load_autoencoder()
 
     # ------------------------ Inferencia -------------------------------
     def predict(self, features: Mapping[str, Any]) -> Dict[str, Any]:
@@ -305,6 +323,83 @@ class ModelRegistry:
             for i, t in enumerate(TARGET_COLUMNS)
         }
         return out
+
+    def embed(self, features: Mapping[str, Any]) -> Tuple[float, ...]:
+        if not HAS_TORCH or self.autoencoder is None:
+            return ()
+
+        try:
+            _, matrix = self._prepare_frame(features)
+            tensor = torch.tensor(matrix, dtype=torch.float32)
+            with torch.no_grad():
+                latent = self.autoencoder.encode(tensor).cpu().numpy().reshape(-1)
+            return tuple(float(x) for x in latent)
+        except Exception as exc:
+            LOGGER.warning("Fallo generando embedding: %s", exc)
+            return ()
+
+    def _load_autoencoder(self) -> None:
+        if not HAS_TORCH:
+            self.autoencoder = None
+            return
+
+        meta = self.metadata.get("artifacts", {}).get("autoencoder", {})
+        if not meta:
+            self.autoencoder = None
+            return
+
+        path = meta.get("path")
+        model_path = self.model_dir / path if path else AUTOENCODER_PATH
+        if not model_path.exists():
+            self.autoencoder = None
+            return
+
+        feature_count = len(self.feature_names)
+        if feature_count == 0:
+            self.autoencoder = None
+            return
+
+        latent_dim = int(meta.get("latent_dim", 12))
+
+        try:
+            model = _Autoencoder(feature_count, latent_dim)
+            state = torch.load(model_path, map_location="cpu")
+            model.load_state_dict(state)
+            model.eval()
+            self.autoencoder = model
+            self.autoencoder_meta = meta
+        except Exception as exc:
+            LOGGER.warning("No se pudo cargar autoencoder: %s", exc)
+            self.autoencoder = None
+
+
+class _Autoencoder(nn.Module if HAS_TORCH else object):
+    def __init__(self, input_dim: int, latent_dim: int) -> None:
+        if not HAS_TORCH:  # pragma: no cover - sin torch no se instancia
+            raise RuntimeError("PyTorch es requerido para embeddings")
+        super().__init__()
+        self.encoder = nn.Sequential(
+            nn.Linear(input_dim, 192),
+            nn.ReLU(),
+            nn.Linear(192, 96),
+            nn.ReLU(),
+            nn.Linear(96, latent_dim),
+        )
+        self.decoder = nn.Sequential(
+            nn.Linear(latent_dim, 96),
+            nn.ReLU(),
+            nn.Linear(96, 192),
+            nn.ReLU(),
+            nn.Linear(192, input_dim),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
+        latent = self.encoder(x)
+        reconstruction = self.decoder(latent)
+        return reconstruction
+
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        return self.encoder(x)
 
 
 # Instancia global usada por la app
