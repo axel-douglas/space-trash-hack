@@ -110,6 +110,7 @@ with layout:
             if overall:
                 st.caption(f"MAE promedio: {overall.get('mae', '—'):.3f} · RMSE: {overall.get('rmse', '—'):.3f} · R²: {overall.get('r2', '—'):.3f}")
 
+    result = None
     if run:
         result = generate_candidates(
             waste_df,
@@ -135,6 +136,19 @@ with layout:
 
         st.session_state["candidates"] = candidate_records
         st.session_state["optimizer_history"] = history_df
+            cands, history = result
+        else:
+            cands, history = result, pd.DataFrame()
+    else:
+        cands = st.session_state.get("candidates")
+        history = st.session_state.get("optimizer_history")
+        if cands is None:
+            cands = []
+        if history is None:
+            history = pd.DataFrame()
+    st.session_state["candidates"] = cands
+    st.session_state["optimizer_history"] = history
+
 
 st.markdown('<div class="hr-micro"></div>', unsafe_allow_html=True)
 
