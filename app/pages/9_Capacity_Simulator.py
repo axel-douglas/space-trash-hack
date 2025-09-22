@@ -92,10 +92,21 @@ with cB:
     st.markdown("**Lotes y recursos por lote**")
     batches_per_shift = st.number_input("Lotes por turno", 1, 200, 3, 1,
                                         help="Cuántos ciclos completos de proceso haces en un turno.")
-    kg_per_batch      = st.number_input("Kg por lote", 0.05, 200.0, float(default_kg_per_batch), 0.05)
-    energy_kwh_per_batch = st.number_input("kWh por lote", 0.0, 50.0, float(default_kwh_per_batch), 0.01)
-    water_l_per_batch = st.number_input("Agua (L) por lote", 0.0, 50.0, float(default_water_per_batch), 0.01)
-    crew_min_per_batch= st.number_input("Crew (min) por lote", 0.0, 600.0, float(default_crew_min_per_batch), 1.0)
+    kg_min, kg_max = 0.05, 200.0
+    kg_default = min(kg_max, max(kg_min, float(default_kg_per_batch)))
+    kg_per_batch      = st.number_input("Kg por lote", kg_min, kg_max, kg_default, 0.05)
+
+    kwh_min, kwh_max = 0.0, 50.0
+    kwh_default = min(kwh_max, max(kwh_min, float(default_kwh_per_batch)))
+    energy_kwh_per_batch = st.number_input("kWh por lote", kwh_min, kwh_max, kwh_default, 0.01)
+
+    water_min, water_max = 0.0, 50.0
+    water_default = min(water_max, max(water_min, float(default_water_per_batch)))
+    water_l_per_batch = st.number_input("Agua (L) por lote", water_min, water_max, water_default, 0.01)
+
+    crew_min, crew_max = 0.0, 600.0
+    crew_default = min(crew_max, max(crew_min, float(default_crew_min_per_batch)))
+    crew_min_per_batch= st.number_input("Crew (min) por lote", crew_min, crew_max, crew_default, 1.0)
 
 with cC:
     st.markdown("**Límites por sol (capas de seguridad)**")
