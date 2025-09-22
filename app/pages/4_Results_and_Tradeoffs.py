@@ -7,6 +7,7 @@ if str(ROOT) not in sys.path:
 
 import altair as alt
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 from app.modules.explain import score_breakdown
