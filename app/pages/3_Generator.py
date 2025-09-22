@@ -267,6 +267,13 @@ for i, c in enumerate(cands):
             colA1.metric("Rigidez", f"{p.rigidity:.2f}")
             colA2.metric("Estanqueidad", f"{p.tightness:.2f}")
             colA3.metric("Masa final", f"{p.mass_final_kg:.2f} kg")
+            source = getattr(p, "source", "heuristic")
+            if source.startswith("rexai"):
+                meta = c.get("ml_prediction", {}).get("metadata", {})
+                trained_at = meta.get("trained_at", "?")
+                st.caption(f"Predicción por modelo ML (**{source}**, entrenado {trained_at}).")
+            else:
+                st.caption("Predicción heurística basada en reglas.")
 
         with colB:
             st.markdown("**🔧 Proceso**")

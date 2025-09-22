@@ -1,0 +1,27 @@
+{
+  "trained_at": "2025-09-22T00:23:01.881555+00:00",
+  "n_samples": 600,
+  "feature_columns": [
+    "process_id",
+    "mass_input_kg",
+    "num_items",
+    "problematic_mass_frac",
+    "problematic_item_frac",
+    "regolith_pct",
+    "aluminum_frac",
+    "foam_frac",
+    "eva_frac",
+    "textile_frac",
+    "multilayer_frac",
+    "glove_frac"
+  ],
+  "targets": [
+    "rigidez",
+    "estanqueidad",
+    "energy_kwh",
+    "water_l",
+    "crew_min"
+  ],
+  "model_name": "rexai-rf-v1",
+  "dataset_path": "processed/ml/synthetic_runs.parquet"
+}

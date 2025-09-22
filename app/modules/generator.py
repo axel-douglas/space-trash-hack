@@ -2,8 +2,16 @@
 from __future__ import annotations
 import random
 from dataclasses import dataclass
+from typing import Any, Dict
 
+import numpy as np
 import pandas as pd
+import os
+
+try:  # Lazy import to avoid circular dependency during training pipelines
+    from app.modules.ml_models import MODEL_REGISTRY
+except Exception:  # pragma: no cover - fallback when models are not available
+    MODEL_REGISTRY = None
 
 @dataclass
 class PredProps:
@@ -13,6 +21,7 @@ class PredProps:
     energy_kwh: float
     water_l: float
     crew_min: float
+    source: str = "heuristic"
 
 # --- utilidades de compatibilidad con DF (nombres de columnas) ---
 def _col(df: pd.DataFrame, candidates: list[str], default=None):
@@ -122,6 +131,61 @@ def generate_candidates(waste_df: pd.DataFrame, proc_df: pd.DataFrame,
     return out, history
 
 
+def _material_tokens(row: pd.Series) -> str:
+    """Concatenate informative strings to detect material families."""
+
+    parts = [
+        str(row.get("material", "")),
+        str(row.get("category", "")),
+        str(row.get("flags", "")),
+        str(row.get("material_family", "")),
+    ]
+    return " ".join(parts).lower()
+
+
+def _derive_features(
+    picks: pd.DataFrame,
+    base_weights: list[float],
+    proc: pd.Series,
+    regolith_pct: float,
+) -> Dict[str, Any]:
+    total_kg = max(0.001, float(picks["kg"].sum()))
+    problematic_mass = float((picks["_problematic"].astype(float) * picks["kg"]).sum())
+    problematic_items = float(picks["_problematic"].astype(float).mean())
+
+    tokens = [_material_tokens(row) for _, row in picks.iterrows()]
+
+    def _weight_for(keywords: tuple[str, ...]) -> float:
+        weight = 0.0
+        for token, frac in zip(tokens, base_weights):
+            if any(keyword in token for keyword in keywords):
+                weight += frac
+        return float(np.clip(weight, 0.0, 1.0))
+
+    keyword_map = {
+        "aluminum_frac": ("aluminum", " alloy", " al "),
+        "foam_frac": ("foam", "zotek", "closed cell"),
+        "eva_frac": ("eva", "ctb", "nomex"),
+        "textile_frac": ("textile", "cloth", "fabric", "wipe"),
+        "multilayer_frac": ("multilayer", "pe-pet-al", "pouch"),
+        "glove_frac": ("glove", "nitrile"),
+    }
+
+    features: Dict[str, Any] = {
+        "process_id": str(proc["process_id"]),
+        "mass_input_kg": total_kg,
+        "num_items": int(len(picks)),
+        "problematic_mass_frac": float(np.clip(problematic_mass / total_kg, 0.0, 1.0)),
+        "problematic_item_frac": float(np.clip(problematic_items, 0.0, 1.0)),
+        "regolith_pct": float(np.clip(regolith_pct, 0.0, 1.0)),
+    }
+
+    for name, keywords in keyword_map.items():
+        features[name] = _weight_for(keywords)
+
+    return features
+
+
 def _build_candidate(picks: pd.DataFrame, proc_df: pd.DataFrame, target: dict,
                      crew_time_low: bool = False) -> dict | None:
     if picks is None or picks.empty or proc_df is None or proc_df.empty:
@@ -129,6 +193,7 @@ def _build_candidate(picks: pd.DataFrame, proc_df: pd.DataFrame, target: dict,
 
     total_kg = max(0.001, float(picks["kg"].sum()))
     weights = (picks["kg"] / total_kg).round(2).tolist()
+    base_weights = weights.copy()
 
     used_ids = picks["_source_id"].tolist()
     used_cats = picks["_source_category"].tolist()
@@ -163,14 +228,35 @@ def _build_candidate(picks: pd.DataFrame, proc_df: pd.DataFrame, target: dict,
         rigidity = min(1.0, rigidity + 0.1)
         tightness = max(0.0, tightness - 0.05)
 
+    features = _derive_features(picks, base_weights, proc, regolith_pct)
+
     props = PredProps(
         rigidity=rigidity,
         tightness=tightness,
         mass_final_kg=mass_final,
         energy_kwh=energy,
         water_l=water,
-        crew_min=crew
+        crew_min=crew,
     )
+
+    force_heuristic = os.getenv("REXAI_FORCE_HEURISTIC", "").lower() in {"1", "true", "yes"}
+    if not force_heuristic and MODEL_REGISTRY is not None and MODEL_REGISTRY.ready:
+        prediction = MODEL_REGISTRY.predict(features)
+        if prediction:
+            props = PredProps(
+                rigidity=float(prediction.get("rigidez", rigidity)),
+                tightness=float(prediction.get("estanqueidad", tightness)),
+                mass_final_kg=mass_final,
+                energy_kwh=float(prediction.get("energy_kwh", energy)),
+                water_l=float(prediction.get("water_l", water)),
+                crew_min=float(prediction.get("crew_min", crew)),
+                source=str(prediction.get("source", "ml")),
+            )
+            # Guardamos info adicional para trazabilidad de la UI
+            features["prediction_model"] = props.source
+            features["model_metadata"] = prediction.get("metadata", {})
+    else:
+        prediction = {}
 
     score = _score_candidate(props, target, picks, total_kg, crew_time_low)
 
@@ -184,7 +270,10 @@ def _build_candidate(picks: pd.DataFrame, proc_df: pd.DataFrame, target: dict,
         "source_ids": used_ids,
         "source_categories": used_cats,
         "source_flags": used_flags,
-        "regolith_pct": regolith_pct
+        "regolith_pct": regolith_pct,
+        "features": features,
+        "prediction_source": props.source,
+        "ml_prediction": prediction,
     }
 
 
