@@ -1,0 +1,4 @@
+scenario,crew_days,crew_count,goods_kg,packaging_kg,ctb_count,reuse_plan,outfitting_replaced_kg,residual_waste_kg
+Short Sortie,28,4,510,78,30,Partitions; storage; worktops,60,18
+Outpost 12.1,900,6,0,3000,1500,Shielding; regolith bricks; PV blankets,1500,600
+Outpost 12.1 (max),1442,6,0,3400,1700,Shielding; regolith bricks; PV blankets,1800,400
