@@ -1,0 +1,20 @@
+{
+  "model_version": "rexai-mars-0.4.2",
+  "trained_at": "2024-05-12T16:30:00Z",
+  "dataset": {
+    "hash": "sha256:7f29ad9ce0f44ba1d3e3c8a9c4be70d8905f2766f9607f1e5e718d2a876b9ec3",
+    "records": 1248,
+    "sources": [
+      "Jezero Ops Sol 40-110",
+      "Mars Yard Analog",
+      "ISS e-Waste Pilot"
+    ]
+  },
+  "metrics": {
+    "rigidity_rmse": 0.068,
+    "tightness_rmse": 0.072,
+    "energy_mape": 4.4,
+    "water_mape": 5.1,
+    "crew_mae": 2.3
+  }
+}

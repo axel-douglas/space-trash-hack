@@ -10,6 +10,8 @@ import plotly.graph_objects as go
 import pandas as pd
 
 from app.modules.explain import score_breakdown
+from app.modules.metadata import load_validation_results, metric_interval
+from app.modules.charts import predictions_ci_chart
 
 # ⚠️ Debe ser la PRIMERA llamada de Streamlit en la página
 st.set_page_config(page_title="Resultados", page_icon="📊", layout="wide")
@@ -25,6 +27,7 @@ if not state_sel or not target:
 sel   = state_sel["data"]
 badge = state_sel["safety"]
 p     = sel["props"]
+validation_logs = load_validation_results()
 
 # ======== estilo ligero ========
 st.markdown("""
@@ -96,6 +99,41 @@ with c3:
     else:
         st.markdown('<div class="kpi"><h3>Modo</h3><div class="v">Balanceado</div><div class="hint">Trade-off estándar</div></div>', unsafe_allow_html=True)
 
+# ======== Validación modelo vs mediciones ========
+proc_logs = validation_logs[validation_logs["process_id"] == sel["process_id"]]
+if not proc_logs.empty:
+    st.markdown("### 📈 Validación del modelo vs mediciones registradas")
+    chart_cols = st.columns(2)
+    for col_vis, (metric_key, metric_label) in zip(chart_cols, [("rigidity", "Rigidez"), ("tightness", "Estanqueidad")]):
+        metric_df = proc_logs[proc_logs["metric"] == metric_key].copy()
+        if metric_df.empty:
+            col_vis.info(f"Sin registros históricos de {metric_label.lower()} para este proceso.")
+            continue
+        band = metric_interval(metric_key)
+        pred_val = getattr(p, metric_key)
+        lo_val = pred_val - band
+        hi_val = pred_val + band
+        if metric_key in ("rigidity", "tightness"):
+            lo_val = max(lo_val, 0.0)
+            hi_val = min(hi_val, 1.0)
+        candidate_row = pd.DataFrame({
+            "process_id": [sel["process_id"]],
+            "metric": [metric_key],
+            "batch": ["Predicción actual"],
+            "mean": [pred_val],
+            "lo": [lo_val],
+            "hi": [hi_val],
+            "observed": [pd.NA],
+        })
+        plot_df = pd.concat([metric_df, candidate_row], ignore_index=True, sort=False)
+        plot_df["batch"] = plot_df["batch"].astype(str)
+        fig = predictions_ci_chart(plot_df[["batch", "mean", "lo", "hi", "observed"]],
+                                   title=f"{metric_label}: modelo vs ensayos")
+        col_vis.plotly_chart(fig, use_container_width=True)
+        col_vis.caption("Violeta = predicción del modelo ± banda; verde = mediciones registradas.")
+else:
+    st.info("Aún no cargamos ensayos validados para este proceso. Usa esta receta como hipótesis inicial.")
+
 # ======== Tabs principales: (1) Score anatomy (2) Flujo Sankey (3) Checklist (4) Trazabilidad ========
 tab1, tab2, tab3, tab4 = st.tabs(["🧩 Anatomía del Score", "🔀 Flujo del proceso (Sankey)", "🛠️ Checklist & Próximos pasos", "🛰️ Trazabilidad NASA"])
 
@@ -122,6 +160,24 @@ with tab1:
         st.plotly_chart(fig_bar, use_container_width=True)
     else:
         st.info("No se pudo construir el desglose. Verifica `score_breakdown`.")
+
+    fi = sel.get("feature_importance", {}) or {}
+    if fi:
+        friendly_names = {
+            "rigidity_alignment": "Rigidez — encaje",
+            "tightness_alignment": "Estanqueidad — encaje",
+            "energy_penalty": "Energía — penalización",
+            "water_penalty": "Agua — penalización",
+            "crew_penalty": "Crew — penalización",
+            "problematic_bonus": "Bono problemáticos",
+        }
+        shap_rows = [
+            {"Factor": friendly_names.get(k, k), "Impacto": round(float(v), 3)}
+            for k, v in fi.items()
+        ]
+        shap_df = pd.DataFrame(shap_rows)
+        st.markdown("#### 🔍 Feature importance estilo SHAP")
+        st.dataframe(shap_df, hide_index=True, use_container_width=True)
 
     # Popover didáctico
     pop1 = st.popover("¿Qué estoy viendo?")

@@ -271,6 +271,7 @@ Podés adjuntarla a un PR o a una revisión de diseño.</div>
                                    file_name="candidate_summary.csv", mime="text/csv")
             except Exception as e:
                 st.warning(f"No se pudo construir CSV: {e}")
+            st.caption("Los archivos incluyen trazabilidad completa y feature importance estilo SHAP para cada recomendación.")
 
     st.markdown("---")
     st.markdown("""

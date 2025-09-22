@@ -8,6 +8,9 @@ if str(ROOT) not in sys.path:
 
 import streamlit as st
 from pathlib import Path
+from datetime import datetime
+
+from app.modules.metadata import load_training_metadata
 
 # ⚠️ Debe ser la PRIMERA llamada de Streamlit
 st.set_page_config(
@@ -99,6 +102,45 @@ with c1: st.markdown(f'<div class="kpi"><h3>Inventario</h3><div class="v">{"✅"
 with c2: st.markdown(f'<div class="kpi"><h3>Procesos</h3><div class="v">{"✅" if proc_ok else "❌"}</div><div class="ghost small">process_catalog.csv</div></div>', unsafe_allow_html=True)
 with c3: st.markdown(f'<div class="kpi"><h3>Targets</h3><div class="v">{"✅" if tgt_ok else "❌"}</div><div class="ghost small">targets_presets.json</div></div>', unsafe_allow_html=True)
 with c4: st.markdown('<div class="kpi"><h3>Modo</h3><div class="v">Demo</div><div class="ghost small">modelos ligeros</div></div>', unsafe_allow_html=True)
+
+# ============ Madurez de la IA ============
+metadata = load_training_metadata()
+if metadata:
+    st.markdown("### Madurez del modelo (telemetría de entrenamiento)")
+    info_col, dataset_col = st.columns([1.2, 1.0])
+    with info_col:
+        model_version = metadata.get("model_version", "—")
+        trained_at = metadata.get("trained_at")
+        dt_fmt = "—"
+        if trained_at:
+            try:
+                dt_fmt = datetime.fromisoformat(trained_at.replace("Z", "+00:00")).strftime("%d %b %Y · %H:%M UTC")
+            except ValueError:
+                dt_fmt = trained_at
+        st.markdown(f"**Versión de modelo:** `{model_version}`")
+        st.markdown(f"**Entrenado:** {dt_fmt}")
+        metrics = metadata.get("metrics", {})
+        metric_items = list(metrics.items())
+        if metric_items:
+            metric_cols = st.columns(min(4, len(metric_items)))
+            for idx, (m_key, m_val) in enumerate(metric_items):
+                col = metric_cols[idx % len(metric_cols)]
+                label = m_key.replace("_", " ").upper()
+                if isinstance(m_val, (int, float)):
+                    col.metric(label, f"{m_val:.3f}")
+                else:
+                    col.metric(label, str(m_val))
+    with dataset_col:
+        dataset = metadata.get("dataset", {})
+        st.markdown("**Dataset**")
+        st.markdown(f"Registros: **{dataset.get('records', '—')}**")
+        st.markdown(f"Hash:** `{dataset.get('hash', '—')}`")
+        sources = dataset.get("sources", [])
+        if sources:
+            st.markdown("Origen:")
+            for s in sources:
+                st.markdown(f"- {s}")
+    st.caption("Estos metadatos se generan automáticamente al cerrar un ciclo de entrenamiento: ayudan a auditar madurez y drift.")
 
 # ============ Flujo principal ============
 st.markdown("### Flujo de misión")

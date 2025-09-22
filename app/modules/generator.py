@@ -164,19 +164,29 @@ def generate_candidates(waste_df: pd.DataFrame, proc_df: pd.DataFrame,
         )
 
         # Scoring multi-objetivo (simple y transparente)
-        score = 0.0
-        score += 1.0 - abs(props.rigidity  - float(target["rigidity"]))
-        score += 1.0 - abs(props.tightness - float(target["tightness"]))
-        # Penalizaciones por recursos vs límites
+        rigidity_term = 1.0 - abs(props.rigidity - float(target["rigidity"]))
+        tightness_term = 1.0 - abs(props.tightness - float(target["tightness"]))
+
         def _pen(v, lim, eps):
             return max(0.0, (v - float(lim)) / max(eps, float(lim)))
-        score -= _pen(props.energy_kwh, target["max_energy_kwh"], 0.1)
-        score -= _pen(props.water_l,     target["max_water_l"],   0.1)
-        score -= _pen(props.crew_min,    target["max_crew_min"],  1.0)
+
+        energy_term = -_pen(props.energy_kwh, target["max_energy_kwh"], 0.1)
+        water_term = -_pen(props.water_l, target["max_water_l"], 0.1)
+        crew_term = -_pen(props.crew_min, target["max_crew_min"], 1.0)
 
         # Bono por **masa problemática** consumida
         prob_mass = float((picks["_problematic"].astype(int) * picks["kg"]).sum())
-        score += 0.5 * (prob_mass / max(0.1, total_kg))
+        bonus_term = 0.5 * (prob_mass / max(0.1, total_kg))
+
+        score = rigidity_term + tightness_term + energy_term + water_term + crew_term + bonus_term
+        feature_importance = {
+            "rigidity_alignment": round(rigidity_term, 3),
+            "tightness_alignment": round(tightness_term, 3),
+            "energy_penalty": round(energy_term, 3),
+            "water_penalty": round(water_term, 3),
+            "crew_penalty": round(crew_term, 3),
+            "problematic_bonus": round(bonus_term, 3),
+        }
 
         out.append({
             "materials": materials_for_plan,
@@ -185,6 +195,7 @@ def generate_candidates(waste_df: pd.DataFrame, proc_df: pd.DataFrame,
             "process_name": str(proc["name"]),
             "props": props,
             "score": round(float(score), 3),
+            "feature_importance": feature_importance,
 
             # Trazabilidad NASA
             "source_ids": used_ids,

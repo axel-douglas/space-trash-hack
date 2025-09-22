@@ -12,6 +12,8 @@ from app.modules.io import load_waste_df, load_process_df
 from app.modules.process_planner import choose_process
 from app.modules.generator import generate_candidates
 from app.modules.safety import check_safety, safety_badge
+from app.modules.metadata import load_validation_results, metric_interval
+from app.modules.charts import predictions_ci_chart
 
 # 1) st.set_page_config DEBE ir primero
 st.set_page_config(page_title="Generador", page_icon="⚙️", layout="wide")
@@ -183,6 +185,7 @@ st.markdown('<div class="hr-micro"></div>', unsafe_allow_html=True)
 
 # -------------------- Si no hay candidatos aún --------------------
 cands = st.session_state.get("candidates", [])
+validation_logs = load_validation_results()
 if not cands:
     st.info("Todavía no hay candidatos. Configurá el número y presioná **Generar opciones**. "
             "Recomendación: asegurate de que tu inventario tenga pouches, espumas, EVA/CTB, textiles o nitrilo; "
@@ -258,6 +261,35 @@ for i, c in enumerate(cands):
             colB3.write("Crew (min)")
             colB3.progress(_res_bar(p.crew_min, target["max_crew_min"]))
             colB3.caption(f"{p.crew_min:.0f} / {target['max_crew_min']}")
+
+        # Validación modelo vs. mediciones históricas
+        proc_logs = validation_logs[validation_logs["process_id"] == c["process_id"]]
+        if not proc_logs.empty:
+            st.markdown("**📈 Validación modelo vs. mediciones**")
+            charts = st.columns(2)
+            for col_vis, (metric_key, metric_label) in zip(charts, [("rigidity", "Rigidez"), ("tightness", "Estanqueidad")]):
+                metric_df = proc_logs[proc_logs["metric"] == metric_key].copy()
+                if metric_df.empty:
+                    col_vis.info(f"Sin registros históricos de {metric_label.lower()} para este proceso.")
+                    continue
+                band = metric_interval(metric_key)
+                candidate_row = pd.DataFrame({
+                    "process_id": [c["process_id"]],
+                    "metric": [metric_key],
+                    "batch": ["Predicción actual"],
+                    "mean": [getattr(p, metric_key)],
+                    "lo": [max(getattr(p, metric_key) - band, 0.0)],
+                    "hi": [min(getattr(p, metric_key) + band, 1.0)],
+                    "observed": [pd.NA],
+                })
+                plot_df = pd.concat([metric_df, candidate_row], ignore_index=True, sort=False)
+                plot_df["batch"] = plot_df["batch"].astype(str)
+                fig = predictions_ci_chart(plot_df[["batch", "mean", "lo", "hi", "observed"]],
+                                           title=f"{metric_label}: modelo vs ensayos")
+                col_vis.plotly_chart(fig, use_container_width=True)
+                col_vis.caption("Violeta = predicción del modelo ± banda; verde = mediciones registradas.")
+        else:
+            st.caption("No tenemos ensayos históricos cargados para contrastar este proceso.")
 
         st.markdown('<div class="hr-micro"></div>', unsafe_allow_html=True)
 
