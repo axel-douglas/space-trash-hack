@@ -120,13 +120,21 @@ with layout:
             optimizer_evals=opt_evals,
         )
         if isinstance(result, tuple):
-            cands, history = result
-    if isinstance(result, tuple):
-        cands, history = result
-    else:
-        cands, history = result, pd.DataFrame()
-    st.session_state["candidates"] = cands
-    st.session_state["optimizer_history"] = history
+            candidates, history = result
+        else:
+            candidates, history = result, pd.DataFrame()
+
+        if isinstance(candidates, pd.DataFrame):
+            candidate_records = candidates.to_dict("records")
+        elif isinstance(candidates, dict):
+            candidate_records = [candidates]
+        else:
+            candidate_records = [dict(c) for c in candidates]
+
+        history_df = history if isinstance(history, pd.DataFrame) else pd.DataFrame()
+
+        st.session_state["candidates"] = candidate_records
+        st.session_state["optimizer_history"] = history_df
 
 st.markdown('<div class="hr-micro"></div>', unsafe_allow_html=True)
 
