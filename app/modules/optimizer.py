@@ -13,6 +13,14 @@ from typing import Callable, Iterable
 import numpy as np
 import pandas as pd
 
+try:  # pragma: no cover - optional dependency
+    from ax.service.ax_client import AxClient
+
+    AX_AVAILABLE = True
+except Exception:  # pragma: no cover - optional dependency missing
+    AxClient = None  # type: ignore[assignment]
+    AX_AVAILABLE = False
+
 
 @dataclass
 class OptimizationSummary:
@@ -25,7 +33,7 @@ class OptimizationSummary:
 
 
 Candidate = dict
-Sampler = Callable[[], Candidate | None]
+Sampler = Callable[[dict[str, float] | None], Candidate | None]
 
 
 def optimize_candidates(
@@ -33,6 +41,7 @@ def optimize_candidates(
     sampler: Sampler,
     target: dict,
     n_evals: int = 30,
+    process_ids: list[str] | None = None,
 ) -> tuple[list[Candidate], pd.DataFrame]:
     """Ejecuta un barrido de optimización multiobjetivo.
 
@@ -72,25 +81,36 @@ def optimize_candidates(
         )
     )
 
-    for i in range(1, n_evals + 1):
-        candidate = sampler()
-        if candidate:
-            evaluated.append(candidate)
-        pareto = _pareto_front(evaluated, target)
-        hv = _hypervolume(pareto, evaluated, target)
-        dom_ratio = _dominance_ratio(pareto, evaluated)
-        score = float(candidate["score"]) if candidate else float("nan")
-        penalty = _penalty(candidate, target) if candidate else float("nan")
-        history.append(
-            OptimizationSummary(
-                iteration=i,
-                score=score,
-                penalty=penalty,
-                hypervolume=hv,
-                dominance_ratio=dom_ratio,
-                pareto_size=len(pareto),
+    if n_evals > 0:
+        if AX_AVAILABLE and AxClient is not None:
+            _run_bayesian_optimization(
+                evaluated,
+                history,
+                sampler,
+                target,
+                n_evals,
+                process_ids or [],
             )
-        )
+        else:
+            for i in range(1, n_evals + 1):
+                candidate = sampler({})
+                if candidate:
+                    evaluated.append(candidate)
+                pareto = _pareto_front(evaluated, target)
+                hv = _hypervolume(pareto, evaluated, target)
+                dom_ratio = _dominance_ratio(pareto, evaluated)
+                score = float(candidate["score"]) if candidate else float("nan")
+                penalty = _penalty(candidate, target) if candidate else float("nan")
+                history.append(
+                    OptimizationSummary(
+                        iteration=i,
+                        score=score,
+                        penalty=penalty,
+                        hypervolume=hv,
+                        dominance_ratio=dom_ratio,
+                        pareto_size=len(pareto),
+                    )
+                )
 
     pareto_sorted = sorted(pareto, key=lambda c: c.get("score", 0.0), reverse=True)
     history_df = pd.DataFrame(history)
@@ -206,3 +226,62 @@ def _penalty(candidate: Candidate, target: dict) -> float:
         return float("nan")
     metrics = _metrics(candidate, target)
     return float(metrics["penalty"])
+
+
+def _run_bayesian_optimization(
+    evaluated: list[Candidate],
+    history: list[OptimizationSummary],
+    sampler: Sampler,
+    target: dict,
+    n_evals: int,
+    process_ids: list[str],
+) -> None:
+    if AxClient is None:
+        return
+
+    processes = sorted({str(pid) for pid in process_ids}) or ["P02", "P03", "P04"]
+    parameters = [
+        {"name": "problematic_bias", "type": "range", "bounds": [1.0, 5.0]},
+        {"name": "regolith_pct", "type": "range", "bounds": [0.0, 0.6]},
+        {"name": "process_choice", "type": "choice", "values": processes},
+    ]
+
+    ax_client = AxClient(enforce_sequential_optimization=True)
+    ax_client.create_experiment(
+        name="rexai_bo",
+        parameters=parameters,
+        objective_name="score",
+        minimize=False,
+    )
+
+    for _ in range(n_evals):
+        params, trial_index = ax_client.get_next_trial()
+        override = {
+            "problematic_bias": float(params.get("problematic_bias", 2.0)),
+            "regolith_pct": float(params.get("regolith_pct", 0.0)),
+            "process_choice": params.get("process_choice"),
+        }
+        candidate = sampler(override)
+        if not candidate:
+            candidate = sampler({})
+
+        score = float(candidate["score"]) if candidate else float("nan")
+        ax_client.complete_trial(trial_index=trial_index, raw_data=score)
+
+        if candidate:
+            evaluated.append(candidate)
+
+        pareto = _pareto_front(evaluated, target)
+        hv = _hypervolume(pareto, evaluated, target)
+        dom_ratio = _dominance_ratio(pareto, evaluated)
+        penalty = _penalty(candidate, target) if candidate else float("nan")
+        history.append(
+            OptimizationSummary(
+                iteration=len(history),
+                score=score,
+                penalty=penalty,
+                hypervolume=hv,
+                dominance_ratio=dom_ratio,
+                pareto_size=len(pareto),
+            )
+        )

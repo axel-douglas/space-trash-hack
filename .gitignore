@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+
+# Machine learning artifacts (generated)
+data/models/*.joblib
+data/models/*.pkl
+data/models/*.onnx
+data/models/*.bin
+data/models/*.pt
+data/models/*.pth
+data/models/*.ckpt
+!data/models/metadata.json
+
+data/processed/
+datasets/processed/
+datasets/derived/
