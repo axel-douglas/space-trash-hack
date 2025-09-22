@@ -23,11 +23,31 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+# app/modules/model_training.py
+"""Training utilities for Rex-AI regression models.
+
+El flujo de entrenamiento genera un dataset sintético que emula el
+comportamiento del generador heurístico. Sirve como baseline reproducible
+que puede luego reemplazarse por logs reales sin cambiar el código de la app.
+
+Al ejecutar este módulo como script se hará:
+1) Muestreo de corridas sintéticas usando el inventario y catálogo de procesos.
+2) Entrenamiento de un pipeline de regresión multi-salida (RandomForest + preprocess).
+3) Persistencia del artefacto y metadatos en ``data/models``.
+4) Export del dataset de entrenamiento a ``data/processed/ml`` para trazabilidad.
+"""
+from __future__ import annotations
+
+import json
+import os
+
 import random
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
+from typing import Dict, Iterable, List, Sequence, Tuple
+from typing import List
 
 import joblib
 import numpy as np
@@ -38,6 +58,8 @@ try:  # Optional dependency for boosted trees
 except ModuleNotFoundError:  # pragma: no cover - environments without xgboost
     xgb = None  # type: ignore[assignment]
     HAS_XGBOOST = False
+import torch
+import xgboost as xgb
 from pandas import DataFrame
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestRegressor
@@ -57,6 +79,8 @@ except ModuleNotFoundError:  # pragma: no cover - environments without torch
     nn = None  # type: ignore[assignment]
     DataLoader = TensorDataset = None  # type: ignore[assignment]
     HAS_TORCH = False
+from torch import nn
+from torch.utils.data import DataLoader, TensorDataset
 
 # ---------------------------------------------------------------------------
 # Paths & constants
@@ -81,10 +105,45 @@ FEATURE_COLUMNS = [
     "regolith_pct",
     "total_mass_kg",
     "density_kg_m3",
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.multioutput import MultiOutputRegressor
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+from app.modules import generator
+
+# ------------------------------ Paths ------------------------------
+DATA_ROOT = Path(__file__).resolve().parents[2] / "data"
+PROCESSED_DIR = DATA_ROOT / "processed" / "ml"
+MODEL_DIR = DATA_ROOT / "models"
+PIPELINE_PATH = MODEL_DIR / "rexai_regressor.joblib"
+METADATA_PATH = MODEL_DIR / "metadata.json"
+DATASET_PATH = PROCESSED_DIR / "synthetic_runs.parquet"
+
+# --------------------------- Schema -------------------------------
+TARGET_COLUMNS = ["rigidez", "estanqueidad", "energy_kwh", "water_l", "crew_min"]
+
+# Conjunto amplio para alinearnos con generator.py (incluye métricas ricas y simples)
+FEATURE_COLUMNS = [
+    "process_id",
+    # métricas ricas
+    "total_mass_kg",
+    "density_kg_m3",
+    "num_items",
     "moisture_frac",
     "difficulty_index",
     "problematic_mass_frac",
     "problematic_item_frac",
+    "packaging_frac",
+    "gas_recovery_index",
+    "logistics_reuse_index",
+    # versiones simples para compatibilidad hacia atrás
+    "mass_input_kg",
+    "problematic_mass_frac_simple",
+    "problematic_item_frac_simple",
+    # regolito y fracciones por palabra clave
+    "regolith_pct",
     "aluminum_frac",
     "foam_frac",
     "eva_frac",
@@ -96,6 +155,11 @@ FEATURE_COLUMNS = [
     "packaging_frac",
     "gas_recovery_index",
     "logistics_reuse_index",
+    "glove_frac",
+    "polyethylene_frac",
+    "carbon_fiber_frac",
+    "hydrogen_rich_frac",
+    # óxidos escalados por participación de regolito
     "oxide_sio2",
     "oxide_feot",
     "oxide_mgo",
@@ -103,7 +167,6 @@ FEATURE_COLUMNS = [
     "oxide_so3",
     "oxide_h2o",
 ]
-
 LATENT_DIM = 12
 TABTRANSFORMER_TOKENS = 8
 TABTRANSFORMER_DIM = 64
@@ -133,6 +196,7 @@ def _set_seed(seed: int | None) -> None:
     np.random.seed(seed)
     if HAS_TORCH:
         torch.manual_seed(seed)  # type: ignore[arg-type]
+    torch.manual_seed(seed)
 
 
 # ---------------------------------------------------------------------------
@@ -426,13 +490,100 @@ def build_training_dataframe(n_samples: int = 1600, seed: int | None = 21) -> Da
 def _build_preprocessor() -> ColumnTransformer:
     categorical = ["process_id"]
     numeric = [col for col in FEATURE_COLUMNS if col not in categorical]
+# --------------------------- Data helpers --------------------------
+def _load_sources() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Carga muestras mínimas de inventario y catálogo de procesos desde data/."""
+    waste = pd.read_csv(DATA_ROOT / "waste_inventory_sample.csv")
+    processes = pd.read_csv(DATA_ROOT / "process_catalog.csv")
+    return waste, processes
+
+
+def _default_target() -> dict:
+    return {
+        "rigidity": 0.8,
+        "tightness": 0.75,
+        "max_energy_kwh": 9.0,
+        "max_water_l": 6.0,
+        "max_crew_min": 60.0,
+    }
+
+
+@dataclass(slots=True)
+class SyntheticRun:
+    features: dict
+    target: dict
+
+    def as_row(self) -> dict:
+        payload = {**self.features}
+        payload.update(self.target)
+        return payload
+
+
+def _sample_candidate(waste: pd.DataFrame, processes: pd.DataFrame, rng: random.Random) -> dict | None:
+    target = _default_target()
+    n = rng.randint(2, 3)
+    cands, _ = generator.generate_candidates(
+        waste,
+        processes,
+        target,
+        n=n,
+        crew_time_low=rng.random() < 0.4,
+        optimizer_evals=0,
+    )
+    if not cands:
+        return None
+    return rng.choice(cands)
+
+
+def _create_synthetic_runs(n_samples: int, seed: int | None = None) -> List[SyntheticRun]:
+    """Fuerza modo heurístico para no depender de modelos previos."""
+    previous = os.environ.get("REXAI_FORCE_HEURISTIC")
+    os.environ["REXAI_FORCE_HEURISTIC"] = "1"
+    rng = random.Random(seed or 42)
+    waste, processes = _load_sources()
+    runs: List[SyntheticRun] = []
+
+    try:
+        while len(runs) < n_samples:
+            candidate = _sample_candidate(waste, processes, rng)
+            if not candidate:
+                continue
+            props = candidate["props"]
+            # Seleccionamos solo columnas esperadas; si falta alguna, se completa luego con NaN.
+            features = {key: candidate["features"].get(key) for key in FEATURE_COLUMNS}
+            # Ruido suave para simular mediciones reales
+            noise = rng.random()
+            target = {
+                "rigidez": float(np.clip(props.rigidity + rng.gauss(0, 0.03), 0.0, 1.0)),
+                "estanqueidad": float(np.clip(props.tightness + rng.gauss(0, 0.04), 0.0, 1.0)),
+                "energy_kwh": float(max(props.energy_kwh * (0.95 + 0.10 * noise), 0.0)),
+                "water_l": float(max(props.water_l * (0.95 + 0.12 * noise), 0.0)),
+                "crew_min": float(max(props.crew_min * (0.90 + 0.20 * noise), 0.0)),
+            }
+            runs.append(SyntheticRun(features=features, target=target))
+    finally:
+        if previous is None:
+            os.environ.pop("REXAI_FORCE_HEURISTIC", None)
+        else:
+            os.environ["REXAI_FORCE_HEURISTIC"] = previous
+    return runs
+
+
+def build_training_dataframe(n_samples: int = 600, seed: int | None = 21) -> pd.DataFrame:
+    runs = _create_synthetic_runs(n_samples, seed)
+    df = pd.DataFrame([run.as_row() for run in runs])
+    return df
+
+# --------------------------- Training ---------------------------------
+def _build_preprocessor(available_features: list[str]) -> ColumnTransformer:
+    categorical = [col for col in ["process_id"] if col in available_features]
+    numeric = [col for col in available_features if col not in categorical]
     return ColumnTransformer(
         transformers=[
             ("cat", OneHotEncoder(handle_unknown="ignore"), categorical),
             ("num", Pipeline([("scale", StandardScaler())]), numeric),
         ]
     )
-
 
 def _build_rf_pipeline(random_state: int = 42) -> Pipeline:
     rf = RandomForestRegressor(
@@ -581,6 +732,76 @@ class SimpleTabTransformer(nn.Module if HAS_TORCH else object):
             encoded = self.encoder(tokens)
             encoded = self.norm(encoded)
             return self.head(encoded)
+class _Autoencoder(nn.Module):
+    def __init__(self, input_dim: int, latent_dim: int = LATENT_DIM) -> None:
+        super().__init__()
+        self.encoder = nn.Sequential(
+            nn.Linear(input_dim, 192),
+            nn.ReLU(),
+            nn.Linear(192, 96),
+            nn.ReLU(),
+            nn.Linear(96, latent_dim),
+        )
+        self.decoder = nn.Sequential(
+            nn.Linear(latent_dim, 96),
+            nn.ReLU(),
+            nn.Linear(96, 192),
+            nn.ReLU(),
+            nn.Linear(192, input_dim),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
+        latent = self.encoder(x)
+        reconstruction = self.decoder(latent)
+        return reconstruction
+
+    def encode(self, x: torch.Tensor) -> torch.Tensor:
+        return self.encoder(x)
+
+
+class SimpleTabTransformer(nn.Module):
+    """Compact transformer-style regressor for tabular data."""
+
+    def __init__(
+        self,
+        num_features: int,
+        n_tokens: int = TABTRANSFORMER_TOKENS,
+        d_model: int = TABTRANSFORMER_DIM,
+        n_heads: int = 4,
+        n_layers: int = 2,
+        dropout: float = 0.1,
+        out_dim: int = len(TARGET_COLUMNS),
+    ) -> None:
+        super().__init__()
+        self.num_features = num_features
+        self.n_tokens = n_tokens
+        self.d_model = d_model
+
+        self.token_projection = nn.Linear(num_features, n_tokens * d_model)
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=n_heads,
+            dim_feedforward=d_model * 2,
+            dropout=dropout,
+            batch_first=True,
+            activation="gelu",
+        )
+        self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+        self.norm = nn.LayerNorm(d_model)
+        self.head = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(n_tokens * d_model, 128),
+            nn.GELU(),
+            nn.Linear(128, out_dim),
+        )
+        self.positional = nn.Parameter(torch.randn(1, n_tokens, d_model))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
+        tokens = self.token_projection(x).view(-1, self.n_tokens, self.d_model)
+        tokens = tokens + self.positional
+        encoded = self.encoder(tokens)
+        encoded = self.norm(encoded)
+        return self.head(encoded)
 
 
 # ---------------------------------------------------------------------------
@@ -685,6 +906,8 @@ def train_xgboost_models(
         return {}, {}
 
     models: Dict[str, Any] = {}
+) -> Tuple[Dict[str, xgb.XGBRegressor], Dict[str, Dict[str, float]]]:
+    models: Dict[str, xgb.XGBRegressor] = {}
     metrics: Dict[str, Dict[str, float]] = {}
 
     X_train = feature_matrix[train_idx]
@@ -738,6 +961,36 @@ def persist_artifacts(
     tab_metrics: Dict[str, Dict[str, float]],
     autoencoder: _Autoencoder | None,
 ) -> None:
+    xgb_models: Dict[str, xgb.XGBRegressor],
+    xgb_metrics: Dict[str, Dict[str, float]],
+    tab_model: SimpleTabTransformer,
+    tab_metrics: Dict[str, Dict[str, float]],
+    autoencoder: _Autoencoder,
+) -> None:
+
+def train_pipeline(df: pd.DataFrame) -> Pipeline:
+    # Usamos solo columnas realmente presentes (por si alguna feature faltó).
+    present_feats = [c for c in FEATURE_COLUMNS if c in df.columns]
+    X = df[present_feats]
+    y = df[TARGET_COLUMNS]
+
+    preprocessor = _build_preprocessor(present_feats)
+    base_model = RandomForestRegressor(
+        n_estimators=220,
+        min_samples_leaf=3,
+        random_state=7,
+        n_jobs=-1,
+    )
+
+    pipeline = Pipeline([
+        ("preprocess", preprocessor),
+        ("model", MultiOutputRegressor(base_model)),
+    ])
+    pipeline.fit(X, y)
+    return pipeline
+
+# --------------------------- Persistence ------------------------------
+def persist_artifacts(df: pd.DataFrame, pipeline: Pipeline) -> None:
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -766,6 +1019,25 @@ def persist_artifacts(
             },
             TABTRANSFORMER_PATH,
         )
+    torch.save(
+        {
+            "state_dict": autoencoder.state_dict(),
+            "input_dim": feature_matrix.shape[1],
+            "latent_dim": LATENT_DIM,
+        },
+        AUTOENCODER_PATH,
+    )
+
+    torch.save(
+        {
+            "state_dict": tab_model.state_dict(),
+            "input_dim": feature_matrix.shape[1],
+            "n_tokens": TABTRANSFORMER_TOKENS,
+            "d_model": TABTRANSFORMER_DIM,
+            "targets": TARGET_COLUMNS,
+        },
+        TABTRANSFORMER_PATH,
+    )
 
     dataset_hash = hashlib.sha1(df.to_csv(index=False).encode("utf-8")).hexdigest()
 
@@ -791,11 +1063,14 @@ def persist_artifacts(
         "xgboost": {
             "metrics": xgb_metrics,
             "path": str(XGBOOST_PATH.relative_to(MODEL_DIR)),
+
             "available": HAS_XGBOOST,
         },
     }
     if HAS_TORCH and tab_model is not None:
         metadata["tabtransformer"] = {
+        },
+        "tabtransformer": {
             "metrics": tab_metrics,
             "path": str(TABTRANSFORMER_PATH.relative_to(MODEL_DIR)),
             "tokens": TABTRANSFORMER_TOKENS,
@@ -806,6 +1081,12 @@ def persist_artifacts(
             "latent_dim": LATENT_DIM,
             "path": str(AUTOENCODER_PATH.relative_to(MODEL_DIR)),
         }
+        },
+        "autoencoder": {
+            "latent_dim": LATENT_DIM,
+            "path": str(AUTOENCODER_PATH.relative_to(MODEL_DIR)),
+        },
+    }
     METADATA_PATH.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
 
@@ -875,6 +1156,10 @@ def train_and_save(n_samples: int = 1600, seed: int | None = 21) -> None:
         tab_metrics = {}
         autoencoder = None
         print("[model_training] PyTorch not available, skipping deep models.")
+    xgb_models, xgb_metrics = train_xgboost_models(feature_matrix, df[TARGET_COLUMNS].to_numpy(), train_idx, valid_idx)
+    tab_model, tab_metrics = train_tabtransformer(feature_matrix, df[TARGET_COLUMNS].to_numpy(), train_idx, valid_idx)
+
+    autoencoder = train_autoencoder(feature_matrix)
 
     persist_artifacts(
         df,
@@ -895,4 +1180,23 @@ def train_and_save(n_samples: int = 1600, seed: int | None = 21) -> None:
 
 
 if __name__ == "__main__":  # pragma: no cover - script entry point
+
+    metadata = {
+        "trained_at": datetime.now(tz=UTC).isoformat(),
+        "n_samples": int(len(df)),
+        "feature_columns": [c for c in FEATURE_COLUMNS if c in df.columns],
+        "targets": TARGET_COLUMNS,
+        "model_name": "rexai-rf-v1",
+        "dataset_path": str(DATASET_PATH.relative_to(DATA_ROOT)),
+    }
+    METADATA_PATH.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+# ----------------------------- Entry ----------------------------------
+def train_and_save(n_samples: int = 600, seed: int | None = 21) -> None:
+    df = build_training_dataframe(n_samples=n_samples, seed=seed)
+    pipeline = train_pipeline(df)
+    persist_artifacts(df, pipeline)
+
+
+if __name__ == "__main__":
     train_and_save()
