@@ -7,6 +7,8 @@ Models are trained with :mod:`app.modules.model_training` and persisted inside
 ``data/models``. The registry automatically discovers the packaged pipeline and
 provides inference helpers that also expose explainability artefacts such as
 feature importance, confidence intervals and alternative model suggestions.
+provides a small inference helper that consumes the engineered feature dict
+attached to each candidate.
 """
 
 from __future__ import annotations
@@ -23,6 +25,15 @@ import pandas as pd
 import torch
 from torch import nn
 
+# --- Optional torch/autoencoder support (safe if torch is not installed) ---
+try:
+    import torch
+    from torch import nn
+    _HAS_TORCH = True
+except Exception:  # pragma: no cover - torch is optional
+    torch = None  # type: ignore
+    nn = None     # type: ignore
+    _HAS_TORCH = False
 LOGGER = logging.getLogger(__name__)
 
 DATA_ROOT = Path(__file__).resolve().parents[2] / "data"
@@ -34,12 +45,11 @@ TABTRANSFORMER_PATH = MODEL_DIR / "rexai_tabtransformer.pt"
 METADATA_PATH = MODEL_DIR / "metadata.json"
 
 TARGET_COLUMNS = ["rigidez", "estanqueidad", "energy_kwh", "water_l", "crew_min"]
-
+METADATA_PATH = MODEL_DIR / "metadata.json"
 
 @dataclass(slots=True)
 class PredictionResult:
     """Structured payload returned by :class:`ModelRegistry`."""
-
     rigidez: float
     estanqueidad: float
     energy_kwh: float
@@ -68,7 +78,6 @@ class PredictionResult:
             "comparisons": self.comparisons,
             "latent_vector": list(self.latent_vector),
         }
-
 
 class _Autoencoder(nn.Module):
     def __init__(self, input_dim: int, latent_dim: int) -> None:
@@ -136,7 +145,26 @@ class SimpleTabTransformer(nn.Module):
         encoded = self.encoder(tokens)
         encoded = self.norm(encoded)
         return self.head(encoded)
+# --- Optional AE model definition ---
+if _HAS_TORCH:
+    class _Autoencoder(nn.Module):  # type: ignore[misc]
+        def __init__(self, input_dim: int, latent_dim: int) -> None:
+            super().__init__()
+            self.encoder = nn.Sequential(
+                nn.Linear(input_dim, 128),
+                nn.ReLU(),
+                nn.Linear(128, 64),
+                nn.ReLU(),
+                nn.Linear(64, latent_dim),
+            )
 
+        def forward(self, x):  # pragma: no cover - unused forward
+            return self.encoder(x)
+
+        def encode(self, x):
+            return self.encoder(x)
+else:
+    _Autoencoder = None  # type: ignore[assignment]
 
 class ModelRegistry:
     """Simple registry that exposes trained regression pipelines."""
@@ -155,6 +183,10 @@ class ModelRegistry:
         self.feature_importance_avg: list[tuple[str, float]] = []
         self.xgb_models: dict[str, Any] = {}
         self.tab_model: SimpleTabTransformer | None = None
+        self.metadata: dict[str, Any] = {}
+        self.preprocessor = None
+        self.autoencoder: _Autoencoder | None = None  # type: ignore[valid-type]
+        self.latent_dim: int | None = None
         self._load()
 
     # ------------------------------------------------------------------
@@ -173,6 +205,9 @@ class ModelRegistry:
             if hasattr(self.pipeline, "named_steps"):
                 self.preprocessor = self.pipeline.named_steps.get("preprocess")
         except Exception as exc:  # pragma: no cover - defensive logging.
+                # for sklearn Pipeline([...('preprocess', ...), ('regressor', ...)])
+                self.preprocessor = getattr(self.pipeline, "named_steps", {}).get("preprocess")
+        except Exception as exc:  # pragma: no cover - defensive logging
             LOGGER.warning("Unable to load Rex-AI pipeline %s: %s", PIPELINE_PATH, exc)
             self.pipeline = None
             self.preprocessor = None
@@ -206,11 +241,23 @@ class ModelRegistry:
                 input_dim = int(checkpoint.get("input_dim"))
                 latent_dim = int(checkpoint.get("latent_dim"))
                 model = _Autoencoder(input_dim, latent_dim)
+            except Exception as exc:  # pragma: no cover
+                LOGGER.warning("Failed to parse metadata %s: %s", METADATA_PATH, exc)
+                self.metadata = {}
+
+        # Optional autoencoder
+        if _HAS_TORCH and AUTOENCODER_PATH.exists():
+            try:
+                checkpoint = torch.load(AUTOENCODER_PATH, map_location="cpu")  # type: ignore[arg-type]
+                input_dim = int(checkpoint.get("input_dim"))
+                latent_dim = int(checkpoint.get("latent_dim"))
+                model = _Autoencoder(input_dim, latent_dim)  # type: ignore[operator]
                 model.load_state_dict(checkpoint.get("state_dict", {}))
                 model.eval()
                 self.autoencoder = model
                 self.latent_dim = latent_dim
             except Exception as exc:  # pragma: no cover - defensive logging.
+            except Exception as exc:  # pragma: no cover
                 LOGGER.warning("Unable to load autoencoder %s: %s", AUTOENCODER_PATH, exc)
                 self.autoencoder = None
                 self.latent_dim = None
@@ -238,7 +285,6 @@ class ModelRegistry:
             except Exception as exc:  # pragma: no cover
                 LOGGER.warning("Unable to load TabTransformer weights: %s", exc)
                 self.tab_model = None
-
     # ------------------------------------------------------------------
     def predict(self, features: Mapping[str, Any]) -> dict[str, Any]:
         if not self.ready:
@@ -265,6 +311,21 @@ class ModelRegistry:
         latent_vector = self._encode(frame)
         importance = self._feature_contributions(matrix[0])
         variants = self._predict_variants(matrix)
+            frame = pd.DataFrame([features])
+            predictions = self.pipeline.predict(frame)  # type: ignore[union-attr]
+        except Exception as exc:  # pragma: no cover - defensive logging
+            LOGGER.warning("Prediction failed, falling back to heuristics: %s", exc)
+            return {}
+
+        if predictions is None:
+            return {}
+
+        preds = np.asarray(predictions, dtype=float).reshape(-1)
+        if preds.size < 5:
+            LOGGER.warning("Invalid prediction size %s", preds.size)
+            return {}
+
+        latent_vector = self._encode(frame)
 
         result = PredictionResult(
             rigidez=float(np.clip(preds[0], 0.0, 1.0)),
@@ -283,6 +344,13 @@ class ModelRegistry:
             confidence_interval=ci,
             feature_importance=importance,
             comparisons=variants,
+            source=str(self.metadata.get("model_name", "rexai-ml")),
+            metadata={
+                "trained_at": self.metadata.get("trained_at"),
+                "n_samples": self.metadata.get("n_samples"),
+                "features": self.metadata.get("feature_columns"),
+                "targets": self.metadata.get("targets"),
+            },
             latent_vector=tuple(latent_vector),
         )
         return result.as_dict()
@@ -373,6 +441,7 @@ class ModelRegistry:
                     if target in {"rigidez", "estanqueidad"}
                     else float(max(0.0, stacked[idx]))
                 )
+                target: float(max(0.0, stacked[idx])) if target not in {"rigidez", "estanqueidad"} else float(np.clip(stacked[idx], 0.0, 1.0))
                 for idx, target in enumerate(TARGET_COLUMNS)
             }
 
@@ -390,6 +459,9 @@ class ModelRegistry:
     # ------------------------------------------------------------------
     def _encode(self, frame: pd.DataFrame) -> list[float]:
         if self.preprocessor is None or self.autoencoder is None:
+    def _encode(self, frame: pd.DataFrame) -> list[float]:
+        """Return latent vector if AE & preprocess are available; [] otherwise."""
+        if not (_HAS_TORCH and self.preprocessor is not None and self.autoencoder is not None):
             return []
 
         try:
@@ -412,7 +484,24 @@ class ModelRegistry:
         if not self.ready:
             return []
         frame, _ = self._prepare_frame(features)
+            tensor = torch.from_numpy(np.asarray(matrix, dtype=np.float32))  # type: ignore[attr-defined]
+            with torch.no_grad():  # type: ignore[attr-defined]
+                latent = self.autoencoder.encode(tensor).numpy()  # type: ignore[union-attr]
+        except Exception as exc:  # pragma: no cover
+            LOGGER.debug("Failed to compute latent vector: %s", exc)
+            return []
+
+        if getattr(latent, "size", 0) == 0:
+            return []
+        return np.asarray(latent, dtype=np.float32).reshape(-1).tolist()
+
+    def embed(self, features: Mapping[str, Any]) -> list[float]:
+        if not self.ready:
+            return []
+        frame = pd.DataFrame([features])
         return self._encode(frame)
 
 
 MODEL_REGISTRY = ModelRegistry()
+
+__all__ = ["MODEL_REGISTRY", "ModelRegistry", "PredictionResult"]
