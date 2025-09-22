@@ -13,24 +13,19 @@ Demo ligera que muestra la lógica del "cerebro de reciclaje" para Marte:
 ## Entrenar y generar artefactos de IA
 
 El módulo `app/modules/model_training.py` permite entrenar un modelo de
-regresión multi-salida (Random Forest) a partir de corridas sintéticas. Esto
-produce:
+regresión multi-salida a partir de datasets físicos/químicos alineados con
+documentos de NASA y UCF. Mezcla el inventario de residuos no-metabólicos
+(pouches, espumas, EVA/CTB, textiles, nitrilo, etc.), la composición mineralógica
+y propiedades de MGS-1, y rendimientos de procesos Trash-to-Gas y
+Logistics-to-Living. 
 
-- Dataset versionado en `data/processed/ml/synthetic_runs.parquet`.
-- Pipeline empaquetado en `data/models/rexai_regressor.joblib` con metadatos
-  (`data/models/metadata.json`).
+Esto produce:
+- Dataset procesado en `datasets/processed/rexai_training_dataset.parquet`.
+- Pipeline empaquetado (`data/models/rexai_regressor.joblib`) con metadatos
+  en `data/models/metadata.json`.
+- Autoencoder para embeddings latentes en `data/models/rexai_autoencoder.pt`.
 
-Para regenerar el modelo:
+Para regenerar todos los artefactos:
 
 ```bash
 python -m app.modules.model_training
-```
-
-Los artefactos resultantes (`.joblib`, `.parquet`, etc.) se generan de forma
-local y están listados en `.gitignore` para evitar commitear binarios. La
-aplicación cargará automáticamente el modelo y reemplazará las predicciones
-heurísticas por las del pipeline cuando los artefactos estén disponibles.
-
-## Ejecutar
-```bash
-streamlit run app/Home.py

@@ -1,10 +1,14 @@
 {
-  "trained_at": "2025-09-22T00:23:01.881555+00:00",
+  "trained_at": "2025-09-22T02:33:10.465503+00:00",
   "n_samples": 600,
   "feature_columns": [
     "process_id",
+    "total_mass_kg",
     "mass_input_kg",
     "num_items",
+    "density_kg_m3",
+    "moisture_frac",
+    "difficulty_index",
     "problematic_mass_frac",
     "problematic_item_frac",
     "regolith_pct",
@@ -13,7 +17,19 @@
     "eva_frac",
     "textile_frac",
     "multilayer_frac",
-    "glove_frac"
+    "glove_frac",
+    "polyethylene_frac",
+    "carbon_fiber_frac",
+    "hydrogen_rich_frac",
+    "packaging_frac",
+    "gas_recovery_index",
+    "logistics_reuse_index",
+    "oxide_sio2",
+    "oxide_feot",
+    "oxide_mgo",
+    "oxide_cao",
+    "oxide_so3",
+    "oxide_h2o"
   ],
   "targets": [
     "rigidez",
@@ -22,6 +38,6 @@
     "water_l",
     "crew_min"
   ],
-  "model_name": "rexai-rf-v1",
+  "model_name": "rexai-rf-v2",
   "dataset_path": "processed/ml/synthetic_runs.parquet"
 }

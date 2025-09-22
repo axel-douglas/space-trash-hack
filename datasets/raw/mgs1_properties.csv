@@ -1,0 +1,8 @@
+simulant,property,value,units,notes
+MGS-1,density_bulk,1.29,g/cm3,Based on Viking/Pathfinder measurements
+MGS-1,median_grain_size,122,µm,Bimodal distribution fine + crushed grains
+MGS-1,crystalline_fraction,0.65,fraction,Recovered from Cannon et al. 2019
+MGS-1,amorphous_fraction,0.35,fraction,Recovered from Cannon et al. 2019
+MGS-1,water_release,3.2,wt%,Released between 30-500C
+MGS-1,co2_release,2.0,wt%,From siderite breakdown
+MGS-1,so2_release_temp,950,C,Decomposition of sulfates
