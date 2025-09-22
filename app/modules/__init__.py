@@ -1,31 +1,51 @@
+# app/modules/__init__.py
+"""
+Exportes livianos para la app Streamlit.
 
-"""Helper exports for the Streamlit application modules."""
+Notas:
+- NO importamos `model_training` al cargar el paquete (lazy import).
+- Re-exportamos solo runtime estable (IO, generator, ML registry).
+- Si se quiere entrenar desde la UI/CLI: usar `get_train_and_save()`.
+"""
 
-from .data_pipeline import (
-    DataPipeline,
-    InventoryRecord,
-    ProcessRecord,
-    ProcessRunLog,
-    build_feature_dataframe,
-    load_inventory,
+from __future__ import annotations
+
+# --- Runtime estable (ligero) ---
+from .ml_models import MODEL_REGISTRY, ModelRegistry, PredictionResult
+from .io import (
+    load_waste_df,
+    save_waste_df,
+    load_targets,
     load_process_catalog,
-    load_process_logs,
-    persist_dataset,
 )
-from .ml_models import MODEL_REGISTRY, ModelRegistry
-from .model_training import train_and_save
+from .generator import generate_candidates, PredProps
 
 __all__ = [
-    "DataPipeline",
-    "InventoryRecord",
-    "ProcessRecord",
-    "ProcessRunLog",
-    "build_feature_dataframe",
-    "load_inventory",
+    # IO
+    "load_waste_df",
+    "save_waste_df",
+    "load_targets",
     "load_process_catalog",
-    "load_process_logs",
-    "persist_dataset",
+    # Generación
+    "generate_candidates",
+    "PredProps",
+    # ML
     "MODEL_REGISTRY",
     "ModelRegistry",
-    "train_and_save",
+    "PredictionResult",
+    # Entrenamiento (lazy)
+    "get_train_and_save",
 ]
+
+def get_train_and_save():
+    """
+    Import diferido del pipeline de entrenamiento.
+    Evita errores/sobrecargas cuando solo se usa la app.
+    """
+    try:
+        from .model_training import train_and_save  # import tardío
+        return train_and_save
+    except Exception as exc:
+        def _stub(*_a, **_kw):
+            raise RuntimeError(f"Training pipeline no disponible: {exc}")
+        return _stub
