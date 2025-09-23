@@ -185,6 +185,8 @@ def test_build_training_dataframe_falls_back_when_labels_missing(
     [
         ([], "synthetic_v0"),
         (["simulated"], "synthetic_v0"),
+        (["weak"], "synthetic_v0"),
+        (["weakly_supervised"], "synthetic_v0"),
         (["mission"], "gold_v1"),
         (["measured", "mission"], "gold_v1"),
         (["simulated", "mission"], "hybrid_v1"),
@@ -250,3 +252,21 @@ def test_compute_targets_fallback_without_curated_data(
     assert result["label_source"] == "simulated"
     tightness = model_training.TIGHTNESS_SCORE_MAP[result["tightness_pass"]]
     assert result["estanqueidad"] == pytest.approx(tightness)
+
+
+def test_compute_targets_relabels_weak_sources(monkeypatch: pytest.MonkeyPatch) -> None:
+    picks, process, weights = _sample_inputs()
+    features = generator.compute_feature_vector(picks, weights, process, 0.0)
+
+    def _fake_lookup_labels(*_: object, **__: object) -> tuple[dict[str, float], dict[str, str]]:
+        return (
+            {"rigidez": 0.61},
+            {"provenance": "weak", "label_source": "weak"},
+        )
+
+    monkeypatch.setattr(model_training, "lookup_labels", _fake_lookup_labels)
+
+    result = model_training._compute_targets(picks, process, features)
+
+    assert result["label_source"] == "simulated"
+    assert result.get("provenance") == "weak"
