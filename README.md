@@ -80,10 +80,37 @@ python -m scripts.package_model_bundle
 ```
 
 El script genera `dist/rexai-models-<timestamp>.zip` con todos los binarios
-(`rexai_regressor.joblib`, clasificadores, ensambles opcionales) y las dos
-versiones de `metadata.json`. El ZIP está listo para adjuntarse a un GitHub
-Release o subirlo a un bucket S3/GCS. En el despliegue, basta con descomprimirlo
-en `data/models/` para activar el modo IA.
+(`data/models/rexai_regressor.joblib`, clasificadores y ensambles opcionales)
+y ambas versiones de metadata (`metadata.json` y `metadata_gold.json`). El ZIP
+está listo para adjuntarse a un GitHub Release o subirlo a un bucket S3/GCS. En
+el despliegue debe extraerse antes de lanzar Streamlit:
+
+```bash
+unzip dist/rexai-models-<timestamp>.zip -d /tmp/rexai-models && \
+  rsync -av /tmp/rexai-models/data/models/ data/models/
+```
+
+El último paso garantiza que `data/models/` contenga los binarios antes de
+ejecutar `streamlit run app/Home.py`.
+
+### Mantener el bundle actualizado
+
+1. Reentrena con los datasets más recientes:
+
+   ```bash
+   python -m app.modules.model_training
+   ```
+
+   El pipeline actualizará `data/models/rexai_regressor.joblib`, clasificadores
+   auxiliares, y escribirá `data/models/metadata.json` con un `trained_on`
+   legible por `ModelRegistry.trained_label()` (por ejemplo `synthetic_v0`).
+
+2. Empaqueta los artefactos con `python -m scripts.package_model_bundle`,
+   verifica con `python -m scripts.verify_model_ready` y publica el ZIP
+   resultante.
+
+3. Documenta la fecha y el label (`trained_on`) en el release/changelog para que
+   los despliegues confirmen qué dataset alimentó el entrenamiento.
 
 ## Verificación automática de readiness
 
