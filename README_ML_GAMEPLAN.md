@@ -101,7 +101,7 @@ Crear `notebooks/validate_model.ipynb` con:
 3. Publicar los artefactos y actualizar `MODEL_DIR` o la URL remota.
 4. Configurar la app para que `ModelRegistry.ready == True` y mostrar procedencia + CI; fallback solo si `predict()` devuelve `{}`.
 5. Elaborar notebook de validación con métricas y recetas demo.
-6. Consolidar `impact.jsonl`/`feedback.jsonl` en `datasets/raw/` y re-entrenar periódicamente.
+6. Consolidar `impact.jsonl`/`feedback.jsonl` en `datasets/raw/` y re-entrenar periódicamente (`python -m app.modules.retrain_from_feedback`).
 
 ---
 

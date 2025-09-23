@@ -1296,11 +1296,13 @@ def train_and_save(
     }
 
     trained_on = _infer_trained_on_label(df)
+    trained_at_iso = datetime.now(tz=UTC).isoformat()
 
     metadata = {
         "model_name": "rexai-rf-ensemble",
         "trained_on": trained_on,
-        "trained_at": datetime.now(tz=UTC).isoformat(),
+        "trained_at": trained_at_iso,
+        "trained_label": trained_on,
         "n_samples": int(len(df)),
         "dataset": {
             "path": _relative_path(DATASET_PATH),

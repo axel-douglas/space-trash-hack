@@ -80,11 +80,29 @@ st.markdown(
 )
 
 # ──────────── Lectura segura de metadata del modelo ────────────
-trained_at = MODEL_REGISTRY.metadata.get("trained_at")
+trained_at_raw = MODEL_REGISTRY.metadata.get("trained_at")
+trained_label_value = (
+    MODEL_REGISTRY.metadata.get("trained_label")
+    or MODEL_REGISTRY.metadata.get("trained_on")
+)
+
 try:
-    trained_dt = datetime.fromisoformat(trained_at) if trained_at else None
+    trained_dt = datetime.fromisoformat(trained_at_raw) if trained_at_raw else None
 except Exception:
     trained_dt = None
+
+trained_at_display = (
+    trained_dt.strftime("%d %b %Y %H:%M UTC") if trained_dt else "sin metadata"
+)
+
+trained_combo = MODEL_REGISTRY.trained_label()
+if trained_at_display == "sin metadata" and trained_combo and trained_combo != "—":
+    trained_at_display = trained_combo
+
+if not trained_label_value and trained_combo and trained_combo != "—":
+    trained_label_value = trained_combo.split(" · ", 1)[0]
+
+trained_label_value = trained_label_value or "—"
 
 n_samples = MODEL_REGISTRY.metadata.get("n_samples")
 model_name = MODEL_REGISTRY.metadata.get("model_name", "rexai-rf-ensemble")
@@ -127,16 +145,13 @@ st.markdown(
 
 # ──────────── Pila/estado del modelo ────────────
 st.markdown("### Estado del modelo Rex-AI")
-trained_label = MODEL_REGISTRY.trained_label()
-if not trained_label or trained_label == "—":
-    trained_label = trained_dt.strftime("%d %b %Y %H:%M UTC") if trained_dt else "sin metadata"
 ready = "✅ Modelo listo" if MODEL_REGISTRY.ready else "⚠️ Entrená localmente"
 
 st.markdown(
     f"""
     <div class="metric-grid">
       <div class="metric"><h5>Estado</h5><strong>{ready}</strong><p>Nombre: {model_name}</p></div>
-      <div class="metric"><h5>Entrenado</h5><strong>{trained_label}</strong><p>Muestras: {n_samples or '—'}</p></div>
+      <div class="metric"><h5>Entrenado</h5><strong>{trained_at_display}</strong><p>Procedencia: {trained_label_value}</p><p>Muestras: {n_samples or '—'}</p></div>
       <div class="metric"><h5>Feature space</h5><strong>{feature_count}</strong><p>Ingeniería fisicoquímica + proceso</p></div>
       <div class="metric"><h5>Incertidumbre</h5><strong>{MODEL_REGISTRY.uncertainty_label()}</strong><p>CI 95% en UI</p></div>
     </div>
