@@ -23,6 +23,8 @@ from typing import Any, Dict, Iterable, Tuple
 import numpy as np
 import pandas as pd
 
+from app.modules.label_mapper import derive_recipe_id, lookup_labels
+
 try:  # Lazy import to avoid circular dependency during training pipelines
     from app.modules.ml_models import MODEL_REGISTRY
 except Exception:  # pragma: no cover - fallback when models are not available
@@ -456,37 +458,85 @@ def _build_candidate(
             weights_for_plan = [round(w / total, 3) for w in weights_for_plan]
 
     features = compute_feature_vector(picks, weights, proc, regolith_pct)
+    recipe_id = derive_recipe_id(picks, proc, features)
+    if recipe_id:
+        features["recipe_id"] = recipe_id
+
     heuristic = heuristic_props(picks, proc, weights, regolith_pct)
-    props = heuristic
+    curated_targets, curated_meta = lookup_labels(
+        picks,
+        str(proc.get("process_id")),
+        {"recipe_id": recipe_id, "materials": used_ids},
+    )
+    features["curated_label_targets"] = curated_targets or {}
+    features["curated_label_metadata"] = curated_meta or {}
+
+    provenance = str(
+        curated_meta.get("provenance")
+        or curated_meta.get("label_source")
+        or ""
+    ).lower()
+    use_curated = bool(curated_targets) and provenance != "weak"
 
     prediction: dict[str, Any] = {}
-    force_heuristic = os.getenv("REXAI_FORCE_HEURISTIC", "").lower() in {"1", "true", "yes"}
-    if not force_heuristic and MODEL_REGISTRY is not None and getattr(MODEL_REGISTRY, "ready", False):
-        prediction = MODEL_REGISTRY.predict(features)
-        if prediction:
-            props = PredProps(
-                rigidity=float(prediction.get("rigidez", props.rigidity)),
-                tightness=float(prediction.get("estanqueidad", props.tightness)),
-                mass_final_kg=heuristic.mass_final_kg,
-                energy_kwh=float(prediction.get("energy_kwh", props.energy_kwh)),
-                water_l=float(prediction.get("water_l", props.water_l)),
-                crew_min=float(prediction.get("crew_min", props.crew_min)),
-                source=str(prediction.get("source", "ml")),
-                uncertainty={k: float(v) for k, v in (prediction.get("uncertainty") or {}).items()},
-                confidence_interval={
-                    k: (float(v[0]), float(v[1])) for k, v in (prediction.get("confidence_interval") or {}).items()
-                },
-                feature_importance=[(str(k), float(v)) for k, v in (prediction.get("feature_importance") or [])],
-                comparisons={k: {kk: float(vv) for kk, vv in val.items()} for k, val in (prediction.get("comparisons") or {}).items()},
-            )
-            features["prediction_model"] = props.source
-            features["model_metadata"] = prediction.get("metadata", {})
-            features["uncertainty"] = props.uncertainty or {}
-            features["confidence_interval"] = props.confidence_interval or {}
-            features["feature_importance"] = props.feature_importance or []
-            features["model_variants"] = props.comparisons or {}
-        else:
-            prediction = {}
+    if use_curated:
+        confidence = {
+            str(k): (float(v[0]), float(v[1]))
+            for k, v in (curated_meta.get("confidence_intervals") or {}).items()
+        }
+        props = PredProps(
+            rigidity=float(curated_targets.get("rigidez", heuristic.rigidity)),
+            tightness=float(curated_targets.get("estanqueidad", heuristic.tightness)),
+            mass_final_kg=heuristic.mass_final_kg,
+            energy_kwh=float(curated_targets.get("energy_kwh", heuristic.energy_kwh)),
+            water_l=float(curated_targets.get("water_l", heuristic.water_l)),
+            crew_min=float(curated_targets.get("crew_min", heuristic.crew_min)),
+            source=str(curated_meta.get("label_source") or curated_meta.get("provenance") or "curated"),
+            confidence_interval=confidence or None,
+        )
+        prediction = {
+            "source": props.source,
+            "metadata": curated_meta,
+            "targets": curated_targets,
+            "confidence_interval": confidence,
+        }
+        features["prediction_model"] = props.source
+        features["model_metadata"] = curated_meta
+        features["confidence_interval"] = props.confidence_interval or {}
+        features["uncertainty"] = {}
+        features["feature_importance"] = []
+        features["model_variants"] = {}
+    else:
+        props = heuristic
+        force_heuristic = os.getenv("REXAI_FORCE_HEURISTIC", "").lower() in {"1", "true", "yes"}
+        if not force_heuristic and MODEL_REGISTRY is not None and getattr(MODEL_REGISTRY, "ready", False):
+            prediction = MODEL_REGISTRY.predict(features)
+            if prediction:
+                props = PredProps(
+                    rigidity=float(prediction.get("rigidez", props.rigidity)),
+                    tightness=float(prediction.get("estanqueidad", props.tightness)),
+                    mass_final_kg=heuristic.mass_final_kg,
+                    energy_kwh=float(prediction.get("energy_kwh", props.energy_kwh)),
+                    water_l=float(prediction.get("water_l", props.water_l)),
+                    crew_min=float(prediction.get("crew_min", props.crew_min)),
+                    source=str(prediction.get("source", "ml")),
+                    uncertainty={k: float(v) for k, v in (prediction.get("uncertainty") or {}).items()},
+                    confidence_interval={
+                        k: (float(v[0]), float(v[1])) for k, v in (prediction.get("confidence_interval") or {}).items()
+                    },
+                    feature_importance=[(str(k), float(v)) for k, v in (prediction.get("feature_importance") or [])],
+                    comparisons={
+                        k: {kk: float(vv) for kk, vv in val.items()} for k, val in (prediction.get("comparisons") or {}).items()
+                    },
+                )
+                features["prediction_model"] = props.source
+                features["model_metadata"] = prediction.get("metadata", {})
+                features["uncertainty"] = props.uncertainty or {}
+                features["confidence_interval"] = props.confidence_interval or {}
+                features["feature_importance"] = props.feature_importance or []
+                features["model_variants"] = props.comparisons or {}
+            else:
+                prediction = {}
 
     latent: Tuple[float, ...] | list[float] = []
     if MODEL_REGISTRY is not None and getattr(MODEL_REGISTRY, "ready", False):

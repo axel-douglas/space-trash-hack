@@ -62,6 +62,7 @@ except Exception:  # pragma: no cover - environments without torch
     HAS_TORCH = False
 
 from app.modules.generator import compute_feature_vector, prepare_waste_frame
+from app.modules.label_mapper import derive_recipe_id, load_curated_labels, lookup_labels
 
 # ---------------------------------------------------------------------------
 # Paths & constants
@@ -222,56 +223,12 @@ def _load_gold_targets() -> DataFrame:
     if _GOLD_TARGETS_CACHE is not None:
         return _GOLD_TARGETS_CACHE
 
-    table = _load_parquet(GOLD_LABELS_PATH)
+    table = load_curated_labels()
     if table.empty:
         _GOLD_TARGETS_CACHE = pd.DataFrame()
-        return _GOLD_TARGETS_CACHE
-
-    required = {"recipe_id", "process_id"}
-    missing = required - set(table.columns)
-    if missing:
-        raise ValueError(f"Faltan columnas {sorted(missing)} en {GOLD_LABELS_PATH}")
-
-    table = table.copy()
-    table["recipe_id"] = _normalise_key_column(table["recipe_id"])
-    table["process_id"] = _normalise_key_column(table["process_id"])
-    numeric_columns = [
-        *TARGET_COLUMNS,
-        "label_weight",
-        "weight",
-        "sample_weight",
-        *[col for col in table.columns if col.startswith("conf_lo_")],
-        *[col for col in table.columns if col.startswith("conf_hi_")],
-    ]
-    for column in numeric_columns:
-        if column in table.columns:
-            table[column] = pd.to_numeric(table[column], errors="coerce")
-
-    for column in CLASS_TARGET_COLUMNS:
-        if column in table.columns:
-            table[column] = pd.to_numeric(table[column], errors="coerce").astype("Int64")
-
-    if "provenance" in table.columns and "label_source" not in table.columns:
-        table["label_source"] = table["provenance"]
-    if "label_source" in table.columns:
-        table["label_source"] = (
-            table["label_source"].fillna("measured").astype(str)
-        )
-
-    table = table.drop_duplicates(subset=["recipe_id", "process_id"], keep="last")
-    table = table.set_index(["recipe_id", "process_id"], drop=False)
-    _GOLD_TARGETS_CACHE = table
-    return table
-
-
-def _derive_recipe_id(picks: DataFrame, process: pd.Series) -> str:
-    source_ids = picks.get("_source_id")
-    if source_ids is None:
-        source_ids = picks.index.astype(str)
-    tokens = "|".join(sorted(map(str, source_ids)))
-    proc = str(process.get("process_id", "")).upper().strip()
-    raw = f"{proc}|{tokens}"
-    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12].upper()
+    else:
+        _GOLD_TARGETS_CACHE = table
+    return _GOLD_TARGETS_CACHE
 
 
 def _sample_weights(n: int, rng: random.Random) -> np.ndarray:
@@ -378,54 +335,62 @@ def _compute_targets(
 ) -> Dict[str, Any]:
     regolith_pct = float(features.get("regolith_pct", 0.0))
     resources = _compute_resource_targets(features, picks, process, regolith_pct)
-    recipe_id = str(features.get("recipe_id", "")).upper().strip()
-    process_id = str(features.get("process_id", process.get("process_id", ""))).upper().strip()
+
+    recipe_id = derive_recipe_id(picks, process, features)
+    if recipe_id:
+        features["recipe_id"] = recipe_id
+    process_id = features.get("process_id") or process.get("process_id", "")
 
     payload: Dict[str, Any] = {}
 
-    gold_targets = _load_gold_targets()
-    if recipe_id and process_id and not gold_targets.empty:
-        key = (recipe_id, process_id)
-        if key in gold_targets.index:
-            row = gold_targets.loc[key]
-            if isinstance(row, pd.DataFrame):  # pragma: no cover - multi matches
-                row = row.iloc[-1]
-            for target in TARGET_COLUMNS:
-                value = row.get(target)
-                if pd.notna(value):
-                    payload[target] = float(value)
-            label_source = row.get("label_source", "measured")
-            label_weight = row.get("label_weight", 1.0)
-            payload["label_source"] = str(label_source) if pd.notna(label_source) else "measured"
-            try:
-                payload["label_weight"] = float(label_weight)
-            except (TypeError, ValueError):
-                payload["label_weight"] = 1.0
-            if "tightness_pass" in row and pd.notna(row["tightness_pass"]):
-                payload["tightness_pass"] = int(row["tightness_pass"])
-            if "rigidity_level" in row and pd.notna(row["rigidity_level"]):
-                payload["rigidity_level"] = int(row["rigidity_level"])
+    curated_targets, curated_meta = lookup_labels(
+        picks,
+        str(process_id),
+        {"recipe_id": recipe_id, "process_id": process_id},
+    )
+
+    for target, value in curated_targets.items():
+        if target in TARGET_COLUMNS:
+            payload[target] = float(value)
+        elif target in CLASS_TARGET_COLUMNS:
+            payload[target] = int(value)
+
+    provenance = str(
+        curated_meta.get("provenance")
+        or curated_meta.get("label_source")
+        or ""
+    ).lower()
+    use_fallback = not payload or provenance == "weak"
+
+    if "label_source" in curated_meta:
+        payload["label_source"] = str(curated_meta["label_source"])
+    if "label_weight" in curated_meta:
+        try:
+            payload["label_weight"] = float(curated_meta["label_weight"])
+        except (TypeError, ValueError):
+            payload["label_weight"] = 1.0
 
     for name, value in resources.items():
         payload.setdefault(name, value)
 
-    if "tightness_pass" not in payload:
+    if use_fallback or "tightness_pass" not in payload:
         tight_label = _label_tightness(features, process)
         payload["tightness_pass"] = int(tight_label)
     else:
         tight_label = int(payload["tightness_pass"])
-    if "estanqueidad" not in payload:
+    if use_fallback or "estanqueidad" not in payload:
         payload["estanqueidad"] = float(TIGHTNESS_SCORE_MAP.get(tight_label, tight_label))
 
-    if "rigidity_level" not in payload:
+    if use_fallback or "rigidity_level" not in payload:
         rigidity_label = _label_rigidity(features)
         payload["rigidity_level"] = int(rigidity_label)
     else:
         rigidity_label = int(payload["rigidity_level"])
-    if "rigidez" not in payload:
+    if use_fallback or "rigidez" not in payload:
         payload["rigidez"] = float(RIGIDITY_SCORE_MAP.get(rigidity_label, rigidity_label))
 
-    payload.setdefault("label_source", "simulated")
+    if "label_source" not in payload:
+        payload["label_source"] = "simulated" if use_fallback else "measured"
     payload.setdefault("label_weight", 0.7)
     return payload
 
@@ -451,7 +416,9 @@ def _generate_samples(n_samples: int, seed: int | None) -> List[SampledCombinati
             regolith_pct = rng.uniform(0.15, 0.35)
 
         features = compute_feature_vector(picks, weights, process, regolith_pct)
-        features.setdefault("recipe_id", _derive_recipe_id(picks, process))
+        recipe_id = derive_recipe_id(picks, process, features)
+        if recipe_id:
+            features.setdefault("recipe_id", recipe_id)
         targets = _compute_targets(picks, process, features)
         samples.append(SampledCombination(features=features, targets=targets))
 
