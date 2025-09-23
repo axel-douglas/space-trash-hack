@@ -45,6 +45,11 @@ def main() -> None:
         raise SystemExit("Metadata file not found. Run the training pipeline before releasing.")
 
     metadata = registry.metadata
+
+    trained_on = metadata.get("trained_on")
+    if not isinstance(trained_on, str) or not trained_on.strip():
+        raise SystemExit("Metadata.trained_on is required to describe training provenance")
+
     residuals = _check_residuals(metadata)
 
     artefacts = {
@@ -62,9 +67,11 @@ def main() -> None:
 
     payload = {
         "ready": registry.ready,
+        "trained_on": trained_on,
         "trained_at": metadata.get("trained_at"),
         "n_features": len(registry.feature_names),
         "n_targets": len(metadata.get("targets", [])),
+        "trained_label": registry.trained_label(),
         "artefacts": artefacts,
         "classifiers": classifier_paths,
         "residuals": residuals,
