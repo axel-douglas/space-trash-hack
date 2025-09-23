@@ -133,6 +133,15 @@ _GOLD_FEATURES_CACHE: DataFrame | None = None
 _GOLD_TARGETS_CACHE: DataFrame | None = None
 
 
+def _relative_path(path: Path) -> str:
+    """Return path relative to repository root for metadata serialisation."""
+
+    try:
+        return path.resolve().relative_to(ROOT).as_posix()
+    except ValueError:
+        return path.name
+
+
 # ---------------------------------------------------------------------------
 # Utility classes & helpers
 # ---------------------------------------------------------------------------
@@ -522,7 +531,7 @@ def _build_preprocessor() -> ColumnTransformer:
 
 def _train_random_forest(
     df: DataFrame, seed: int | None
-) -> tuple[
+    ) -> tuple[
     Pipeline,
     Dict[str, Any],
     np.ndarray,
@@ -530,6 +539,7 @@ def _train_random_forest(
     np.ndarray,
     np.ndarray,
     Dict[str, Dict[str, Any]],
+    Dict[str, Dict[str, float]],
 ]:
     X = df[FEATURE_COLUMNS]
     y = df[TARGET_COLUMNS]
@@ -570,7 +580,7 @@ def _train_random_forest(
     valid_weights = meta_valid["label_weight"].to_numpy(dtype=float)
     if valid_weights.size and np.isfinite(valid_weights).any() and float(valid_weights.sum()) > 0:
         weights = np.clip(valid_weights, 1e-6, None)
-        residual_std = np.sqrt(np.average(residuals**2, weights=weights[:, None], axis=0))
+        residual_std = np.sqrt(np.average(residuals**2, weights=weights, axis=0))
     else:
         weights = None
         residual_std = residuals.std(axis=0)
@@ -601,6 +611,19 @@ def _train_random_forest(
         "r2": float(np.mean([m["r2"] for m in metrics.values()])),
     }
 
+    quantiles = np.quantile(residuals, [0.1, 0.5, 0.9], axis=0)
+    residual_summary: Dict[str, Dict[str, float]] = {}
+    for idx, target in enumerate(TARGET_COLUMNS):
+        series = residuals[:, idx]
+        residual_summary[target] = {
+            "mean": float(series.mean()),
+            "std": float(series.std()),
+            "mae": float(np.mean(np.abs(series))),
+            "p10": float(quantiles[0, idx]),
+            "p50": float(quantiles[1, idx]),
+            "p90": float(quantiles[2, idx]),
+        }
+
     residuals_df = pd.DataFrame(residuals, columns=TARGET_COLUMNS)
     residuals_df["label_source"] = meta_valid["label_source"].to_numpy()
     residuals_df["label_weight"] = valid_weights
@@ -609,7 +632,13 @@ def _train_random_forest(
         group_weights = pd.to_numeric(group["label_weight"], errors="coerce").fillna(1.0).to_numpy(dtype=float)
         if group_weights.size and float(group_weights.sum()) > 0:
             w = np.clip(group_weights, 1e-6, None)
-            rmse = np.sqrt(np.average(group[TARGET_COLUMNS].to_numpy(dtype=float) ** 2, weights=w[:, None], axis=0))
+            rmse = np.sqrt(
+                np.average(
+                    group[TARGET_COLUMNS].to_numpy(dtype=float) ** 2,
+                    weights=w,
+                    axis=0,
+                )
+            )
         else:
             rmse = group[TARGET_COLUMNS].to_numpy(dtype=float).std(axis=0)
         residual_by_source[str(source)] = {
@@ -664,6 +693,7 @@ def _train_random_forest(
         residual_std,
         feature_names,
         residual_by_source,
+        residual_summary,
     )
 
 
@@ -716,7 +746,7 @@ def _train_classifiers(
     }
     joblib.dump(tight_clf, TIGHTNESS_MODEL_PATH)
     payload["tightness_pass"] = {
-        "path": TIGHTNESS_MODEL_PATH.name,
+        "path": _relative_path(TIGHTNESS_MODEL_PATH),
         "metrics": tight_metrics,
         "classes": [int(c) for c in tight_clf.classes_],
         "score_map": {int(k): float(v) for k, v in TIGHTNESS_SCORE_MAP.items()},
@@ -755,7 +785,7 @@ def _train_classifiers(
     }
     joblib.dump(rigidity_clf, RIGIDITY_MODEL_PATH)
     payload["rigidity_level"] = {
-        "path": RIGIDITY_MODEL_PATH.name,
+        "path": _relative_path(RIGIDITY_MODEL_PATH),
         "metrics": rigidity_metrics,
         "classes": [int(c) for c in rigidity_clf.classes_],
         "score_map": {int(k): float(v) for k, v in RIGIDITY_SCORE_MAP.items()},
@@ -804,7 +834,7 @@ def _train_xgboost(pipeline: Pipeline, df: DataFrame, seed: int | None) -> Dict[
 
     payload = {"models": models, "metrics": metrics}
     joblib.dump(payload, XGBOOST_PATH)
-    return {"metrics": metrics, "path": XGBOOST_PATH.name}
+    return {"metrics": metrics, "path": _relative_path(XGBOOST_PATH)}
 
 
 class _Autoencoder(nn.Module if HAS_TORCH else object):
@@ -902,7 +932,7 @@ def _train_autoencoder(matrix: np.ndarray) -> Dict[str, Any]:
             optim.step()
 
     torch.save(model.state_dict(), AUTOENCODER_PATH)
-    return {"latent_dim": LATENT_DIM, "path": AUTOENCODER_PATH.name}
+    return {"latent_dim": LATENT_DIM, "path": _relative_path(AUTOENCODER_PATH)}
 
 
 def _train_tabtransformer(matrix: np.ndarray, targets: np.ndarray) -> Dict[str, Any]:
@@ -928,11 +958,14 @@ def _train_tabtransformer(matrix: np.ndarray, targets: np.ndarray) -> Dict[str, 
             loss.backward()
             optim.step()
 
-    torch.save({"state_dict": model.state_dict(), "tokens": model.n_tokens, "d_model": model.d_model}, TABTRANSFORMER_PATH)
+    torch.save(
+        {"state_dict": model.state_dict(), "tokens": model.n_tokens, "d_model": model.d_model},
+        TABTRANSFORMER_PATH,
+    )
     return {
         "tokens": model.n_tokens,
         "d_model": model.d_model,
-        "path": TABTRANSFORMER_PATH.name,
+        "path": _relative_path(TABTRANSFORMER_PATH),
     }
 
 
@@ -964,6 +997,7 @@ def train_and_save(n_samples: int = 1600, seed: int | None = 21) -> Dict[str, An
         residual_std,
         feature_names,
         residual_by_source,
+        residual_summary,
     ) = _train_random_forest(df, seed)
     joblib.dump(pipeline, PIPELINE_PATH)
 
@@ -999,7 +1033,7 @@ def train_and_save(n_samples: int = 1600, seed: int | None = 21) -> Dict[str, An
         "trained_at": datetime.now(tz=UTC).isoformat(),
         "n_samples": int(len(df)),
         "dataset": {
-            "path": DATASET_PATH.relative_to(DATASETS_ROOT).as_posix(),
+            "path": _relative_path(DATASET_PATH),
             "hash": _hash_file(DATASET_PATH),
         },
         "feature_columns": FEATURE_COLUMNS,
@@ -1010,9 +1044,10 @@ def train_and_save(n_samples: int = 1600, seed: int | None = 21) -> Dict[str, An
         "feature_stds": {name: float(val) for name, val in zip(feature_names, feature_stds)},
         "residual_std": {target: float(val) for target, val in zip(TARGET_COLUMNS, residual_std)},
         "residuals_by_label_source": residual_by_source,
+        "residuals_summary": residual_summary,
         "random_forest": rf_payload,
         "artifacts": {
-            "pipeline": PIPELINE_PATH.name,
+            "pipeline": _relative_path(PIPELINE_PATH),
             "xgboost": extras["xgboost"],
             "autoencoder": extras["autoencoder"],
             "tabtransformer": extras["tabtransformer"],
