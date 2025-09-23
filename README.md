@@ -98,6 +98,20 @@ métricas/residuales estén presentes en `metadata.json` y reporta las rutas de
 artefactos generados. Si falta algún binario o metadata crítica, el script sale
 con error para evitar releases inconsistentes.
 
+## Benchmarks heurísticos vs IA
+
+Para auditar la deriva entre las reglas `heuristic_props` y el modelo Rex-AI
+podés ejecutar:
+
+```bash
+python scripts/run_benchmarks.py --format csv
+```
+
+El comando espera que `data/models/rexai_regressor.joblib` esté disponible y
+genera tablas comparativas en `data/benchmarks/`. Consulta
+[BENCHMARK.md](BENCHMARK.md) para el resumen y la descripción de los tres
+escenarios incluidos.
+
 ## Ejecutar la app
 
 Con los artefactos generados, lanzar la demo con:
