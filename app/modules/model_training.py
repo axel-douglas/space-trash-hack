@@ -19,15 +19,23 @@ import random
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List
 
 import joblib
 import numpy as np
 import pandas as pd
 from pandas import DataFrame
 from sklearn.compose import ColumnTransformer
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.metrics import (
+    accuracy_score,
+    f1_score,
+    mean_absolute_error,
+    mean_squared_error,
+    precision_score,
+    r2_score,
+    recall_score,
+)
 from sklearn.model_selection import train_test_split
 from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline
@@ -53,7 +61,7 @@ except Exception:  # pragma: no cover - environments without torch
     DataLoader = TensorDataset = None  # type: ignore[assignment]
     HAS_TORCH = False
 
-from app.modules.generator import compute_feature_vector, prepare_waste_frame, heuristic_props
+from app.modules.generator import compute_feature_vector, prepare_waste_frame
 
 # ---------------------------------------------------------------------------
 # Paths & constants
@@ -76,6 +84,12 @@ DATASET_PATH = PROCESSED_DIR / "rexai_training_dataset.parquet"
 DATASET_ML_PATH = PROCESSED_ML / "synthetic_runs.parquet"
 
 TARGET_COLUMNS = ["rigidez", "estanqueidad", "energy_kwh", "water_l", "crew_min"]
+CLASS_TARGET_COLUMNS = ["tightness_pass", "rigidity_level"]
+TIGHTNESS_MODEL_PATH = MODEL_DIR / "rexai_class_tightness.joblib"
+RIGIDITY_MODEL_PATH = MODEL_DIR / "rexai_class_rigidity.joblib"
+
+TIGHTNESS_SCORE_MAP = {0: 0.35, 1: 0.85}
+RIGIDITY_SCORE_MAP = {1: 0.35, 2: 0.65, 3: 0.9}
 FEATURE_COLUMNS = [
     "process_id",
     "regolith_pct",
@@ -120,9 +134,9 @@ TABTRANSFORMER_DIM = 64
 @dataclass(slots=True)
 class SampledCombination:
     features: Dict[str, float | str]
-    targets: Dict[str, float]
+    targets: Dict[str, Any]
 
-    def as_row(self) -> Dict[str, float | str]:
+    def as_row(self) -> Dict[str, Any]:
         payload = {**self.features}
         payload.update(self.targets)
         return payload
@@ -158,14 +172,115 @@ def _sample_weights(n: int, rng: random.Random) -> np.ndarray:
     return raw / raw.sum()
 
 
+def _support_dict(values: np.ndarray) -> Dict[str, int]:
+    classes, counts = np.unique(values, return_counts=True)
+    return {str(int(cls)): int(count) for cls, count in zip(classes, counts)}
+
+
+def _compute_resource_targets(
+    features: Dict[str, Any],
+    picks: DataFrame,
+    process: pd.Series,
+    regolith_pct: float,
+) -> Dict[str, float]:
+    total_mass = max(0.001, float(picks["kg"].sum()))
+    moisture = float(features.get("moisture_frac", 0.0))
+    difficulty = float(features.get("difficulty_index", 0.0))
+    hydrogen = float(features.get("hydrogen_rich_frac", 0.0))
+    logistics = float(features.get("logistics_reuse_index", 0.0))
+
+    base_energy = float(process.get("energy_kwh_per_kg", 0.0))
+    base_water = float(process.get("water_l_per_kg", 0.0))
+    base_crew = float(process.get("crew_min_per_batch", 0.0))
+
+    energy_kwh = total_mass * (
+        base_energy
+        + 0.32 * difficulty
+        + 0.14 * moisture
+        + 0.11 * regolith_pct
+        + 0.06 * hydrogen
+        - 0.08 * logistics
+    )
+    water_l = total_mass * (
+        base_water
+        + 0.48 * moisture
+        + 0.1 * hydrogen
+        + 0.18 * regolith_pct
+        - 0.05 * logistics
+    )
+    crew_min = (
+        base_crew
+        + 14.0 * difficulty
+        + 4.5 * float(features.get("num_items", len(picks)))
+        + 6.0 * regolith_pct * 10.0
+        + 2.0 * total_mass
+    )
+
+    return {
+        "energy_kwh": float(max(0.0, energy_kwh)),
+        "water_l": float(max(0.0, water_l)),
+        "crew_min": float(max(5.0, crew_min)),
+    }
+
+
+def _label_tightness(features: Dict[str, Any], process: pd.Series) -> int:
+    process_id = str(process.get("process_id", "")).upper()
+    lamination = process_id in {"P02", "P04"}
+    packaging = float(features.get("packaging_frac", 0.0))
+    multilayer = float(features.get("multilayer_frac", 0.0))
+    polyethylene = float(features.get("polyethylene_frac", 0.0))
+    hydrogen = float(features.get("hydrogen_rich_frac", 0.0))
+    regolith_pct = float(features.get("regolith_pct", 0.0))
+
+    continuity_score = (
+        0.38 * packaging
+        + 0.32 * multilayer
+        + 0.22 * polyethylene
+        + 0.12 * hydrogen
+        + (0.12 if lamination else 0.0)
+        - 0.25 * regolith_pct
+    )
+    return int(continuity_score >= 0.55)
+
+
+def _label_rigidity(features: Dict[str, Any]) -> int:
+    aluminum = float(features.get("aluminum_frac", 0.0))
+    carbon = float(features.get("carbon_fiber_frac", 0.0))
+    regolith_pct = float(features.get("regolith_pct", 0.0))
+    density = float(features.get("density_kg_m3", 0.0))
+    foam = float(features.get("foam_frac", 0.0))
+    difficulty = float(features.get("difficulty_index", 0.0))
+
+    density_norm = float(np.clip(density / 4.0, 0.0, 1.2))
+    reinforcement = 0.5 * aluminum + 0.45 * carbon + 0.35 * regolith_pct + 0.25 * density_norm
+    reinforcement += 0.12 * difficulty
+    reinforcement -= 0.35 * foam
+
+    if reinforcement < 0.55:
+        return 1
+    if reinforcement < 0.95:
+        return 2
+    return 3
+
+
 def _compute_targets(
     picks: DataFrame,
     process: pd.Series,
-    weights: Sequence[float],
-    regolith_pct: float,
-) -> Dict[str, float]:
-    props = heuristic_props(picks, process, weights, regolith_pct)
-    return props.to_targets()
+    features: Dict[str, Any],
+) -> Dict[str, Any]:
+    regolith_pct = float(features.get("regolith_pct", 0.0))
+    resources = _compute_resource_targets(features, picks, process, regolith_pct)
+    tight_label = _label_tightness(features, process)
+    rigidity_label = _label_rigidity(features)
+
+    payload: Dict[str, Any] = {
+        "rigidez": float(RIGIDITY_SCORE_MAP[rigidity_label]),
+        "estanqueidad": float(TIGHTNESS_SCORE_MAP[tight_label]),
+        "tightness_pass": int(tight_label),
+        "rigidity_level": int(rigidity_label),
+    }
+    payload.update(resources)
+    return payload
 
 
 def _generate_samples(n_samples: int, seed: int | None) -> List[SampledCombination]:
@@ -189,7 +304,7 @@ def _generate_samples(n_samples: int, seed: int | None) -> List[SampledCombinati
             regolith_pct = rng.uniform(0.15, 0.35)
 
         features = compute_feature_vector(picks, weights, process, regolith_pct)
-        targets = _compute_targets(picks, process, weights, regolith_pct)
+        targets = _compute_targets(picks, process, features)
         samples.append(SampledCombination(features=features, targets=targets))
 
     return samples
@@ -294,6 +409,103 @@ def _train_random_forest(
     }
 
     return pipeline, rf_payload, feature_means, feature_stds, residual_std, feature_names
+
+
+def _train_classifiers(
+    pipeline: Pipeline,
+    df: DataFrame,
+    seed: int | None,
+) -> Dict[str, Any]:
+    if "tightness_pass" not in df.columns or "rigidity_level" not in df.columns:
+        return {}
+
+    preprocessor = getattr(pipeline, "named_steps", {}).get("preprocess")
+    if preprocessor is None:
+        return {}
+
+    matrix = preprocessor.transform(df[FEATURE_COLUMNS])
+    if hasattr(matrix, "toarray"):
+        matrix = matrix.toarray()
+    matrix = np.asarray(matrix, dtype=float)
+
+    rng_seed = seed or 0
+    payload: Dict[str, Any] = {}
+
+    # Tightness (binary)
+    y_tight = df["tightness_pass"].to_numpy(dtype=int)
+    stratify_tight = y_tight if len(np.unique(y_tight)) > 1 else None
+    X_train, X_valid, y_train, y_valid = train_test_split(
+        matrix,
+        y_tight,
+        test_size=0.25,
+        random_state=rng_seed,
+        stratify=stratify_tight,
+    )
+    tight_clf = RandomForestClassifier(
+        n_estimators=300,
+        max_depth=None,
+        min_samples_split=3,
+        min_samples_leaf=1,
+        n_jobs=-1,
+        random_state=rng_seed,
+    )
+    tight_clf.fit(X_train, y_train)
+    tight_preds = tight_clf.predict(X_valid)
+    tight_metrics = {
+        "accuracy": float(accuracy_score(y_valid, tight_preds)),
+        "precision": float(precision_score(y_valid, tight_preds, pos_label=1, zero_division=0)),
+        "recall": float(recall_score(y_valid, tight_preds, pos_label=1, zero_division=0)),
+        "f1": float(f1_score(y_valid, tight_preds, pos_label=1, zero_division=0)),
+        "support": _support_dict(y_valid),
+    }
+    joblib.dump(tight_clf, TIGHTNESS_MODEL_PATH)
+    payload["tightness_pass"] = {
+        "path": TIGHTNESS_MODEL_PATH.name,
+        "metrics": tight_metrics,
+        "classes": [int(c) for c in tight_clf.classes_],
+        "score_map": {int(k): float(v) for k, v in TIGHTNESS_SCORE_MAP.items()},
+    }
+
+    # Rigidity (ordinal 1-3)
+    y_rigidity = df["rigidity_level"].to_numpy(dtype=int)
+    stratify_rigidity = y_rigidity if len(np.unique(y_rigidity)) > 1 else None
+    X_train_r, X_valid_r, y_train_r, y_valid_r = train_test_split(
+        matrix,
+        y_rigidity,
+        test_size=0.25,
+        random_state=rng_seed,
+        stratify=stratify_rigidity,
+    )
+    rigidity_clf = RandomForestClassifier(
+        n_estimators=320,
+        max_depth=None,
+        min_samples_split=3,
+        min_samples_leaf=1,
+        n_jobs=-1,
+        random_state=rng_seed + 7,
+    )
+    rigidity_clf.fit(X_train_r, y_train_r)
+    rigidity_preds = rigidity_clf.predict(X_valid_r)
+    rigidity_metrics = {
+        "accuracy": float(accuracy_score(y_valid_r, rigidity_preds)),
+        "precision_weighted": float(
+            precision_score(y_valid_r, rigidity_preds, average="weighted", zero_division=0)
+        ),
+        "recall_weighted": float(
+            recall_score(y_valid_r, rigidity_preds, average="weighted", zero_division=0)
+        ),
+        "f1_weighted": float(f1_score(y_valid_r, rigidity_preds, average="weighted", zero_division=0)),
+        "support": _support_dict(y_valid_r),
+    }
+    joblib.dump(rigidity_clf, RIGIDITY_MODEL_PATH)
+    payload["rigidity_level"] = {
+        "path": RIGIDITY_MODEL_PATH.name,
+        "metrics": rigidity_metrics,
+        "classes": [int(c) for c in rigidity_clf.classes_],
+        "score_map": {int(k): float(v) for k, v in RIGIDITY_SCORE_MAP.items()},
+    }
+
+    return payload
 
 
 def _train_xgboost(pipeline: Pipeline, df: DataFrame, seed: int | None) -> Dict[str, Any]:
@@ -501,6 +713,7 @@ def train_and_save(n_samples: int = 1600, seed: int | None = 21) -> Dict[str, An
     extras["xgboost"] = _train_xgboost(pipeline, df, seed)
     extras["autoencoder"] = _train_autoencoder(matrix)
     extras["tabtransformer"] = _train_tabtransformer(matrix, df[TARGET_COLUMNS].to_numpy(dtype=float))
+    extras["classifiers"] = _train_classifiers(pipeline, df, seed)
 
     metadata = {
         "model_name": "rexai-rf-ensemble",
@@ -512,6 +725,7 @@ def train_and_save(n_samples: int = 1600, seed: int | None = 21) -> Dict[str, An
         },
         "feature_columns": FEATURE_COLUMNS,
         "targets": TARGET_COLUMNS,
+        "classification_targets": CLASS_TARGET_COLUMNS,
         "post_transform_features": preprocessor.get_feature_names_out().tolist(),
         "feature_means": {name: float(val) for name, val in zip(feature_names, feature_means)},
         "feature_stds": {name: float(val) for name, val in zip(feature_names, feature_stds)},
@@ -523,6 +737,7 @@ def train_and_save(n_samples: int = 1600, seed: int | None = 21) -> Dict[str, An
             "autoencoder": extras["autoencoder"],
             "tabtransformer": extras["tabtransformer"],
         },
+        "classifiers": extras["classifiers"],
     }
 
     METADATA_PATH.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")

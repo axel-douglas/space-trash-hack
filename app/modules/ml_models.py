@@ -39,9 +39,26 @@ METADATA_PATH = MODEL_DIR / "metadata.json"
 XGBOOST_PATH = MODEL_DIR / "rexai_xgboost.joblib"   # opcional
 AUTOENCODER_PATH = MODEL_DIR / "rexai_autoencoder.pt"
 TABTRANSFORMER_PATH = MODEL_DIR / "rexai_tabtransformer.pt"
+TIGHTNESS_CLASSIFIER_PATH = MODEL_DIR / "rexai_class_tightness.joblib"
+RIGIDITY_CLASSIFIER_PATH = MODEL_DIR / "rexai_class_rigidity.joblib"
 
 # Orden y nombres de objetivos que espera la UI
 TARGET_COLUMNS: List[str] = ["rigidez", "estanqueidad", "energy_kwh", "water_l", "crew_min"]
+
+DEFAULT_TIGHTNESS_SCORE_MAP = {0: 0.35, 1: 0.85}
+DEFAULT_RIGIDITY_SCORE_MAP = {1: 0.35, 2: 0.65, 3: 0.9}
+
+
+def _parse_score_map(raw: Any, fallback: Dict[int, float]) -> Dict[int, float]:
+    if not isinstance(raw, dict):
+        return dict(fallback)
+    parsed: Dict[int, float] = {}
+    for key, value in raw.items():
+        try:
+            parsed[int(key)] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return parsed or dict(fallback)
 
 
 @dataclass(slots=True)
@@ -98,6 +115,13 @@ class ModelRegistry:
         self.autoencoder_meta: Dict[str, Any] = {}
         self.tabtransformer = None
         self.tab_meta: Dict[str, Any] = {}
+        self.classifier_meta: Dict[str, Any] = {}
+        self.tightness_clf = None
+        self.rigidity_clf = None
+        self.tightness_classes: np.ndarray = np.array([])
+        self.rigidity_classes: np.ndarray = np.array([])
+        self.tightness_score_map: Dict[int, float] = dict(DEFAULT_TIGHTNESS_SCORE_MAP)
+        self.rigidity_score_map: Dict[int, float] = dict(DEFAULT_RIGIDITY_SCORE_MAP)
         self._load()
 
     # -------------------------- Estado --------------------------------
@@ -178,6 +202,7 @@ class ModelRegistry:
                 self.xgb_models = {}
 
         self._load_autoencoder()
+        self._load_classifiers()
 
     # ------------------------ Inferencia -------------------------------
     def predict(self, features: Mapping[str, Any]) -> Dict[str, Any]:
@@ -202,16 +227,19 @@ class ModelRegistry:
 
         # Incertidumbre a partir de varianza entre árboles + residual de entrenamiento (si hay)
         tree_std = self._rf_uncertainty(matrix)
-        combined_std = self._combine_uncertainty(tree_std)
-
-        # Intervalos 95%
-        ci = self._confidence_interval(preds, combined_std)
+        combined_std = np.asarray(self._combine_uncertainty(tree_std), dtype=float)
 
         # Contribuciones (aprox) usando importancia media y desviación del mean
         importance = self._feature_contributions(matrix[0])
 
         # Comparadores opcionales (XGBoost)
         variants = self._predict_variants(matrix)
+        classifier_variants = self._apply_classifiers(matrix, preds, combined_std)
+        if classifier_variants:
+            variants.update(classifier_variants)
+
+        # Intervalos 95% (tras aplicar clasificadores)
+        ci = self._confidence_interval(preds, combined_std)
 
         result = PredictionResult(
             rigidez=float(np.clip(preds[0], 0.0, 1.0)),
@@ -324,6 +352,88 @@ class ModelRegistry:
         }
         return out
 
+    def _apply_classifiers(
+        self,
+        matrix: np.ndarray,
+        preds: np.ndarray,
+        std: np.ndarray,
+    ) -> Dict[str, Dict[str, float]]:
+        updates: Dict[str, Dict[str, float]] = {}
+
+        if self.tightness_clf is not None:
+            try:
+                probabilities = self.tightness_clf.predict_proba(matrix)
+                if probabilities.ndim == 2 and probabilities.shape[0] > 0:
+                    row = probabilities[0]
+                    classes = self.tightness_classes if self.tightness_classes.size else np.arange(len(row))
+                    score_map = self.tightness_score_map or dict(DEFAULT_TIGHTNESS_SCORE_MAP)
+                    fallback = next(iter(score_map.values())) if score_map else 0.5
+
+                    expected = 0.0
+                    prob_map: Dict[str, float] = {}
+                    for cls_val, prob in zip(classes, row):
+                        cls_int = int(cls_val)
+                        score = float(score_map.get(cls_int, fallback))
+                        prob_f = float(prob)
+                        expected += score * prob_f
+                        prob_map[str(cls_int)] = prob_f
+
+                    variance = 0.0
+                    for cls_val, prob in zip(classes, row):
+                        cls_int = int(cls_val)
+                        score = float(score_map.get(cls_int, fallback))
+                        variance += (score - expected) ** 2 * float(prob)
+
+                    preds[1] = float(np.clip(expected, 0.0, 1.0))
+                    if variance > 0.0:
+                        std[1] = float(np.sqrt(max(variance, 1e-9)))
+
+                    updates["tightness_classifier"] = {
+                        "pass_prob": float(prob_map.get("1", 0.0)),
+                        "expected": float(preds[1]),
+                    }
+            except Exception as exc:
+                LOGGER.warning("Fallo clasificador estanqueidad: %s", exc)
+
+        if self.rigidity_clf is not None:
+            try:
+                probabilities = self.rigidity_clf.predict_proba(matrix)
+                if probabilities.ndim == 2 and probabilities.shape[0] > 0:
+                    row = probabilities[0]
+                    classes = self.rigidity_classes if self.rigidity_classes.size else np.arange(len(row))
+                    score_map = self.rigidity_score_map or dict(DEFAULT_RIGIDITY_SCORE_MAP)
+                    fallback = next(iter(score_map.values())) if score_map else 0.6
+
+                    expected = 0.0
+                    prob_map: Dict[str, float] = {}
+                    for cls_val, prob in zip(classes, row):
+                        cls_int = int(cls_val)
+                        score = float(score_map.get(cls_int, fallback))
+                        prob_f = float(prob)
+                        expected += score * prob_f
+                        prob_map[str(cls_int)] = prob_f
+
+                    variance = 0.0
+                    for cls_val, prob in zip(classes, row):
+                        cls_int = int(cls_val)
+                        score = float(score_map.get(cls_int, fallback))
+                        variance += (score - expected) ** 2 * float(prob)
+
+                    preds[0] = float(np.clip(expected, 0.0, 1.0))
+                    if variance > 0.0:
+                        std[0] = float(np.sqrt(max(variance, 1e-9)))
+
+                    if prob_map:
+                        dominant = max(prob_map.items(), key=lambda kv: kv[1])
+                        updates["rigidity_classifier"] = {
+                            "level": float(int(dominant[0])),
+                            "confidence": float(dominant[1]),
+                        }
+            except Exception as exc:
+                LOGGER.warning("Fallo clasificador rigidez: %s", exc)
+
+        return updates
+
     def embed(self, features: Mapping[str, Any]) -> Tuple[float, ...]:
         if not HAS_TORCH or self.autoencoder is None:
             return ()
@@ -371,6 +481,52 @@ class ModelRegistry:
         except Exception as exc:
             LOGGER.warning("No se pudo cargar autoencoder: %s", exc)
             self.autoencoder = None
+
+    def _load_classifiers(self) -> None:
+        meta = self.metadata.get("classifiers", {})
+        if not isinstance(meta, dict):
+            meta = {}
+        self.classifier_meta = meta
+
+        tight_meta = meta.get("tightness_pass", {}) if isinstance(meta.get("tightness_pass"), dict) else {}
+        rigid_meta = meta.get("rigidity_level", {}) if isinstance(meta.get("rigidity_level"), dict) else {}
+
+        self.tightness_score_map = _parse_score_map(
+            tight_meta.get("score_map"), DEFAULT_TIGHTNESS_SCORE_MAP
+        )
+        self.rigidity_score_map = _parse_score_map(
+            rigid_meta.get("score_map"), DEFAULT_RIGIDITY_SCORE_MAP
+        )
+
+        tight_path = tight_meta.get("path") if isinstance(tight_meta, dict) else None
+        tight_model_path = self.model_dir / tight_path if tight_path else TIGHTNESS_CLASSIFIER_PATH
+        if tight_model_path.exists():
+            try:
+                self.tightness_clf = joblib.load(tight_model_path)
+                classes = getattr(self.tightness_clf, "classes_", None)
+                self.tightness_classes = np.asarray(classes, dtype=float) if classes is not None else np.array([])
+            except Exception as exc:
+                LOGGER.warning("No se pudo cargar clasificador tightness: %s", exc)
+                self.tightness_clf = None
+                self.tightness_classes = np.array([])
+        else:
+            self.tightness_clf = None
+            self.tightness_classes = np.array([])
+
+        rigid_path = rigid_meta.get("path") if isinstance(rigid_meta, dict) else None
+        rigid_model_path = self.model_dir / rigid_path if rigid_path else RIGIDITY_CLASSIFIER_PATH
+        if rigid_model_path.exists():
+            try:
+                self.rigidity_clf = joblib.load(rigid_model_path)
+                classes = getattr(self.rigidity_clf, "classes_", None)
+                self.rigidity_classes = np.asarray(classes, dtype=float) if classes is not None else np.array([])
+            except Exception as exc:
+                LOGGER.warning("No se pudo cargar clasificador rigidez: %s", exc)
+                self.rigidity_clf = None
+                self.rigidity_classes = np.array([])
+        else:
+            self.rigidity_clf = None
+            self.rigidity_classes = np.array([])
 
 
 class _Autoencoder(nn.Module if HAS_TORCH else object):
