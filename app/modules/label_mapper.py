@@ -45,6 +45,16 @@ def _load_labels_table(path: Path | None = None) -> pd.DataFrame:
     global _LABELS_CACHE, _LABELS_CACHE_PATH
     target_path = Path(path) if path is not None else GOLD_LABELS_PATH
 
+    if path is None and not target_path.exists():
+        try:
+            from app.modules import data_build
+
+            data_build.ensure_gold_dataset()
+        except Exception as exc:  # pragma: no cover - visibility of bootstrap errors
+            raise RuntimeError(
+                f"No se pudo generar el dataset gold en {target_path.parent}: {exc}"
+            ) from exc
+
     if _LABELS_CACHE is not None and _LABELS_CACHE_PATH == target_path:
         return _LABELS_CACHE
 
