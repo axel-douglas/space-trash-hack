@@ -25,6 +25,10 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 LOGGER = logging.getLogger(__name__)
 
+INGESTION_ERROR_LOG_PATH = (
+    Path(__file__).resolve().parents[2] / "data" / "logs" / "ingestion.errors.jsonl"
+)
+
 
 class InventoryRecord(BaseModel):
     """Representation of a single inventory entry from the waste catalog."""
@@ -174,14 +178,51 @@ def _read_csv_records(path: Path) -> List[Dict[str, Any]]:
         return [dict(row) for row in reader]
 
 
+def _append_validation_error(
+    source_file: Path,
+    *,
+    error: Exception,
+    row_index: Optional[int] = None,
+    raw_entry: Optional[Any] = None,
+) -> None:
+    """Persist validation errors to a JSON lines log file."""
+
+    payload: Dict[str, Any] = {
+        "source_file": str(source_file),
+        "error": str(error),
+    }
+    if row_index is not None:
+        payload["row_index"] = row_index
+    if raw_entry is not None:
+        payload["raw_entry"] = raw_entry
+
+    try:
+        INGESTION_ERROR_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with INGESTION_ERROR_LOG_PATH.open("a", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, default=str)
+            handle.write("\n")
+    except Exception as exc:  # pragma: no cover - defensive logging.
+        LOGGER.warning("Failed to write ingestion error log: %s", exc)
+
+
 def load_inventory(path: Path) -> List[InventoryRecord]:
     """Load and validate the inventory catalog from ``path``."""
 
     if not path.exists():
         raise FileNotFoundError(f"Inventory file not found: {path}")
     records: List[InventoryRecord] = []
-    for row in _read_csv_records(path):
-        record = InventoryRecord.model_validate(row)
+    for index, row in enumerate(_read_csv_records(path), start=1):
+        try:
+            record = InventoryRecord.model_validate(row)
+        except Exception as exc:
+            LOGGER.warning(
+                "Skipping invalid inventory record at row %s from %s: %s",
+                index,
+                path,
+                exc,
+            )
+            _append_validation_error(path, row_index=index, raw_entry=row, error=exc)
+            continue
         records.append(record)
     return records
 
@@ -192,8 +233,18 @@ def load_process_catalog(path: Path) -> List[ProcessRecord]:
     if not path.exists():
         raise FileNotFoundError(f"Process catalog file not found: {path}")
     records: List[ProcessRecord] = []
-    for row in _read_csv_records(path):
-        record = ProcessRecord.model_validate(row)
+    for index, row in enumerate(_read_csv_records(path), start=1):
+        try:
+            record = ProcessRecord.model_validate(row)
+        except Exception as exc:
+            LOGGER.warning(
+                "Skipping invalid process record at row %s from %s: %s",
+                index,
+                path,
+                exc,
+            )
+            _append_validation_error(path, row_index=index, raw_entry=row, error=exc)
+            continue
         records.append(record)
     return records
 
@@ -248,11 +299,17 @@ def load_process_logs(path: Path) -> List[ProcessRunLog]:
             LOGGER.warning("Failed to read log file %s: %s", file_path, exc)
             continue
 
-        for entry in raw_entries:
+        for index, entry in enumerate(raw_entries, start=1):
             try:
                 record = ProcessRunLog.model_validate(entry)
             except Exception as exc:  # pragma: no cover - defensive logging.
                 LOGGER.warning("Skipping invalid log record from %s: %s", file_path, exc)
+                _append_validation_error(
+                    file_path,
+                    row_index=index,
+                    raw_entry=entry if isinstance(entry, Mapping) else {"raw": entry},
+                    error=exc,
+                )
                 continue
             records.append(record)
     return records
