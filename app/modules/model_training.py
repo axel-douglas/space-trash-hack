@@ -394,6 +394,16 @@ def _load_gold_features(path: Path | None = None) -> DataFrame:
     global _GOLD_FEATURES_CACHE, _GOLD_FEATURES_CACHE_PATH
     target_path = Path(path) if path is not None else GOLD_FEATURES_PATH
 
+    if path is None and not target_path.exists():
+        try:
+            from app.modules import data_build
+
+            data_build.ensure_gold_dataset()
+        except Exception as exc:  # pragma: no cover - visibility of bootstrap errors
+            raise RuntimeError(
+                f"No se pudo generar el dataset gold en {target_path.parent}: {exc}"
+            ) from exc
+
     if _GOLD_FEATURES_CACHE is not None and _GOLD_FEATURES_CACHE_PATH == target_path:
         return _GOLD_FEATURES_CACHE
 
@@ -419,6 +429,16 @@ def _load_gold_features(path: Path | None = None) -> DataFrame:
 def _load_gold_targets(path: Path | None = None) -> DataFrame:
     global _GOLD_TARGETS_CACHE, _GOLD_TARGETS_CACHE_PATH
     target_path = Path(path) if path is not None else GOLD_LABELS_PATH
+
+    if path is None and not target_path.exists():
+        try:
+            from app.modules import data_build
+
+            data_build.ensure_gold_dataset()
+        except Exception as exc:  # pragma: no cover - visibility of bootstrap errors
+            raise RuntimeError(
+                f"No se pudo generar el dataset gold en {target_path.parent}: {exc}"
+            ) from exc
 
     if _GOLD_TARGETS_CACHE is not None and _GOLD_TARGETS_CACHE_PATH == target_path:
         return _GOLD_TARGETS_CACHE

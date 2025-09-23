@@ -355,6 +355,32 @@ def build_gold_dataset(
     return None
 
 
+def ensure_gold_dataset(output_dir: Path | str | None = None) -> tuple[Path, Path]:
+    """Ensure the curated gold artefacts exist on disk.
+
+    Parameters
+    ----------
+    output_dir:
+        Optional base directory where the artefacts should live. When omitted
+        the default :data:`GOLD_DIR` location is used.
+
+    Returns
+    -------
+    tuple[Path, Path]
+        Paths to the features and labels Parquet files respectively.
+    """
+
+    target_dir = Path(output_dir) if output_dir is not None else GOLD_DIR
+    features_path = target_dir / "features.parquet"
+    labels_path = target_dir / "labels.parquet"
+
+    if features_path.exists() and labels_path.exists():
+        return features_path, labels_path
+
+    build_gold_dataset(target_dir)
+    return features_path, labels_path
+
+
 def generate_gold_records() -> list[GoldRecord]:
     """Return the list of in-memory gold records without persisting artefacts."""
 
@@ -364,6 +390,7 @@ def generate_gold_records() -> list[GoldRecord]:
 __all__ = [
     "GoldRecord",
     "build_gold_dataset",
+    "ensure_gold_dataset",
     "generate_gold_records",
 ]
 

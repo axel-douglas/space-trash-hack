@@ -185,6 +185,26 @@ def test_build_training_dataframe_uses_nasa_gold(
         assert row["label_source"] == "mission"
 
 
+def test_build_training_dataframe_uses_default_gold_dataset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the default gold artefacts exist sampling must be skipped."""
+
+    features_path, labels_path = data_build.ensure_gold_dataset()
+    assert features_path.exists()
+    assert labels_path.exists()
+
+    def _fail_generate(*_: object, **__: object) -> None:  # pragma: no cover - guard
+        raise AssertionError("_generate_samples should not run when gold artefacts are present")
+
+    monkeypatch.setattr(model_training, "_generate_samples", _fail_generate)
+
+    df = model_training.build_training_dataframe()
+
+    assert not df.empty
+    assert set(df["label_source"].str.lower()) == {"mission"}
+
+
 def test_build_training_dataframe_falls_back_when_labels_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -266,6 +286,22 @@ def test_compute_targets_prefers_curated_labels(
     assert targets["estanqueidad"] == pytest.approx(expected["estanqueidad"])
     assert targets["energy_kwh"] == pytest.approx(expected["energy_kwh"])
     assert targets["label_source"] == "mission"
+
+
+def test_infer_trained_on_label_with_gold_dataset() -> None:
+    """The curated mission dataset implies gold provenance for training."""
+
+    _, labels_path = data_build.ensure_gold_dataset()
+    table = label_mapper.load_curated_labels(labels_path)
+    assert not table.empty
+
+    result = model_training._infer_trained_on_label(table)
+    assert result == "gold_v1"
+
+    mixed = table.copy()
+    if not mixed.empty:
+        mixed.loc[mixed.index[:1], "label_source"] = "simulated"
+    assert model_training._infer_trained_on_label(mixed) == "hybrid_v1"
 
 
 @pytest.mark.parametrize(
