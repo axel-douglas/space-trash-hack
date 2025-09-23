@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from app.modules import model_training
+from app.modules import generator, label_mapper, model_training
 
 
 @pytest.fixture(autouse=True)
@@ -16,18 +16,52 @@ def _reset_gold_caches() -> None:
 
     original_features_cache = model_training._GOLD_FEATURES_CACHE
     original_targets_cache = model_training._GOLD_TARGETS_CACHE
+    original_label_cache = label_mapper._LABELS_CACHE
     model_training._GOLD_FEATURES_CACHE = None
     model_training._GOLD_TARGETS_CACHE = None
+    label_mapper._LABELS_CACHE = None
     try:
         yield
     finally:
         model_training._GOLD_FEATURES_CACHE = original_features_cache
         model_training._GOLD_TARGETS_CACHE = original_targets_cache
+        label_mapper._LABELS_CACHE = original_label_cache
 
 
 def _write_parquet(data: pd.DataFrame, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data.to_parquet(path, index=False)
+
+
+def _sample_inputs():
+    picks = pd.DataFrame(
+        {
+            "_source_id": ["A1", "B2"],
+            "kg": [3.0, 2.0],
+            "material": ["Aluminum scrap", "Foam packaging"],
+            "category": ["structural", "packaging"],
+            "flags": ["", ""],
+            "_source_category": ["structural", "packaging"],
+            "_source_flags": ["", ""],
+            "pct_mass": [60.0, 40.0],
+            "pct_volume": [55.0, 45.0],
+            "moisture_pct": [5.0, 8.0],
+            "difficulty_factor": [2, 1],
+            "density_kg_m3": [2.7, 0.2],
+        }
+    )
+    process = pd.Series(
+        {
+            "process_id": "P01",
+            "energy_kwh_per_kg": 1.2,
+            "water_l_per_kg": 0.5,
+            "crew_min_per_batch": 6.0,
+            "name": "Test process",
+        }
+    )
+    total_mass = max(0.001, float(picks["kg"].sum()))
+    weights = (picks["kg"] / total_mass).tolist()
+    return picks, process, weights
 
 
 def test_build_training_dataframe_prefers_gold_labels(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -68,6 +102,7 @@ def test_build_training_dataframe_prefers_gold_labels(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(model_training, "GOLD_FEATURES_PATH", features_path)
     monkeypatch.setattr(model_training, "GOLD_LABELS_PATH", labels_path)
+    monkeypatch.setattr(label_mapper, "GOLD_LABELS_PATH", labels_path)
 
     def _raise_generate(*_: object, **__: object) -> None:
         raise AssertionError("_generate_samples should not be invoked when gold labels exist")
@@ -112,6 +147,7 @@ def test_build_training_dataframe_falls_back_when_labels_missing(
 
     monkeypatch.setattr(model_training, "GOLD_FEATURES_PATH", features_path)
     monkeypatch.setattr(model_training, "GOLD_LABELS_PATH", tmp_path / "missing.parquet")
+    monkeypatch.setattr(label_mapper, "GOLD_LABELS_PATH", tmp_path / "missing.parquet")
 
     samples_called: list[tuple[int, int | None]] = []
 
@@ -142,3 +178,59 @@ def test_build_training_dataframe_falls_back_when_labels_missing(
     assert row["rigidez"] == pytest.approx(0.5)
     assert row["label_source"] == "simulated"
     assert row["label_weight"] == pytest.approx(0.7)
+
+
+def test_lookup_labels_returns_measured_metadata(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    picks, process, weights = _sample_inputs()
+    recipe_id = label_mapper.derive_recipe_id(picks, process)
+
+    labels_path = tmp_path / "labels.parquet"
+    labels_row = {
+        "recipe_id": recipe_id,
+        "process_id": "P01",
+        "rigidez": 0.88,
+        "estanqueidad": 0.74,
+        "energy_kwh": 92.0,
+        "water_l": 4.5,
+        "crew_min": 48.0,
+        "tightness_pass": 1,
+        "rigidity_level": 3,
+        "label_weight": 2.0,
+        "provenance": "measured",
+        "conf_lo_rigidez": 0.8,
+        "conf_hi_rigidez": 0.92,
+    }
+    _write_parquet(pd.DataFrame([labels_row]), labels_path)
+
+    monkeypatch.setattr(label_mapper, "GOLD_LABELS_PATH", labels_path)
+    monkeypatch.setattr(model_training, "GOLD_LABELS_PATH", labels_path)
+
+    targets, metadata = label_mapper.lookup_labels(picks, "P01", {"recipe_id": recipe_id})
+    assert targets["rigidez"] == pytest.approx(0.88)
+    assert metadata["provenance"] == "measured"
+    ci_rigidez = metadata["confidence_intervals"]["rigidez"]
+    assert ci_rigidez[0] == pytest.approx(0.8)
+    assert ci_rigidez[1] == pytest.approx(0.92)
+
+    features = generator.compute_feature_vector(picks, weights, process, 0.0)
+    features["recipe_id"] = recipe_id
+    result = model_training._compute_targets(picks, process, features)
+    assert result["rigidez"] == pytest.approx(0.88)
+    assert result["estanqueidad"] == pytest.approx(0.74)
+    assert result["label_source"] == "measured"
+
+
+def test_compute_targets_fallback_without_curated_data(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    picks, process, weights = _sample_inputs()
+    missing_path = tmp_path / "missing.parquet"
+    monkeypatch.setattr(label_mapper, "GOLD_LABELS_PATH", missing_path)
+    monkeypatch.setattr(model_training, "GOLD_LABELS_PATH", missing_path)
+
+    features = generator.compute_feature_vector(picks, weights, process, 0.0)
+    result = model_training._compute_targets(picks, process, features)
+
+    assert result["label_source"] == "simulated"
+    tightness = model_training.TIGHTNESS_SCORE_MAP[result["tightness_pass"]]
+    assert result["estanqueidad"] == pytest.approx(tightness)
