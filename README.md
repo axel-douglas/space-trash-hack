@@ -181,7 +181,24 @@ añade `ablation_predictions.csv` y `ablation_metrics.csv`, que documentan el
 impacto de desactivar grupos de features (composición MGS-1, banderas NASA e
 índices logísticos) durante la inferencia. Consulta [BENCHMARK.md](BENCHMARK.md)
 para el resumen, la metodología y cómo interpretar los tres escenarios y los
-resultados de ablation.
+resultados de ablation. En la corrida actual la IA supera a las heurísticas en
+los tres casos de estudio, reduciendo el MAE global a 475 (vs reglas) y aportando
+bandas de confianza medias de 630 unidades que permiten auditar la dispersión
+de sus estimaciones.【F:data/benchmarks/scenario_metrics.csv†L2-L25】
+
+Después de incorporar feedback humano, ejecuta el benchmark nuevamente apuntando
+a un directorio distinto (`--output-dir data/benchmarks/post_feedback`) y
+genera un comparativo con:
+
+```bash
+python scripts/plot_benchmark_deltas.py \
+  --before data/benchmarks/pre_feedback/scenario_metrics.csv \
+  --after data/benchmarks/post_feedback/scenario_metrics.csv
+```
+
+El HTML resultante (`data/benchmarks/feedback_deltas.html`) grafica cuánto se
+redujeron (o empeoraron) MAE, RMSE y el ancho del CI95 frente al baseline
+anterior, evidenciando el impacto directo del feedback en las métricas de la IA.
 
 ## Ejecutar la app
 

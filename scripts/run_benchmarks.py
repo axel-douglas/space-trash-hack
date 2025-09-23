@@ -182,6 +182,16 @@ def _rmse(values: Sequence[float]) -> float:
     return float(np.sqrt(np.mean(np.square(arr)))) if arr.size else math.nan
 
 
+def _nanmean(values: Sequence[float]) -> float:
+    arr = np.asarray(list(values), dtype=float)
+    if arr.size == 0:
+        return math.nan
+    mask = ~np.isnan(arr)
+    if not mask.any():
+        return math.nan
+    return float(np.mean(arr[mask]))
+
+
 def _build_metrics(predictions_df: pd.DataFrame, group_cols: Sequence[str] | None = None) -> pd.DataFrame:
     group_cols = list(group_cols or [])
 
@@ -190,6 +200,9 @@ def _build_metrics(predictions_df: pd.DataFrame, group_cols: Sequence[str] | Non
         .agg(
             mae=("absolute_error", _mae),
             rmse=("signed_error", _rmse),
+            ci95_low_mean=("ci95_low", _nanmean),
+            ci95_high_mean=("ci95_high", _nanmean),
+            ci95_width_mean=("ci95_width", _nanmean),
         )
         .assign(level="scenario")
     )
@@ -199,6 +212,9 @@ def _build_metrics(predictions_df: pd.DataFrame, group_cols: Sequence[str] | Non
         .agg(
             mae=("absolute_error", _mae),
             rmse=("signed_error", _rmse),
+            ci95_low_mean=("ci95_low", _nanmean),
+            ci95_high_mean=("ci95_high", _nanmean),
+            ci95_width_mean=("ci95_width", _nanmean),
         )
         .assign(target="overall", level="scenario")
     )
@@ -208,6 +224,9 @@ def _build_metrics(predictions_df: pd.DataFrame, group_cols: Sequence[str] | Non
         .agg(
             mae=("absolute_error", _mae),
             rmse=("signed_error", _rmse),
+            ci95_low_mean=("ci95_low", _nanmean),
+            ci95_high_mean=("ci95_high", _nanmean),
+            ci95_width_mean=("ci95_width", _nanmean),
         )
         .assign(scenario="overall", level="target")
     )
@@ -218,6 +237,9 @@ def _build_metrics(predictions_df: pd.DataFrame, group_cols: Sequence[str] | Non
             .agg(
                 mae=("absolute_error", _mae),
                 rmse=("signed_error", _rmse),
+                ci95_low_mean=("ci95_low", _nanmean),
+                ci95_high_mean=("ci95_high", _nanmean),
+                ci95_width_mean=("ci95_width", _nanmean),
             )
             .assign(scenario="overall", target="overall", level="global")
         )
@@ -229,6 +251,9 @@ def _build_metrics(predictions_df: pd.DataFrame, group_cols: Sequence[str] | Non
                     "target": "overall",
                     "mae": _mae(predictions_df["absolute_error"]),
                     "rmse": _rmse(predictions_df["signed_error"]),
+                    "ci95_low_mean": _nanmean(predictions_df["ci95_low"]),
+                    "ci95_high_mean": _nanmean(predictions_df["ci95_high"]),
+                    "ci95_width_mean": _nanmean(predictions_df["ci95_width"]),
                     "level": "global",
                 }
             ]
@@ -287,6 +312,7 @@ def run_benchmarks(
             heuristic_value = float(heur_targets[target])
             diff = model_value - heuristic_value
             ci_low, ci_high = _extract_ci(prediction, target)
+            ci_width = ci_high - ci_low if not math.isnan(ci_low) and not math.isnan(ci_high) else math.nan
             predictions_records.append(
                 {
                     "scenario": scenario.name,
@@ -295,6 +321,7 @@ def run_benchmarks(
                     "model_prediction": model_value,
                     "ci95_low": ci_low,
                     "ci95_high": ci_high,
+                    "ci95_width": ci_width,
                     "heuristic_prediction": heuristic_value,
                     "signed_error": diff,
                     "absolute_error": abs(diff),
@@ -338,6 +365,11 @@ def run_benchmarks(
                     heuristic_value = float(heur_targets[target])
                     diff = model_value - heuristic_value
                     ci_low, ci_high = _extract_ci(prediction, target)
+                    ci_width = (
+                        ci_high - ci_low
+                        if not math.isnan(ci_low) and not math.isnan(ci_high)
+                        else math.nan
+                    )
                     ablation_records.append(
                         {
                             "scenario": scenario.name,
@@ -346,6 +378,7 @@ def run_benchmarks(
                             "model_prediction": model_value,
                             "ci95_low": ci_low,
                             "ci95_high": ci_high,
+                            "ci95_width": ci_width,
                             "heuristic_prediction": heuristic_value,
                             "signed_error": diff,
                             "absolute_error": abs(diff),
