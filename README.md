@@ -17,10 +17,11 @@ Demo ligera que muestra la lógica del "cerebro de reciclaje" para Marte:
    datos. Cada incidencia se registra en `data/logs/ingestion.errors.jsonl`; inspecciona ese
    archivo antes de continuar para corregir filas inválidas o faltantes.
 2. **Generar artefactos mínimos**. Una vez limpia la ingesta, corre
-   `python -m app.modules.model_training` para producir el pipeline base y los metadatos
-   indispensables en `data/models/` (por ejemplo `data/models/rexai_regressor.joblib` y
-   `data/models/metadata.json`). El plan detallado de entrenamiento y variantes está descrito
-   en [README_ML_GAMEPLAN.md](README_ML_GAMEPLAN.md).
+   `python -m app.modules.model_training --gold datasets/gold --append-logs "data/logs/feedback_*.parquet"`
+   para producir el pipeline base y los metadatos indispensables en `data/models/`
+   (por ejemplo `data/models/rexai_regressor.joblib` y `data/models/metadata.json`). El
+   plan detallado de entrenamiento y variantes está descrito en
+   [README_ML_GAMEPLAN.md](README_ML_GAMEPLAN.md).
 3. **Confirmar el modo activo**. Si `data/models/rexai_regressor.joblib` no existe cuando se
    levanta la aplicación, `ModelRegistry` lanza un bootstrap automático que entrena un RandomForest
    sintético ligero y lo guarda en `data/models/`. Esto evita tener que versionar binarios para
@@ -56,10 +57,11 @@ datasets con el catálogo de procesos y genera:
 - Metadatos en `data/models/metadata.json` (features, targets, fecha, métricas,
   importancias de features, residuales, paths de artefactos).
 
-Para regenerar todos los artefactos:
+Para regenerar todos los artefactos (mezclando datasets simulados con el
+corpus dorado y feedback humano cuando está disponible):
 
 ```bash
-python -m app.modules.model_training
+python -m app.modules.model_training --gold datasets/gold --append-logs "data/logs/feedback_*.parquet"
 ```
 
 > Nota: la optimización bayesiana con Ax/BoTorch es opcional. El entorno Streamlit
@@ -74,43 +76,49 @@ TabTransformer), expone bandas de confianza 95%, importancias promedio y el
 vector latente entrenado sobre mezclas MGS-1 + residuos NASA. El bootstrap
 automático genera un modelo sintético con la etiqueta `trained_on = "synthetic_v0_bootstrap"`,
 que podés reemplazar en cualquier momento por artefactos reales empaquetados con
-`python -m scripts.package_model_bundle`.
+`python -m scripts.package_model_bundle --output dist/rexai_model_bundle_hybrid_v1.zip`.
 
 ## Distribución de artefactos ML
 
 Los modelos entrenados se empaquetan automáticamente con:
 
 ```bash
-python -m scripts.package_model_bundle
+python -m scripts.package_model_bundle --output dist/rexai_model_bundle_hybrid_v1.zip
 ```
 
-El script genera `dist/rexai-models-<timestamp>.zip` con todos los binarios
-(`data/models/rexai_regressor.joblib`, clasificadores y ensambles opcionales)
-y ambas versiones de metadata (`metadata.json` y `metadata_gold.json`). El ZIP
-está listo para adjuntarse a un GitHub Release o subirlo a un bucket S3/GCS. En
-el despliegue debe extraerse antes de lanzar Streamlit:
+El script genera un ZIP reproducible con todos los binarios
+(`data/models/rexai_regressor.joblib`, clasificadores y ensambles opcionales) y
+ambas versiones de metadata (`metadata.json` y `metadata_gold.json`). Ese
+bundle debe subirse como Release Asset (o artifact de CI) bajo el nombre
+`rexai_model_bundle_hybrid_v1.zip`.
+
+Para reutilizarlo en otro entorno:
 
 ```bash
-unzip dist/rexai-models-<timestamp>.zip -d /tmp/rexai-models && \
-  rsync -av /tmp/rexai-models/data/models/ data/models/
+wget https://github.com/<org>/<repo>/releases/latest/download/rexai_model_bundle_hybrid_v1.zip
+unzip rexai_model_bundle_hybrid_v1.zip -d /tmp/rexai-models
+rsync -av /tmp/rexai-models/data/models/ data/models/
 ```
 
-El último paso garantiza que `data/models/` contenga los binarios antes de
-ejecutar `streamlit run app/Home.py`.
+Reemplazá `<org>/<repo>` por la organización y el nombre reales del repositorio.
+
+Colocar los archivos dentro de `data/models/` antes de ejecutar
+`streamlit run app/Home.py` garantiza que la app arranque directamente en modo
+IA (`ready=True`) sin depender del bootstrap sintético.
 
 ### Mantener el bundle actualizado
 
 1. Reentrena con los datasets más recientes:
 
    ```bash
-   python -m app.modules.model_training
+   python -m app.modules.model_training --gold datasets/gold --append-logs "data/logs/feedback_*.parquet"
    ```
 
    El pipeline actualizará `data/models/rexai_regressor.joblib`, clasificadores
    auxiliares, y escribirá `data/models/metadata.json` con un `trained_on`
-   legible por `ModelRegistry.trained_label()` (por ejemplo `synthetic_v0`).
+   legible por `ModelRegistry.trained_label()` (por ejemplo `hybrid_v1`).
 
-2. Empaqueta los artefactos con `python -m scripts.package_model_bundle`,
+2. Empaqueta los artefactos con `python -m scripts.package_model_bundle --output dist/rexai_model_bundle_hybrid_v1.zip`,
    verifica con `python -m scripts.verify_model_ready` y publica el ZIP
    resultante.
 

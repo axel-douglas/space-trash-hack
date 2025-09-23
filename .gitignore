@@ -24,6 +24,7 @@ __pycache__/
 # Binary dataset and model artefacts
 *.parquet
 *.joblib
+*.zip
 *.pt
 *.pkl
 *.onnx
