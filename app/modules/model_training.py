@@ -76,7 +76,7 @@ PROCESSED_ML = DATA_ROOT / "processed" / "ml"
 MODEL_DIR = DATA_ROOT / "models"
 GOLD_DIR = DATASETS_ROOT / "gold"
 GOLD_FEATURES_PATH = GOLD_DIR / "features.parquet"
-GOLD_TARGETS_PATH = GOLD_DIR / "targets.parquet"
+GOLD_LABELS_PATH = GOLD_DIR / "labels.parquet"
 
 PIPELINE_PATH = MODEL_DIR / "rexai_regressor.joblib"
 AUTOENCODER_PATH = MODEL_DIR / "rexai_autoencoder.pt"
@@ -222,7 +222,7 @@ def _load_gold_targets() -> DataFrame:
     if _GOLD_TARGETS_CACHE is not None:
         return _GOLD_TARGETS_CACHE
 
-    table = _load_parquet(GOLD_TARGETS_PATH)
+    table = _load_parquet(GOLD_LABELS_PATH)
     if table.empty:
         _GOLD_TARGETS_CACHE = pd.DataFrame()
         return _GOLD_TARGETS_CACHE
@@ -230,11 +230,34 @@ def _load_gold_targets() -> DataFrame:
     required = {"recipe_id", "process_id"}
     missing = required - set(table.columns)
     if missing:
-        raise ValueError(f"Faltan columnas {sorted(missing)} en {GOLD_TARGETS_PATH}")
+        raise ValueError(f"Faltan columnas {sorted(missing)} en {GOLD_LABELS_PATH}")
 
     table = table.copy()
     table["recipe_id"] = _normalise_key_column(table["recipe_id"])
     table["process_id"] = _normalise_key_column(table["process_id"])
+    numeric_columns = [
+        *TARGET_COLUMNS,
+        "label_weight",
+        "weight",
+        "sample_weight",
+        *[col for col in table.columns if col.startswith("conf_lo_")],
+        *[col for col in table.columns if col.startswith("conf_hi_")],
+    ]
+    for column in numeric_columns:
+        if column in table.columns:
+            table[column] = pd.to_numeric(table[column], errors="coerce")
+
+    for column in CLASS_TARGET_COLUMNS:
+        if column in table.columns:
+            table[column] = pd.to_numeric(table[column], errors="coerce").astype("Int64")
+
+    if "provenance" in table.columns and "label_source" not in table.columns:
+        table["label_source"] = table["provenance"]
+    if "label_source" in table.columns:
+        table["label_source"] = (
+            table["label_source"].fillna("measured").astype(str)
+        )
+
     table = table.drop_duplicates(subset=["recipe_id", "process_id"], keep="last")
     table = table.set_index(["recipe_id", "process_id"], drop=False)
     _GOLD_TARGETS_CACHE = table
@@ -439,82 +462,114 @@ def build_training_dataframe(n_samples: int = 1600, seed: int | None = 21) -> Da
     gold_features = _load_gold_features()
     gold_targets = _load_gold_targets()
 
-    if not gold_features.empty and not gold_targets.empty:
-        try:
-            targets_flat = gold_targets.reset_index(drop=True)
-            overlap = {
-                column
-                for column in targets_flat.columns
-                if column in gold_features.columns and column not in {"recipe_id", "process_id"}
-            }
-            if overlap:
-                targets_flat = targets_flat.drop(columns=list(overlap))
+    if gold_features.empty or gold_targets.empty:
+        samples = _generate_samples(n_samples, seed)
+        df = pd.DataFrame([sample.as_row() for sample in samples])
+        return df
 
-            df_gold = gold_features.merge(
-                targets_flat,
-                on=["recipe_id", "process_id"],
-                how="inner",
+    targets_flat = gold_targets.reset_index(drop=True)
+    overlap = {
+        column
+        for column in targets_flat.columns
+        if column in gold_features.columns and column not in {"recipe_id", "process_id"}
+    }
+    if overlap:
+        targets_flat = targets_flat.drop(columns=list(overlap))
+
+    df_gold = gold_features.merge(
+        targets_flat,
+        on=["recipe_id", "process_id"],
+        how="inner",
+    )
+
+    if df_gold.empty:
+        samples = _generate_samples(n_samples, seed)
+        df = pd.DataFrame([sample.as_row() for sample in samples])
+        return df
+
+    df_gold = df_gold.copy()
+
+    weight_sources = [
+        column
+        for column in ("label_weight", "weight", "sample_weight")
+        if column in df_gold.columns
+    ]
+    if weight_sources:
+        base_weight_column = weight_sources[0]
+        df_gold["label_weight"] = pd.to_numeric(
+            df_gold[base_weight_column], errors="coerce"
+        ).fillna(1.0)
+    else:
+        df_gold["label_weight"] = 1.0
+
+    if "label_source" in df_gold.columns:
+        df_gold["label_source"] = (
+            df_gold["label_source"].fillna("measured").astype(str)
+        )
+    elif "provenance" in df_gold.columns:
+        df_gold["label_source"] = (
+            df_gold["provenance"].fillna("measured").astype(str)
+        )
+    else:
+        df_gold["label_source"] = "measured"
+
+    for column in [c for c in df_gold.columns if c.startswith("conf_")]:
+        df_gold[column] = pd.to_numeric(df_gold[column], errors="coerce")
+
+    missing_targets = [col for col in TARGET_COLUMNS if col not in df_gold.columns]
+    if missing_targets:
+        raise ValueError(
+            "El dataset gold no contiene todas las columnas objetivo requeridas: "
+            + ", ".join(missing_targets)
+        )
+
+    processes = _load_process_catalog()
+    processes["process_id_norm"] = processes["process_id"].astype(str).str.upper().str.strip()
+    process_map = processes.set_index("process_id_norm")
+
+    def _process_lookup(pid: Any) -> pd.Series:
+        key = str(pid).upper().strip()
+        if key in process_map.index:
+            return process_map.loc[key]
+        return pd.Series({"process_id": key})
+
+    if "tightness_pass" not in df_gold.columns:
+        df_gold["tightness_pass"] = df_gold.apply(
+            lambda row: _label_tightness(
+                row.to_dict(),
+                _process_lookup(row["process_id"]),
+            ),
+            axis=1,
+        )
+    else:
+        mask = df_gold["tightness_pass"].isna()
+        if mask.any():
+            df_gold.loc[mask, "tightness_pass"] = df_gold.loc[mask].apply(
+                lambda row: _label_tightness(
+                    row.to_dict(),
+                    _process_lookup(row["process_id"]),
+                ),
+                axis=1,
             )
 
-            if not df_gold.empty:
-                df_gold = df_gold.copy()
-                if "label_source" not in df_gold.columns:
-                    df_gold["label_source"] = "measured"
-                if "label_weight" not in df_gold.columns:
-                    df_gold["label_weight"] = 1.0
+    if "rigidity_level" not in df_gold.columns:
+        df_gold["rigidity_level"] = df_gold.apply(
+            lambda row: _label_rigidity(row.to_dict()),
+            axis=1,
+        )
+    else:
+        mask = df_gold["rigidity_level"].isna()
+        if mask.any():
+            df_gold.loc[mask, "rigidity_level"] = df_gold.loc[mask].apply(
+                lambda row: _label_rigidity(row.to_dict()),
+                axis=1,
+            )
 
-                df_gold["label_weight"] = pd.to_numeric(df_gold["label_weight"], errors="coerce").fillna(1.0)
-                df_gold["label_source"] = (
-                    df_gold["label_source"].fillna("measured").astype(str)
-                )
-
-                missing_targets = [col for col in TARGET_COLUMNS if col not in df_gold.columns]
-                if missing_targets:
-                    raise ValueError(
-                        "El dataset gold no contiene todas las columnas objetivo requeridas: "
-                        + ", ".join(missing_targets)
-                    )
-
-                processes = _load_process_catalog()
-                processes["process_id_norm"] = processes["process_id"].astype(str).str.upper().str.strip()
-                process_map = processes.set_index("process_id_norm")
-
-                def _process_lookup(pid: Any) -> pd.Series:
-                    key = str(pid).upper().strip()
-                    if key in process_map.index:
-                        return process_map.loc[key]
-                    return pd.Series({"process_id": key})
-
-                if "tightness_pass" not in df_gold.columns:
-                    df_gold["tightness_pass"] = df_gold.apply(
-                        lambda row: _label_tightness(
-                            row.to_dict(),
-                            _process_lookup(row["process_id"]),
-                        ),
-                        axis=1,
-                    )
-
-                if "rigidity_level" not in df_gold.columns:
-                    df_gold["rigidity_level"] = df_gold.apply(
-                        lambda row: _label_rigidity(row.to_dict()),
-                        axis=1,
-                    )
-
-                if "recipe_id" not in df_gold.columns:
-                    raise ValueError("El dataset gold debe incluir columna recipe_id")
-
-                df_gold["recipe_id"] = df_gold["recipe_id"].astype(str).str.upper().str.strip()
-                df_gold["process_id"] = df_gold["process_id"].astype(str).str.upper().str.strip()
-                df_gold["tightness_pass"] = df_gold["tightness_pass"].astype(int)
-                df_gold["rigidity_level"] = df_gold["rigidity_level"].astype(int)
-                return df_gold
-        except Exception:
-            # Si el dataset curated falla, retomamos el pipeline sintético tradicional
-            pass
-
-    samples = _generate_samples(n_samples, seed)
-    df = pd.DataFrame([sample.as_row() for sample in samples])
-    return df
+    df_gold["recipe_id"] = df_gold["recipe_id"].astype(str).str.upper().str.strip()
+    df_gold["process_id"] = df_gold["process_id"].astype(str).str.upper().str.strip()
+    df_gold["tightness_pass"] = df_gold["tightness_pass"].astype(int)
+    df_gold["rigidity_level"] = df_gold["rigidity_level"].astype(int)
+    return df_gold
 
 
 def _build_preprocessor() -> ColumnTransformer:
