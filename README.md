@@ -192,10 +192,12 @@ añade `ablation_predictions.csv` y `ablation_metrics.csv`, que documentan el
 impacto de desactivar grupos de features (composición MGS-1, banderas NASA e
 índices logísticos) durante la inferencia. Consulta [BENCHMARK.md](BENCHMARK.md)
 para el resumen, la metodología y cómo interpretar los tres escenarios y los
-resultados de ablation. En la corrida actual la IA supera a las heurísticas en
-los tres casos de estudio, reduciendo el MAE global a 475 (vs reglas) y aportando
-bandas de confianza medias de 630 unidades que permiten auditar la dispersión
-de sus estimaciones.【F:data/benchmarks/scenario_metrics.csv†L2-L25】
+resultados de ablation. La corrida más reciente muestra que el ensemble aún se
+desvía de las reglas: MAE global 200 522, RMSE 441 237 y bandas CI95 promedio de
+315 825 puntos frente a las heurísticas.【F:data/benchmarks/scenario_metrics.csv†L17-L25】
+Los barridos con `--with-ablation` confirman ajustes pendientes: quitar las
+banderas NASA o los índices logísticos reduce levemente el MAE, pero a costa de
+ensanchar las bandas de confianza.【F:data/benchmarks/ablation_metrics.csv†L71-L73】
 
 Después de incorporar feedback humano, ejecuta el benchmark nuevamente apuntando
 a un directorio distinto (`--output-dir data/benchmarks/post_feedback`) y
