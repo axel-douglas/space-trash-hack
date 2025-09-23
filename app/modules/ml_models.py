@@ -161,17 +161,32 @@ class ModelRegistry:
     # -------------------------- Carga ---------------------------------
     def _load(self) -> None:
         # Pipeline
-        if PIPELINE_PATH.exists():
+        pipeline_path = PIPELINE_PATH
+        if not pipeline_path.exists():
+            LOGGER.info("No hay modelo Rex-AI en %s, se inicializará uno demo", PIPELINE_PATH)
+            generated_path: Path | str | None = None
             try:
-                self.pipeline = joblib.load(PIPELINE_PATH)
+                from app.modules.model_training import bootstrap_demo_model
+
+                generated_path = bootstrap_demo_model()
+            except Exception as exc:  # pragma: no cover - bootstrap opcional
+                LOGGER.warning(
+                    "Fallo bootstrap del modelo demo en %s: %s", PIPELINE_PATH, exc
+                )
+            if generated_path:
+                pipeline_path = Path(generated_path)
+
+        if pipeline_path.exists():
+            try:
+                self.pipeline = joblib.load(pipeline_path)
                 # si es Pipeline([...('preprocess', ...), ('regressor', ...)])
                 self.preprocessor = getattr(self.pipeline, "named_steps", {}).get("preprocess")
             except Exception as exc:
-                LOGGER.warning("No se pudo cargar pipeline %s: %s", PIPELINE_PATH, exc)
+                LOGGER.warning("No se pudo cargar pipeline %s: %s", pipeline_path, exc)
                 self.pipeline = None
                 self.preprocessor = None
         else:
-            LOGGER.info("No hay modelo Rex-AI en %s", PIPELINE_PATH)
+            LOGGER.info("No hay modelo Rex-AI en %s", pipeline_path)
 
         # Metadata
         metadata_path = METADATA_PATH if METADATA_PATH.exists() else LEGACY_METADATA_PATH
