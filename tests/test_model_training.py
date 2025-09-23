@@ -164,7 +164,7 @@ def test_build_training_dataframe_uses_nasa_gold(
     assert len(df) == len(features_df)
 
     df_sorted = df.sort_values(["process_id", "recipe_id"]).reset_index(drop=True)
-    expected = labels_df.set_index(["recipe_id", "process_id"])
+    expected = labels_df.set_index(["recipe_id", "process_id"]).sort_index()
 
     target_columns = ["rigidez", "estanqueidad", "energy_kwh", "water_l", "crew_min"]
 
@@ -280,11 +280,49 @@ def test_compute_targets_prefers_curated_labels(
 
     targets = model_training._compute_targets(picks, process, features)
 
-    expected = labels_df.set_index(["recipe_id", "process_id"]).loc[(recipe_id, process_id)]
+    expected = (
+        labels_df.set_index(["recipe_id", "process_id"]).sort_index().loc[(recipe_id, process_id)]
+    )
 
     assert targets["rigidez"] == pytest.approx(expected["rigidez"])
     assert targets["estanqueidad"] == pytest.approx(expected["estanqueidad"])
     assert targets["energy_kwh"] == pytest.approx(expected["energy_kwh"])
+    assert targets["label_source"] == "mission"
+
+
+def test_compute_targets_uses_default_gold_dataset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """La tabla gold por defecto debe dominar los cálculos de etiquetas."""
+
+    features_path, labels_path = data_build.ensure_gold_dataset()
+
+    monkeypatch.setattr(model_training, "GOLD_FEATURES_PATH", features_path)
+    monkeypatch.setattr(model_training, "GOLD_LABELS_PATH", labels_path)
+    monkeypatch.setattr(label_mapper, "GOLD_LABELS_PATH", labels_path)
+
+    records = data_build.generate_gold_records()
+    assert records, "Se esperaban registros NASA curados"
+    record = records[0]
+
+    recipe_id = record.features["recipe_id"]
+    process_id = record.features["process_id"]
+
+    features = {key: record.features[key] for key in model_training.FEATURE_COLUMNS}
+    features["recipe_id"] = recipe_id
+    features["process_id"] = process_id
+
+    targets = model_training._compute_targets(record.picks, record.process, features)
+
+    labels_df = pd.read_parquet(labels_path)
+    expected = (
+        labels_df.set_index(["recipe_id", "process_id"]).sort_index().loc[(recipe_id, process_id)]
+    )
+
+    for column in model_training.TARGET_COLUMNS:
+        value = expected[column]
+        if isinstance(value, pd.Series):  # pragma: no cover - defensive
+            value = value.iloc[0]
+        assert targets[column] == pytest.approx(float(value))
+
     assert targets["label_source"] == "mission"
 
 
