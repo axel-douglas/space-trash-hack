@@ -15,3 +15,6 @@ __pycache__/
 /datasets/derived/
 !/data/processed/.gitkeep
 !/datasets/processed/.gitkeep
+
+# Distribution bundles
+/dist/

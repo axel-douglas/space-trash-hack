@@ -31,8 +31,8 @@ datasets con el catálogo de procesos y genera:
   estimación de incertidumbre (desvío entre árboles + residuales de validación).
 - Ensemble de modelos de "wow effect":
   - `data/models/rexai_xgboost.joblib` (boosting por target).
-  - `data/models/rexai_tabtransformer.pt` (transformer tabular ligero).
-- Autoencoder para embeddings latentes (`data/models/rexai_autoencoder.pt`).
+  - `data/models/rexai_tabtransformer.pt` (transformer tabular ligero, opcional si PyTorch está disponible).
+- Autoencoder para embeddings latentes (`data/models/rexai_autoencoder.pt`, opcional PyTorch).
 - Metadatos en `data/models/metadata.json` (features, targets, fecha, métricas,
   importancias de features, residuales, paths de artefactos).
 
@@ -53,21 +53,42 @@ predicciones heurísticas por las del modelo Rex-AI (RandomForest + XGBoost +
 TabTransformer), expone bandas de confianza 95%, importancias promedio y el
 vector latente entrenado sobre mezclas MGS-1 + residuos NASA.
 
-## Ejecutar
-El módulo `app/modules/model_training.py` permite entrenar un modelo de
-regresión multi-salida a partir de datasets físicos/químicos alineados con
-documentos de NASA y UCF. Mezcla el inventario de residuos no-metabólicos
-(pouches, espumas, EVA/CTB, textiles, nitrilo, etc.), la composición mineralógica
-y propiedades de MGS-1, y rendimientos de procesos Trash-to-Gas y
-Logistics-to-Living. 
+## Distribución de artefactos ML
 
-Esto produce:
-- Dataset procesado en `datasets/processed/rexai_training_dataset.parquet`.
-- Pipeline empaquetado (`data/models/rexai_regressor.joblib`) con metadatos
-  en `data/models/metadata.json`.
-- Autoencoder para embeddings latentes en `data/models/rexai_autoencoder.pt`.
-
-Para regenerar todos los artefactos:
+Los modelos entrenados se empaquetan automáticamente con:
 
 ```bash
-python -m app.modules.model_training
+python -m scripts.package_model_bundle
+```
+
+El script genera `dist/rexai-models-<timestamp>.zip` con todos los binarios
+(`rexai_regressor.joblib`, clasificadores, ensambles opcionales) y las dos
+versiones de `metadata.json`. El ZIP está listo para adjuntarse a un GitHub
+Release o subirlo a un bucket S3/GCS. En el despliegue, basta con descomprimirlo
+en `data/models/` para activar el modo IA.
+
+## Verificación automática de readiness
+
+Antes de publicar un release ejecutar:
+
+```bash
+python -m scripts.verify_model_ready
+```
+
+El chequeo carga `ModelRegistry`, valida que `ready == True`, que todas las
+métricas/residuales estén presentes en `metadata.json` y reporta las rutas de
+artefactos generados. Si falta algún binario o metadata crítica, el script sale
+con error para evitar releases inconsistentes.
+
+## Ejecutar la app
+
+Con los artefactos generados, lanzar la demo con:
+
+```bash
+streamlit run app/Home.py
+```
+
+La UI detecta `ModelRegistry.ready` y, si los modelos están presentes, muestra
+predicciones, bandas de confianza, importancia de features y comparaciones con
+los ensambles opcionales. Ante ausencia de modelos utiliza los fallbacks
+heurísticos originales.
