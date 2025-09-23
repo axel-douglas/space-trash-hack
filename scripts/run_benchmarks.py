@@ -14,7 +14,10 @@ calcula las predicciones y las compara frente al baseline determinístico
 (MAE), el RMSE y los intervalos de confianza al 95% reportados por el modelo.
 
 Results are persisted under ``data/benchmarks/`` so they can be versioned or
-shared alongside the repository.
+shared alongside the repository. Optionally, the command can perform ablation
+studies where relevant groups of engineered features (composición MGS-1,
+banderas de materiales NASA y los índices logísticos) se desactivan para medir
+su impacto en MAE/RMSE/CI95.
 """
 
 from __future__ import annotations
@@ -42,6 +45,50 @@ WASTE_SAMPLE = DATA_DIR / "waste_inventory_sample.csv"
 PROCESS_CATALOG = DATA_DIR / "process_catalog.csv"
 BENCHMARK_DIR = DATA_DIR / "benchmarks"
 TARGET_COLUMNS: List[str] = ["rigidez", "estanqueidad", "energy_kwh", "water_l", "crew_min"]
+
+
+def _zeroed_features(features: Mapping[str, object], keys: Iterable[str]) -> Dict[str, object]:
+    """Return a copy of *features* where *keys* were set to 0.0 when present."""
+
+    mutated = dict(features)
+    for key in keys:
+        if key in mutated:
+            mutated[key] = 0.0
+    return mutated
+
+
+def _ablation_variants(features: Mapping[str, object]) -> Dict[str, Dict[str, object]]:
+    """Produce feature ablations grouped by domain-meaningful subsets."""
+
+    oxide_keys = [key for key in features.keys() if key.startswith("oxide_")]
+    oxide_keys.append("regolith_pct")
+
+    nasa_flag_keys = [
+        "packaging_frac",
+        "aluminum_frac",
+        "foam_frac",
+        "eva_frac",
+        "textile_frac",
+        "multilayer_frac",
+        "glove_frac",
+        "polyethylene_frac",
+        "carbon_fiber_frac",
+        "hydrogen_rich_frac",
+    ]
+
+    logistics_keys = [
+        "gas_recovery_index",
+        "logistics_reuse_index",
+        "problematic_mass_frac",
+        "problematic_item_frac",
+        "difficulty_index",
+    ]
+
+    return {
+        "mgs1_composition": _zeroed_features(features, oxide_keys),
+        "nasa_flags": _zeroed_features(features, nasa_flag_keys),
+        "logistics_indices": _zeroed_features(features, logistics_keys),
+    }
 
 
 @dataclass(frozen=True)
@@ -135,7 +182,69 @@ def _rmse(values: Sequence[float]) -> float:
     return float(np.sqrt(np.mean(np.square(arr)))) if arr.size else math.nan
 
 
-def run_benchmarks(output_dir: Path, output_format: str = "csv") -> dict:
+def _build_metrics(predictions_df: pd.DataFrame, group_cols: Sequence[str] | None = None) -> pd.DataFrame:
+    group_cols = list(group_cols or [])
+
+    metrics_by_scenario = (
+        predictions_df.groupby(group_cols + ["scenario", "target"], as_index=False)
+        .agg(
+            mae=("absolute_error", _mae),
+            rmse=("signed_error", _rmse),
+        )
+        .assign(level="scenario")
+    )
+
+    scenario_overall = (
+        predictions_df.groupby(group_cols + ["scenario"], as_index=False)
+        .agg(
+            mae=("absolute_error", _mae),
+            rmse=("signed_error", _rmse),
+        )
+        .assign(target="overall", level="scenario")
+    )
+
+    metrics_by_target = (
+        predictions_df.groupby(group_cols + ["target"], as_index=False)
+        .agg(
+            mae=("absolute_error", _mae),
+            rmse=("signed_error", _rmse),
+        )
+        .assign(scenario="overall", level="target")
+    )
+
+    if group_cols:
+        overall = (
+            predictions_df.groupby(group_cols, as_index=False)
+            .agg(
+                mae=("absolute_error", _mae),
+                rmse=("signed_error", _rmse),
+            )
+            .assign(scenario="overall", target="overall", level="global")
+        )
+    else:
+        overall = pd.DataFrame(
+            [
+                {
+                    "scenario": "overall",
+                    "target": "overall",
+                    "mae": _mae(predictions_df["absolute_error"]),
+                    "rmse": _rmse(predictions_df["signed_error"]),
+                    "level": "global",
+                }
+            ]
+        )
+
+    metrics_df = pd.concat(
+        [metrics_by_scenario, scenario_overall, metrics_by_target, overall],
+        ignore_index=True,
+        sort=False,
+    )
+    return metrics_df
+
+
+def run_benchmarks(
+    output_dir: Path, output_format: str = "csv", with_ablation: bool = False
+) -> dict:
     waste_df, process_df = _load_inputs()
 
     registry = ModelRegistry()
@@ -197,55 +306,55 @@ def run_benchmarks(output_dir: Path, output_format: str = "csv") -> dict:
 
     predictions_df = pd.DataFrame(predictions_records)
 
-    metrics_by_scenario = (
-        predictions_df.groupby(["scenario", "target"], as_index=False)
-        .agg(
-            mae=("absolute_error", _mae),
-            rmse=("signed_error", _rmse),
-        )
-        .assign(level="scenario")
-    )
-
-    scenario_overall = (
-        predictions_df.groupby("scenario", as_index=False)
-        .agg(
-            mae=("absolute_error", _mae),
-            rmse=("signed_error", _rmse),
-        )
-        .assign(target="overall", level="scenario")
-    )
-
-    metrics_by_target = (
-        predictions_df.groupby("target", as_index=False)
-        .agg(
-            mae=("absolute_error", _mae),
-            rmse=("signed_error", _rmse),
-        )
-        .assign(scenario="overall", level="target")
-    )
-
-    overall = pd.DataFrame(
-        [
-            {
-                "scenario": "overall",
-                "target": "overall",
-                "mae": _mae(predictions_df["absolute_error"]),
-                "rmse": _rmse(predictions_df["signed_error"]),
-                "level": "global",
-            }
-        ]
-    )
-
-    metrics_df = pd.concat(
-        [metrics_by_scenario, scenario_overall, metrics_by_target, overall],
-        ignore_index=True,
-        sort=False,
-    )
+    metrics_df = _build_metrics(predictions_df)
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
     predictions_path = output_dir / "scenario_predictions"
     metrics_path = output_dir / "scenario_metrics"
+
+    ablation_records: List[Dict[str, object]] = []
+
+    if with_ablation:
+        for scenario in scenarios:
+            picks = waste_df[waste_df["id"].isin(scenario.waste_ids)]
+            weights = _normalised_weights(picks["kg"])
+            heuristics = heuristic_props(picks, process_df.loc[scenario.process_id], weights, scenario.regolith_pct)
+            base_features = compute_feature_vector(
+                picks,
+                weights,
+                process_df.loc[scenario.process_id],
+                scenario.regolith_pct,
+            )
+
+            for group, ablated_features in _ablation_variants(base_features).items():
+                prediction = registry.predict(ablated_features)
+                if not prediction:
+                    continue
+
+                heur_targets = heuristics.to_targets()
+                for target in TARGET_COLUMNS:
+                    model_value = float(prediction[target])
+                    heuristic_value = float(heur_targets[target])
+                    diff = model_value - heuristic_value
+                    ci_low, ci_high = _extract_ci(prediction, target)
+                    ablation_records.append(
+                        {
+                            "scenario": scenario.name,
+                            "scenario_title": scenario.title,
+                            "target": target,
+                            "model_prediction": model_value,
+                            "ci95_low": ci_low,
+                            "ci95_high": ci_high,
+                            "heuristic_prediction": heuristic_value,
+                            "signed_error": diff,
+                            "absolute_error": abs(diff),
+                            "regolith_pct": scenario.regolith_pct,
+                            "process_id": scenario.process_id,
+                            "waste_ids": ",".join(scenario.waste_ids),
+                            "ablation_group": group,
+                        }
+                    )
 
     if output_format in {"csv", "both"}:
         predictions_df.to_csv(predictions_path.with_suffix(".csv"), index=False)
@@ -254,6 +363,36 @@ def run_benchmarks(output_dir: Path, output_format: str = "csv") -> dict:
     if output_format in {"parquet", "both"}:
         predictions_df.to_parquet(predictions_path.with_suffix(".parquet"), index=False)
         metrics_df.to_parquet(metrics_path.with_suffix(".parquet"), index=False)
+
+    ablation_summary = None
+    if with_ablation and ablation_records:
+        ablation_df = pd.DataFrame(ablation_records)
+        ablation_metrics_df = _build_metrics(ablation_df, ["ablation_group"])
+
+        ablation_predictions_path = output_dir / "ablation_predictions"
+        ablation_metrics_path = output_dir / "ablation_metrics"
+
+        if output_format in {"csv", "both"}:
+            ablation_df.to_csv(ablation_predictions_path.with_suffix(".csv"), index=False)
+            ablation_metrics_df.to_csv(ablation_metrics_path.with_suffix(".csv"), index=False)
+
+        if output_format in {"parquet", "both"}:
+            ablation_df.to_parquet(ablation_predictions_path.with_suffix(".parquet"), index=False)
+            ablation_metrics_df.to_parquet(ablation_metrics_path.with_suffix(".parquet"), index=False)
+
+        ablation_summary = {
+            "predictions_path": str(
+                ablation_predictions_path.with_suffix(
+                    f".{output_format if output_format != 'both' else 'csv'}"
+                )
+            ),
+            "metrics_path": str(
+                ablation_metrics_path.with_suffix(
+                    f".{output_format if output_format != 'both' else 'csv'}"
+                )
+            ),
+            "groups": sorted({row["ablation_group"] for row in ablation_records}),
+        }
 
     summary = {
         "model": {
@@ -265,6 +404,9 @@ def run_benchmarks(output_dir: Path, output_format: str = "csv") -> dict:
         "predictions_path": str(predictions_path.with_suffix(f".{output_format if output_format != 'both' else 'csv'}")),
         "metrics_path": str(metrics_path.with_suffix(f".{output_format if output_format != 'both' else 'csv'}")),
     }
+
+    if ablation_summary:
+        summary["ablation"] = ablation_summary
 
     print(json.dumps(summary, indent=2, ensure_ascii=False))
     return summary
@@ -286,12 +428,17 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default="csv",
         help="Formato de salida para las tablas",
     )
+    parser.add_argument(
+        "--with-ablation",
+        action="store_true",
+        help="Incluye barridos de ablation desactivando grupos de features",
+    )
     return parser.parse_args(list(argv) if argv is not None else None)
 
 
 def main(argv: Sequence[str] | None = None) -> dict:
     args = parse_args(argv)
-    return run_benchmarks(args.output_dir, args.format)
+    return run_benchmarks(args.output_dir, args.format, with_ablation=args.with_ablation)
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point

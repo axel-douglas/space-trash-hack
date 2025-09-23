@@ -136,13 +136,17 @@ Para auditar la deriva entre las reglas `heuristic_props` y el modelo Rex-AI
 podés ejecutar:
 
 ```bash
-python scripts/run_benchmarks.py --format csv
+python scripts/run_benchmarks.py --format csv --with-ablation
 ```
 
 El comando espera que `data/models/rexai_regressor.joblib` esté disponible y
-genera tablas comparativas en `data/benchmarks/`. Consulta
-[BENCHMARK.md](BENCHMARK.md) para el resumen y la descripción de los tres
-escenarios incluidos.
+genera tablas comparativas en `data/benchmarks/`. Además de los archivos
+`scenario_predictions.csv`/`scenario_metrics.csv`, la flag `--with-ablation`
+añade `ablation_predictions.csv` y `ablation_metrics.csv`, que documentan el
+impacto de desactivar grupos de features (composición MGS-1, banderas NASA e
+índices logísticos) durante la inferencia. Consulta [BENCHMARK.md](BENCHMARK.md)
+para el resumen, la metodología y cómo interpretar los tres escenarios y los
+resultados de ablation.
 
 ## Ejecutar la app
 
