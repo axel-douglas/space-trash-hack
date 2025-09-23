@@ -14,6 +14,7 @@ import json
 import pandas as pd
 from datetime import datetime
 from io import StringIO
+from typing import Any
 
 from app.modules.impact import (
     ImpactEntry, FeedbackEntry, append_impact, append_feedback,
@@ -21,8 +22,10 @@ from app.modules.impact import (
 )
 
 
-def _parse_extra_blob(blob: str) -> dict:
+def _parse_extra_blob(blob: Any) -> dict:
     """Convierte el campo `extra` a un dict manejando texto plano o JSON."""
+    if isinstance(blob, dict):
+        return blob
     if not isinstance(blob, str):
         return {}
     text = blob.strip()
@@ -56,17 +59,21 @@ def _with_extra_columns(df: pd.DataFrame, rename_map: dict[str, str] | None = No
     if df is None or df.empty:
         return df
     work = df.copy()
+    rename_map = rename_map or {}
+    rename_existing = {col: rename_map[col] for col in rename_map if col in work.columns}
+    if rename_existing:
+        work = work.rename(columns=rename_existing)
     if "extra" not in work.columns:
-        work["extra"] = ""
+        work["extra"] = [{} for _ in range(len(work))]
         return work
-    meta_df = pd.DataFrame(work["extra"].fillna("").map(_parse_extra_blob).tolist())
+    meta_df = pd.DataFrame([_parse_extra_blob(val) for val in work["extra"]])
     if meta_df.empty:
         return work
     if rename_map:
-        meta_df = meta_df.rename(columns=rename_map)
+        meta_df = meta_df.rename(columns={col: rename_map.get(col, col) for col in meta_df.columns})
     for column in meta_df.columns:
         if column in work.columns:
-            work[f"extra_{column}"] = meta_df[column]
+            work[column] = work[column].fillna(meta_df[column])
         else:
             work[column] = meta_df[column]
     return work
@@ -161,7 +168,7 @@ with colBtn1:
             water_l=float(p.water_l),
             crew_min=float(p.crew_min),
             score=float(candidato.get("score", 0.0)),
-            extra=f"regolith_pct={regolith_pct:.2f}"
+            extra={"regolith_pct": round(float(regolith_pct), 4)}
         )
         append_impact(entry)
         st.success("Impacto registrado en el log.")
@@ -205,7 +212,13 @@ with st.form("feedback_form"):
             issues=issues,
             notes=notes,
             # campos extendidos en `.extra` (si tu dataclass no los tiene, se guardan como texto)
-            extra=f"overall={overall};porosity={porosity};surface={surface};bonding={bonding};failure={failure}"
+            extra={
+                "overall": overall,
+                "porosity": porosity,
+                "surface": surface,
+                "bonding": bonding,
+                "failure": failure,
+            }
         )
         append_feedback(entry)
         st.success("Feedback guardado. Rex-AI utilizará estas señales para ajustar pesos/penalizaciones y recomendaciones.")
@@ -255,7 +268,10 @@ if idf is not None and len(idf):
         st.caption("¿Dónde estamos invirtiendo tiempo? ¿Vale la pena mover corridas a procesos más eficientes?")
 
     st.markdown("**Detalle de corridas (impact log)**")
-    impact_display = _with_extra_columns(idf, {"regolith_pct": "Regolith (%)"})
+    impact_display = _with_extra_columns(idf, {
+        "regolith_pct": "Regolith (%)",
+        "extra_regolith_pct": "Regolith (%)"
+    })
     if "Regolith (%)" in impact_display.columns:
         impact_display["Regolith (%)"] = impact_display["Regolith (%)"].apply(
             lambda v: f"{float(v) * 100:.0f}%" if isinstance(v, str) and v.replace('.', '', 1).isdigit() else v
@@ -276,7 +292,10 @@ if fdf is not None and len(fdf):
     feedback_display = _with_extra_columns(fdf, {
         "overall": "Satisfacción", "porosity": "Porosidad",
         "surface": "Superficie", "bonding": "Unión",
-        "failure": "Falla observada"
+        "failure": "Falla observada",
+        "extra_overall": "Satisfacción", "extra_porosity": "Porosidad",
+        "extra_surface": "Superficie", "extra_bonding": "Unión",
+        "extra_failure": "Falla observada"
     })
     # Para registros antiguos sin `extra`, mostramos '-'
     for col in ["Satisfacción", "Porosidad", "Superficie", "Unión", "Falla observada"]:
