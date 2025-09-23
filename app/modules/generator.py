@@ -578,82 +578,62 @@ def _build_candidate(
         force_heuristic = os.getenv("REXAI_FORCE_HEURISTIC", "").lower() in {"1", "true", "yes"}
         if not force_heuristic and MODEL_REGISTRY is not None and getattr(MODEL_REGISTRY, "ready", False):
             features_for_inference = dict(features)
-            prediction = {}
-            try:
-                prediction = MODEL_REGISTRY.predict(features_for_inference)
-            except Exception as exc:  # pragma: no cover - error path should still log
-                _append_inference_log(features_for_inference, {"error": str(exc)}, {}, MODEL_REGISTRY)
-                prediction = {}
-            else:
-                _append_inference_log(
-                    features_for_inference,
-                    prediction or {},
-                    ((prediction or {}).get("uncertainty") if isinstance(prediction, dict) else {}),
-                    MODEL_REGISTRY,
-                )
-
             if prediction:
-                props = PredProps(
-                    rigidity=float(prediction.get("rigidez", props.rigidity)),
-                    tightness=float(prediction.get("estanqueidad", props.tightness)),
-                    mass_final_kg=heuristic.mass_final_kg,
-                    energy_kwh=float(prediction.get("energy_kwh", props.energy_kwh)),
-                    water_l=float(prediction.get("water_l", props.water_l)),
-                    crew_min=float(prediction.get("crew_min", props.crew_min)),
-                    source=str(prediction.get("source", "ml")),
-                    uncertainty={k: float(v) for k, v in (prediction.get("uncertainty") or {}).items()},
-                    confidence_interval={
-                        k: (float(v[0]), float(v[1])) for k, v in (prediction.get("confidence_interval") or {}).items()
-                    },
-                    feature_importance=[(str(k), float(v)) for k, v in (prediction.get("feature_importance") or [])],
-                    comparisons={
-                        k: {kk: float(vv) for kk, vv in val.items()} for k, val in (prediction.get("comparisons") or {}).items()
-                    },
-                )
-                features["prediction_model"] = props.source
-                features["model_metadata"] = prediction.get("metadata", {})
-                features["uncertainty"] = props.uncertainty or {}
-                features["confidence_interval"] = props.confidence_interval or {}
-                features["feature_importance"] = props.feature_importance or []
-                features["model_variants"] = props.comparisons or {}
+                # prediction se inicializa vacío; mantener la rama por claridad estructural.
+                pass
             else:
-            try:
-                prediction = MODEL_REGISTRY.predict(features)
-            except Exception as exc:  # pragma: no cover - defensive logging
-                logging.getLogger(__name__).exception("MODEL_REGISTRY.predict failed")
-                prediction = {}
-                prediction_error = f"Error al invocar el modelo ML: {exc}"
-            else:
-                if prediction:
-                    props = PredProps(
-                        rigidity=float(prediction.get("rigidez", props.rigidity)),
-                        tightness=float(prediction.get("estanqueidad", props.tightness)),
-                        mass_final_kg=heuristic.mass_final_kg,
-                        energy_kwh=float(prediction.get("energy_kwh", props.energy_kwh)),
-                        water_l=float(prediction.get("water_l", props.water_l)),
-                        crew_min=float(prediction.get("crew_min", props.crew_min)),
-                        source=str(prediction.get("source", "ml")),
-                        uncertainty={k: float(v) for k, v in (prediction.get("uncertainty") or {}).items()},
-                        confidence_interval={
-                            k: (float(v[0]), float(v[1]))
-                            for k, v in (prediction.get("confidence_interval") or {}).items()
-                        },
-                        feature_importance=[(str(k), float(v)) for k, v in (prediction.get("feature_importance") or [])],
-                        comparisons={
-                            k: {kk: float(vv) for kk, vv in val.items()}
-                            for k, val in (prediction.get("comparisons") or {}).items()
-                        },
-                    )
-                    features["prediction_model"] = props.source
-                    features["model_metadata"] = prediction.get("metadata", {})
-                    features["uncertainty"] = props.uncertainty or {}
-                    features["confidence_interval"] = props.confidence_interval or {}
-                    features["feature_importance"] = props.feature_importance or []
-                    features["model_variants"] = props.comparisons or {}
-                else:
+                try:
+                    prediction = MODEL_REGISTRY.predict(features_for_inference)
+                except Exception as exc:  # pragma: no cover - defensive logging
+                    logging.getLogger(__name__).exception("MODEL_REGISTRY.predict failed")
                     prediction = {}
-                    prediction_error = "El modelo ML no devolvió resultados."
-                    logging.getLogger(__name__).error("MODEL_REGISTRY.predict returned no data")
+                    prediction_error = f"Error al invocar el modelo ML: {exc}"
+                    _append_inference_log(
+                        features_for_inference,
+                        {"error": str(exc)},
+                        {},
+                        MODEL_REGISTRY,
+                    )
+                else:
+                    logged_prediction = prediction or {"error": "MODEL_REGISTRY returned no data"}
+                    _append_inference_log(
+                        features_for_inference,
+                        logged_prediction,
+                        ((prediction or {}).get("uncertainty") if isinstance(prediction, dict) else {}),
+                        MODEL_REGISTRY,
+                    )
+                    if prediction:
+                        props = PredProps(
+                            rigidity=float(prediction.get("rigidez", props.rigidity)),
+                            tightness=float(prediction.get("estanqueidad", props.tightness)),
+                            mass_final_kg=heuristic.mass_final_kg,
+                            energy_kwh=float(prediction.get("energy_kwh", props.energy_kwh)),
+                            water_l=float(prediction.get("water_l", props.water_l)),
+                            crew_min=float(prediction.get("crew_min", props.crew_min)),
+                            source=str(prediction.get("source", "ml")),
+                            uncertainty={k: float(v) for k, v in (prediction.get("uncertainty") or {}).items()},
+                            confidence_interval={
+                                k: (float(v[0]), float(v[1]))
+                                for k, v in (prediction.get("confidence_interval") or {}).items()
+                            },
+                            feature_importance=[
+                                (str(k), float(v)) for k, v in (prediction.get("feature_importance") or [])
+                            ],
+                            comparisons={
+                                k: {kk: float(vv) for kk, vv in val.items()}
+                                for k, val in (prediction.get("comparisons") or {}).items()
+                            },
+                        )
+                        features["prediction_model"] = props.source
+                        features["model_metadata"] = prediction.get("metadata", {})
+                        features["uncertainty"] = props.uncertainty or {}
+                        features["confidence_interval"] = props.confidence_interval or {}
+                        features["feature_importance"] = props.feature_importance or []
+                        features["model_variants"] = props.comparisons or {}
+                    else:
+                        prediction = {}
+                        prediction_error = "El modelo ML no devolvió resultados."
+                        logging.getLogger(__name__).error("MODEL_REGISTRY.predict returned no data")
 
     latent: Tuple[float, ...] | list[float] = []
     if MODEL_REGISTRY is not None and getattr(MODEL_REGISTRY, "ready", False):
