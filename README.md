@@ -110,28 +110,39 @@ que podés reemplazar en cualquier momento por artefactos reales empaquetados co
 Los modelos entrenados se empaquetan automáticamente con:
 
 ```bash
-python -m scripts.package_model_bundle --output dist/rexai_model_bundle_hybrid_v1.zip
+python -m scripts.package_model_bundle --output dist/rexai_model_bundle_gold_v1.zip
 ```
 
 El script genera un ZIP reproducible con todos los binarios
 (`data/models/rexai_regressor.joblib`, clasificadores y ensambles opcionales) y
 ambas versiones de metadata (`metadata.json` y `metadata_gold.json`). Ese
 bundle debe subirse como Release Asset (o artifact de CI) bajo el nombre
-`rexai_model_bundle_hybrid_v1.zip`.
+`rexai_model_bundle_gold_v1.zip`.
 
 Para reutilizarlo en otro entorno:
 
 ```bash
-wget https://github.com/<org>/<repo>/releases/latest/download/rexai_model_bundle_hybrid_v1.zip
-unzip rexai_model_bundle_hybrid_v1.zip -d /tmp/rexai-models
+wget https://github.com/<org>/<repo>/releases/latest/download/rexai_model_bundle_gold_v1.zip
+unzip rexai_model_bundle_gold_v1.zip -d /tmp/rexai-models
 rsync -av /tmp/rexai-models/data/models/ data/models/
 ```
 
 Reemplazá `<org>/<repo>` por la organización y el nombre reales del repositorio.
 
-Colocar los archivos dentro de `data/models/` antes de ejecutar
+Colocar los archivos dentro de `data/models/` **antes** de ejecutar
 `streamlit run app/Home.py` garantiza que la app arranque directamente en modo
-IA (`ready=True`) sin depender del bootstrap sintético.
+IA (`ready=True`) sin depender del bootstrap sintético. El comando anterior deja
+los archivos `.joblib` y `metadata.json` en el lugar correcto; si ya tenés el
+ZIP generado localmente podés simplemente descomprimirlo dentro del repositorio:
+
+```bash
+unzip dist/rexai_model_bundle_gold_v1.zip -d .
+```
+
+Esto recreará la estructura `data/models/` con los artefactos actualizados.
+Antes de lanzar Streamlit ejecutá `python -m scripts.verify_model_ready` para
+confirmar que `ModelRegistry.ready` devuelve `True` y que la app usará el
+ensemble entrenado desde el inicio.
 
 ### Mantener el bundle actualizado
 
