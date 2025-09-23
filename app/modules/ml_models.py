@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping, Dict, List, Tuple
 
@@ -131,7 +132,26 @@ class ModelRegistry:
         return self.pipeline is not None
 
     def trained_label(self) -> str:
-        return str(self.metadata.get("trained_at", "—"))
+        trained_on = self.metadata.get("trained_on")
+        trained_at = self.metadata.get("trained_at")
+
+        label_parts: List[str] = []
+
+        if trained_on:
+            label_parts.append(str(trained_on))
+
+        if trained_at:
+            ts_label = str(trained_at)
+            if isinstance(trained_at, str):
+                try:
+                    dt = datetime.fromisoformat(trained_at)
+                except ValueError:
+                    pass
+                else:
+                    ts_label = dt.strftime("%d %b %Y %H:%M UTC")
+            label_parts.append(ts_label)
+
+        return " · ".join(label_parts) if label_parts else "—"
 
     def uncertainty_label(self) -> str:
         # Texto para Home; si hay residual_std lo indicamos
