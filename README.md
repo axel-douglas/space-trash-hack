@@ -27,9 +27,10 @@ Demo ligera que muestra la lógica del "cerebro de reciclaje" para Marte:
    sintético ligero y lo guarda en `data/models/`. Esto evita tener que versionar binarios para
    ejecutar la demo por primera vez. Mientras el bootstrap corre (o si fallara), la app recurre a
    las reglas `heuristic_props` para estimar rigidez, estanqueidad, energía, agua y minutos de crew.
-   En cuanto el modelo y sus metadatos están presentes, `ModelRegistry.ready` habilita el modo IA y
-   las predicciones pasan a provenir del ensemble entrenado (RandomForest + ensambles opcionales)
-   con intervalos de confianza y explicabilidad.
+   En cuanto el modelo y sus metadatos (`metadata.json`, clasificadores y `trained_on = "gold_v1"`)
+   están presentes en `data/models/`, `ModelRegistry.ready` arranca en `True` y las predicciones
+   pasan a provenir del ensemble entrenado (RandomForest + ensambles opcionales) con intervalos de
+   confianza y explicabilidad verificables vía `python -m scripts.verify_model_ready`.
 
 ## Entrenar y generar artefactos de IA
 
@@ -103,7 +104,8 @@ TabTransformer), expone bandas de confianza 95%, importancias promedio y el
 vector latente entrenado sobre mezclas MGS-1 + residuos NASA. El bootstrap
 automático genera un modelo sintético con la etiqueta `trained_on = "synthetic_v0_bootstrap"`,
 que podés reemplazar en cualquier momento por artefactos reales empaquetados con
-`python -m scripts.package_model_bundle --output dist/rexai_model_bundle_hybrid_v1.zip`.
+`python -m scripts.package_model_bundle --output dist/rexai_model_bundle_gold_v1.zip` para
+distribuir un bundle reproducible en el que `ModelRegistry.ready` queda en `True` desde el arranque.
 
 ## Distribución de artefactos ML
 
@@ -190,14 +192,48 @@ genera tablas comparativas en `data/benchmarks/`. Además de los archivos
 `scenario_predictions.csv`/`scenario_metrics.csv`, la flag `--with-ablation`
 añade `ablation_predictions.csv` y `ablation_metrics.csv`, que documentan el
 impacto de desactivar grupos de features (composición MGS-1, banderas NASA e
-índices logísticos) durante la inferencia. Consulta [BENCHMARK.md](BENCHMARK.md)
-para el resumen, la metodología y cómo interpretar los tres escenarios y los
-resultados de ablation. La corrida más reciente muestra que el ensemble aún se
-desvía de las reglas: MAE global 200 522, RMSE 441 237 y bandas CI95 promedio de
-315 825 puntos frente a las heurísticas.【F:data/benchmarks/scenario_metrics.csv†L17-L25】
+índices logísticos) durante la inferencia.
+
+Los errores se calculan tratando las heurísticas como baseline. El resumen por
+escenario (promediado sobre las cinco métricas) incorpora también el ancho
+medio de los intervalos de confianza al 95% (`ci95_width_mean`):
+
+| Escenario | MAE medio | RMSE | CI95 (ancho medio) |
+|-----------|----------:|-----:|-------------------:|
+| CTB Reconfig | 16 016 | 33 654 | 33 210 |
+| Espuma + MGS-1 + Sinter | 16 090 | 34 298 | 31 687 |
+| Multicapa + Laminar | 16 281 | 34 214 | 32 596 |
+| Global (los 3 escenarios) | 16 129 | 34 056 | 32 498 |
+
+Los valores anteriores provienen de `data/benchmarks/scenario_metrics.csv` y se
+actualizan automáticamente al rerunear el script.【F:data/benchmarks/scenario_metrics.csv†L18-L25】
+
+### Observaciones
+
+* **Gap frente a las heurísticas**: el ensemble entrenado sobre `gold_v1` reduce
+  el error medio global a 16 129 (RMSE 34 056), casi dos órdenes de magnitud por
+  debajo del bootstrap sintético previo y alineado con las escalas de cada
+  target.【F:data/benchmarks/scenario_metrics.csv†L18-L25】
+* **Consumo de crew**: sigue siendo el más sensible; el MAE por escenario ronda
+  4 177 minutos, lo que equivale a una guardia extendida pero ya no a desvíos del
+  orden de cientos de miles.【F:data/benchmarks/scenario_metrics.csv†L18-L22】
+* **Energía y agua**: los errores promedio se estabilizan en ~76 032 kWh y
+  435 litros agregados, consistentes con la variabilidad del dataset dorado.
+  Las bandas de confianza capturan estos márgenes (≈146 058 kWh y 937 L).【F:data/benchmarks/scenario_metrics.csv†L21-L24】
+* **Rigidez/estanqueidad**: las discrepancias siguen acotadas (≤0.54), lo que
+  facilita auditar calibraciones mecánicas sin perder precisión perceptiva.【F:data/benchmarks/scenario_predictions.csv†L2-L23】
+* **CI95**: las bandas medias caen a ~32 498 unidades globales, con escenarios
+  entre 31 687 y 33 210 gracias al reentrenamiento con el corpus dorado.【F:data/benchmarks/scenario_metrics.csv†L18-L25】
+
+Consulta [BENCHMARK.md](BENCHMARK.md) para el resumen detallado, la metodología
+y cómo interpretar los tres escenarios y los resultados de ablation. Con los
+artefactos `gold_v1` cargados, el ensemble alcanza un MAE global de 16 129, RMSE
+34 056 y bandas CI95 promedio de 32 498, demostrando una mejora drástica frente
+al bootstrap heurístico original.【F:data/benchmarks/scenario_metrics.csv†L18-L25】
 Los barridos con `--with-ablation` confirman ajustes pendientes: quitar las
-banderas NASA o los índices logísticos reduce levemente el MAE, pero a costa de
-ensanchar las bandas de confianza.【F:data/benchmarks/ablation_metrics.csv†L71-L73】
+banderas NASA o los índices logísticos apenas modifica el MAE y puede ensanchar
+las bandas de confianza, por lo que conviene priorizar calibraciones finas en
+lugar de apagar features completos.【F:data/benchmarks/ablation_metrics.csv†L71-L73】
 
 Después de incorporar feedback humano, ejecuta el benchmark nuevamente apuntando
 a un directorio distinto (`--output-dir data/benchmarks/post_feedback`) y

@@ -59,31 +59,29 @@ medio de los intervalos de confianza al 95% (`ci95_width_mean`):
 
 | Escenario | MAE medio | RMSE | CI95 (ancho medio) |
 |-----------|----------:|-----:|-------------------:|
-| CTB Reconfig | 197 882 | 435 212 | 322 693 |
-| Espuma + MGS-1 + Sinter | 203 085 | 447 205 | 308 786 |
-| Multicapa + Laminar | 200 600 | 441 213 | 315 995 |
-| Global (los 3 escenarios) | 200 522 | 441 237 | 315 825 |
+| CTB Reconfig | 16 016 | 33 654 | 33 210 |
+| Espuma + MGS-1 + Sinter | 16 090 | 34 298 | 31 687 |
+| Multicapa + Laminar | 16 281 | 34 214 | 32 596 |
+| Global (los 3 escenarios) | 16 129 | 34 056 | 32 498 |
 
 Los valores anteriores provienen de `data/benchmarks/scenario_metrics.csv` y se
-actualizan automáticamente al rerunear el script.【F:data/benchmarks/scenario_metrics.csv†L17-L25】
+actualizan automáticamente al rerunear el script.【F:data/benchmarks/scenario_metrics.csv†L18-L25】
 
 ### Observaciones
 
-* **Gap frente a las heurísticas**: el ensemble entrenado mantiene una distancia
-  elevada respecto a las reglas determinísticas (MAE global 200 522 y RMSE
-  441 237), por lo que no se observa una mejora frente al baseline en esta
-  corrida.【F:data/benchmarks/scenario_metrics.csv†L17-L25】
-* **Consumo de crew**: continúa siendo la métrica más conflictiva; el modelo
-  entrega estimaciones del orden de 0.98–1.00 millones de minutos frente a
-  heurísticas de 33–51 min, generando errores absolutos cercanos al millón en
-  los tres escenarios.【F:data/benchmarks/scenario_predictions.csv†L6-L16】
-* **Energía y agua**: los desvíos rondan 16 000 kWh y 166–182 L según el
-  escenario, muy por encima de las reglas base.【F:data/benchmarks/scenario_predictions.csv†L4-L15】
-* **Rigidez/estanqueidad**: las discrepancias siguen acotadas (≤0.29), lo que
-  facilita auditar calibraciones mecánicas pese al desfasaje global.【F:data/benchmarks/scenario_predictions.csv†L2-L14】
-* **CI95**: las bandas medias se ensanchan hasta ~316 000 unidades a nivel
-  global, reflejando la gran dispersión asociada a las predicciones actuales de
-  energía, agua y crew.【F:data/benchmarks/scenario_metrics.csv†L17-L25】
+* **Gap frente a las heurísticas**: el ensemble entrenado sobre `gold_v1` reduce
+  el MAE global a 16 129 y el RMSE a 34 056, lo que sitúa las predicciones en el
+  mismo orden de magnitud que los valores de referencia.【F:data/benchmarks/scenario_metrics.csv†L18-L25】
+* **Consumo de crew**: continúa siendo el target más difícil; el MAE por
+  escenario oscila entre 3 501 y 4 548 minutos, equivalente a turnos extendidos
+  pero muy inferior a los desvíos masivos del bootstrap inicial.【F:data/benchmarks/scenario_metrics.csv†L18-L22】
+* **Energía y agua**: la energía presenta errores medios cercanos a 76 000 kWh y
+  el agua ronda 435 litros agregados, con bandas de confianza de 146 058 kWh y
+  937 litros respectivamente.【F:data/benchmarks/scenario_metrics.csv†L21-L24】
+* **Rigidez/estanqueidad**: los errores absolutos permanecen por debajo de 0.54,
+  manteniendo sensibilidad mecánica apta para decisiones de ensamblaje.【F:data/benchmarks/scenario_predictions.csv†L2-L23】
+* **CI95**: las bandas medias bajan a ~32 498 unidades globales gracias al
+  reentrenamiento, con escenarios comprendidos entre 31 687 y 33 210.【F:data/benchmarks/scenario_metrics.csv†L18-L25】
 
 ## Archivos generados
 
