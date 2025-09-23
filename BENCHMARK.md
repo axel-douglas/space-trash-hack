@@ -8,9 +8,16 @@ reproduce el experimento y guarda la evidencia en `data/benchmarks/`.
 ## Cómo ejecutar los benchmarks
 
 1. Asegurá que los artefactos entrenados (`data/models/rexai_regressor.joblib`,
-   clasificadores y metadata) están disponibles. Podés generarlos con
-   `python -m app.modules.model_training` o descargar el bundle publicado en
-   los releases.
+   clasificadores y metadata) están disponibles. Podés regenerarlos con:
+
+   ```bash
+   python -m app.modules.model_training --gold datasets/gold --append-logs "data/logs/feedback_*.parquet"
+   ```
+
+   Si preferís evitar el entrenamiento local, descargá el bundle
+   `rexai_model_bundle_hybrid_v1.zip` desde la sección **Releases** (o el
+   artifact equivalente de CI), descomprimilo y copiá su contenido en
+   `data/models/` antes de continuar.
 2. Ejecutá el script:
 
    ```bash
