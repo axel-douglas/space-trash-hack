@@ -74,12 +74,16 @@ RAW_DIR = DATASETS_ROOT / "raw"
 PROCESSED_DIR = DATASETS_ROOT / "processed"
 PROCESSED_ML = DATA_ROOT / "processed" / "ml"
 MODEL_DIR = DATA_ROOT / "models"
+GOLD_DIR = DATASETS_ROOT / "gold"
+GOLD_FEATURES_PATH = GOLD_DIR / "features.parquet"
+GOLD_TARGETS_PATH = GOLD_DIR / "targets.parquet"
 
 PIPELINE_PATH = MODEL_DIR / "rexai_regressor.joblib"
 AUTOENCODER_PATH = MODEL_DIR / "rexai_autoencoder.pt"
 XGBOOST_PATH = MODEL_DIR / "rexai_xgboost.joblib"
 TABTRANSFORMER_PATH = MODEL_DIR / "rexai_tabtransformer.pt"
-METADATA_PATH = MODEL_DIR / "metadata.json"
+METADATA_PATH = MODEL_DIR / "metadata_gold.json"
+LEGACY_METADATA_PATH = MODEL_DIR / "metadata.json"
 DATASET_PATH = PROCESSED_DIR / "rexai_training_dataset.parquet"
 DATASET_ML_PATH = PROCESSED_ML / "synthetic_runs.parquet"
 
@@ -125,6 +129,9 @@ LATENT_DIM = 12
 TABTRANSFORMER_TOKENS = 8
 TABTRANSFORMER_DIM = 64
 
+_GOLD_FEATURES_CACHE: DataFrame | None = None
+_GOLD_TARGETS_CACHE: DataFrame | None = None
+
 
 # ---------------------------------------------------------------------------
 # Utility classes & helpers
@@ -164,6 +171,75 @@ def _load_inventory() -> DataFrame:
 
 def _load_process_catalog() -> DataFrame:
     return _load_csv(DATA_ROOT / "process_catalog.csv")
+
+
+def _load_parquet(path: Path) -> DataFrame:
+    if not path.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_parquet(path)
+    except Exception as exc:  # pragma: no cover - propagated for visibility
+        raise RuntimeError(f"No se pudo leer parquet {path}: {exc}") from exc
+
+
+def _normalise_key_column(series: pd.Series) -> pd.Series:
+    return series.astype(str).str.upper().str.strip()
+
+
+def _load_gold_features() -> DataFrame:
+    global _GOLD_FEATURES_CACHE
+    if _GOLD_FEATURES_CACHE is not None:
+        return _GOLD_FEATURES_CACHE
+
+    table = _load_parquet(GOLD_FEATURES_PATH)
+    if table.empty:
+        _GOLD_FEATURES_CACHE = pd.DataFrame()
+        return _GOLD_FEATURES_CACHE
+
+    required = {"recipe_id", "process_id"}
+    missing = required - set(table.columns)
+    if missing:
+        raise ValueError(f"Faltan columnas {sorted(missing)} en {GOLD_FEATURES_PATH}")
+
+    table = table.copy()
+    table["recipe_id"] = _normalise_key_column(table["recipe_id"])
+    table["process_id"] = _normalise_key_column(table["process_id"])
+    _GOLD_FEATURES_CACHE = table
+    return table
+
+
+def _load_gold_targets() -> DataFrame:
+    global _GOLD_TARGETS_CACHE
+    if _GOLD_TARGETS_CACHE is not None:
+        return _GOLD_TARGETS_CACHE
+
+    table = _load_parquet(GOLD_TARGETS_PATH)
+    if table.empty:
+        _GOLD_TARGETS_CACHE = pd.DataFrame()
+        return _GOLD_TARGETS_CACHE
+
+    required = {"recipe_id", "process_id"}
+    missing = required - set(table.columns)
+    if missing:
+        raise ValueError(f"Faltan columnas {sorted(missing)} en {GOLD_TARGETS_PATH}")
+
+    table = table.copy()
+    table["recipe_id"] = _normalise_key_column(table["recipe_id"])
+    table["process_id"] = _normalise_key_column(table["process_id"])
+    table = table.drop_duplicates(subset=["recipe_id", "process_id"], keep="last")
+    table = table.set_index(["recipe_id", "process_id"], drop=False)
+    _GOLD_TARGETS_CACHE = table
+    return table
+
+
+def _derive_recipe_id(picks: DataFrame, process: pd.Series) -> str:
+    source_ids = picks.get("_source_id")
+    if source_ids is None:
+        source_ids = picks.index.astype(str)
+    tokens = "|".join(sorted(map(str, source_ids)))
+    proc = str(process.get("process_id", "")).upper().strip()
+    raw = f"{proc}|{tokens}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12].upper()
 
 
 def _sample_weights(n: int, rng: random.Random) -> np.ndarray:
@@ -270,16 +346,55 @@ def _compute_targets(
 ) -> Dict[str, Any]:
     regolith_pct = float(features.get("regolith_pct", 0.0))
     resources = _compute_resource_targets(features, picks, process, regolith_pct)
-    tight_label = _label_tightness(features, process)
-    rigidity_label = _label_rigidity(features)
+    recipe_id = str(features.get("recipe_id", "")).upper().strip()
+    process_id = str(features.get("process_id", process.get("process_id", ""))).upper().strip()
 
-    payload: Dict[str, Any] = {
-        "rigidez": float(RIGIDITY_SCORE_MAP[rigidity_label]),
-        "estanqueidad": float(TIGHTNESS_SCORE_MAP[tight_label]),
-        "tightness_pass": int(tight_label),
-        "rigidity_level": int(rigidity_label),
-    }
-    payload.update(resources)
+    payload: Dict[str, Any] = {}
+
+    gold_targets = _load_gold_targets()
+    if recipe_id and process_id and not gold_targets.empty:
+        key = (recipe_id, process_id)
+        if key in gold_targets.index:
+            row = gold_targets.loc[key]
+            if isinstance(row, pd.DataFrame):  # pragma: no cover - multi matches
+                row = row.iloc[-1]
+            for target in TARGET_COLUMNS:
+                value = row.get(target)
+                if pd.notna(value):
+                    payload[target] = float(value)
+            label_source = row.get("label_source", "measured")
+            label_weight = row.get("label_weight", 1.0)
+            payload["label_source"] = str(label_source) if pd.notna(label_source) else "measured"
+            try:
+                payload["label_weight"] = float(label_weight)
+            except (TypeError, ValueError):
+                payload["label_weight"] = 1.0
+            if "tightness_pass" in row and pd.notna(row["tightness_pass"]):
+                payload["tightness_pass"] = int(row["tightness_pass"])
+            if "rigidity_level" in row and pd.notna(row["rigidity_level"]):
+                payload["rigidity_level"] = int(row["rigidity_level"])
+
+    for name, value in resources.items():
+        payload.setdefault(name, value)
+
+    if "tightness_pass" not in payload:
+        tight_label = _label_tightness(features, process)
+        payload["tightness_pass"] = int(tight_label)
+    else:
+        tight_label = int(payload["tightness_pass"])
+    if "estanqueidad" not in payload:
+        payload["estanqueidad"] = float(TIGHTNESS_SCORE_MAP.get(tight_label, tight_label))
+
+    if "rigidity_level" not in payload:
+        rigidity_label = _label_rigidity(features)
+        payload["rigidity_level"] = int(rigidity_label)
+    else:
+        rigidity_label = int(payload["rigidity_level"])
+    if "rigidez" not in payload:
+        payload["rigidez"] = float(RIGIDITY_SCORE_MAP.get(rigidity_label, rigidity_label))
+
+    payload.setdefault("label_source", "simulated")
+    payload.setdefault("label_weight", 0.7)
     return payload
 
 
@@ -304,6 +419,7 @@ def _generate_samples(n_samples: int, seed: int | None) -> List[SampledCombinati
             regolith_pct = rng.uniform(0.15, 0.35)
 
         features = compute_feature_vector(picks, weights, process, regolith_pct)
+        features.setdefault("recipe_id", _derive_recipe_id(picks, process))
         targets = _compute_targets(picks, process, features)
         samples.append(SampledCombination(features=features, targets=targets))
 
@@ -311,6 +427,82 @@ def _generate_samples(n_samples: int, seed: int | None) -> List[SampledCombinati
 
 
 def build_training_dataframe(n_samples: int = 1600, seed: int | None = 21) -> DataFrame:
+    gold_features = _load_gold_features()
+    gold_targets = _load_gold_targets()
+
+    if not gold_features.empty and not gold_targets.empty:
+        try:
+            targets_flat = gold_targets.reset_index(drop=True)
+            overlap = {
+                column
+                for column in targets_flat.columns
+                if column in gold_features.columns and column not in {"recipe_id", "process_id"}
+            }
+            if overlap:
+                targets_flat = targets_flat.drop(columns=list(overlap))
+
+            df_gold = gold_features.merge(
+                targets_flat,
+                on=["recipe_id", "process_id"],
+                how="inner",
+            )
+
+            if not df_gold.empty:
+                df_gold = df_gold.copy()
+                if "label_source" not in df_gold.columns:
+                    df_gold["label_source"] = "measured"
+                if "label_weight" not in df_gold.columns:
+                    df_gold["label_weight"] = 1.0
+
+                df_gold["label_weight"] = pd.to_numeric(df_gold["label_weight"], errors="coerce").fillna(1.0)
+                df_gold["label_source"] = (
+                    df_gold["label_source"].fillna("measured").astype(str)
+                )
+
+                missing_targets = [col for col in TARGET_COLUMNS if col not in df_gold.columns]
+                if missing_targets:
+                    raise ValueError(
+                        "El dataset gold no contiene todas las columnas objetivo requeridas: "
+                        + ", ".join(missing_targets)
+                    )
+
+                processes = _load_process_catalog()
+                processes["process_id_norm"] = processes["process_id"].astype(str).str.upper().str.strip()
+                process_map = processes.set_index("process_id_norm")
+
+                def _process_lookup(pid: Any) -> pd.Series:
+                    key = str(pid).upper().strip()
+                    if key in process_map.index:
+                        return process_map.loc[key]
+                    return pd.Series({"process_id": key})
+
+                if "tightness_pass" not in df_gold.columns:
+                    df_gold["tightness_pass"] = df_gold.apply(
+                        lambda row: _label_tightness(
+                            row.to_dict(),
+                            _process_lookup(row["process_id"]),
+                        ),
+                        axis=1,
+                    )
+
+                if "rigidity_level" not in df_gold.columns:
+                    df_gold["rigidity_level"] = df_gold.apply(
+                        lambda row: _label_rigidity(row.to_dict()),
+                        axis=1,
+                    )
+
+                if "recipe_id" not in df_gold.columns:
+                    raise ValueError("El dataset gold debe incluir columna recipe_id")
+
+                df_gold["recipe_id"] = df_gold["recipe_id"].astype(str).str.upper().str.strip()
+                df_gold["process_id"] = df_gold["process_id"].astype(str).str.upper().str.strip()
+                df_gold["tightness_pass"] = df_gold["tightness_pass"].astype(int)
+                df_gold["rigidity_level"] = df_gold["rigidity_level"].astype(int)
+                return df_gold
+        except Exception:
+            # Si el dataset curated falla, retomamos el pipeline sintético tradicional
+            pass
+
     samples = _generate_samples(n_samples, seed)
     df = pd.DataFrame([sample.as_row() for sample in samples])
     return df
@@ -330,11 +522,30 @@ def _build_preprocessor() -> ColumnTransformer:
 
 def _train_random_forest(
     df: DataFrame, seed: int | None
-) -> tuple[Pipeline, Dict[str, Any], np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[
+    Pipeline,
+    Dict[str, Any],
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    Dict[str, Dict[str, Any]],
+]:
     X = df[FEATURE_COLUMNS]
     y = df[TARGET_COLUMNS]
+    meta = df[["label_source", "label_weight"]].copy()
+    meta["label_source"] = meta["label_source"].astype(str)
+    meta["label_weight"] = pd.to_numeric(meta["label_weight"], errors="coerce").fillna(1.0)
 
-    X_train, X_valid, y_train, y_valid = train_test_split(X, y, test_size=0.2, random_state=seed or 0)
+    X_train, X_valid, y_train, y_valid, meta_train, meta_valid = train_test_split(
+        X,
+        y,
+        meta,
+        test_size=0.2,
+        random_state=seed or 0,
+    )
+
+    train_weights = meta_train["label_weight"].to_numpy(dtype=float)
 
     preprocessor = _build_preprocessor()
     regressor = MultiOutputRegressor(
@@ -349,17 +560,38 @@ def _train_random_forest(
     )
 
     pipeline = Pipeline(steps=[("preprocess", preprocessor), ("regressor", regressor)])
-    pipeline.fit(X_train, y_train)
+    fit_params: Dict[str, Any] = {}
+    if train_weights.size:
+        fit_params["regressor__sample_weight"] = train_weights
+    pipeline.fit(X_train, y_train, **fit_params)
 
     preds = pipeline.predict(X_valid)
     residuals = y_valid.to_numpy(dtype=float) - preds
-    residual_std = residuals.std(axis=0)
+    valid_weights = meta_valid["label_weight"].to_numpy(dtype=float)
+    if valid_weights.size and np.isfinite(valid_weights).any() and float(valid_weights.sum()) > 0:
+        weights = np.clip(valid_weights, 1e-6, None)
+        residual_std = np.sqrt(np.average(residuals**2, weights=weights[:, None], axis=0))
+    else:
+        weights = None
+        residual_std = residuals.std(axis=0)
 
     metrics = {
         target: {
-            "mae": float(mean_absolute_error(y_valid[target], preds[:, idx])),
-            "rmse": float(math.sqrt(mean_squared_error(y_valid[target], preds[:, idx]))),
-            "r2": float(r2_score(y_valid[target], preds[:, idx])),
+            "mae": float(
+                mean_absolute_error(y_valid[target], preds[:, idx], sample_weight=weights)
+                if weights is not None
+                else mean_absolute_error(y_valid[target], preds[:, idx])
+            ),
+            "rmse": float(
+                math.sqrt(mean_squared_error(y_valid[target], preds[:, idx], sample_weight=weights))
+                if weights is not None
+                else math.sqrt(mean_squared_error(y_valid[target], preds[:, idx]))
+            ),
+            "r2": float(
+                r2_score(y_valid[target], preds[:, idx], sample_weight=weights)
+                if weights is not None
+                else r2_score(y_valid[target], preds[:, idx])
+            ),
         }
         for idx, target in enumerate(TARGET_COLUMNS)
     }
@@ -368,6 +600,22 @@ def _train_random_forest(
         "rmse": float(np.mean([m["rmse"] for m in metrics.values()])),
         "r2": float(np.mean([m["r2"] for m in metrics.values()])),
     }
+
+    residuals_df = pd.DataFrame(residuals, columns=TARGET_COLUMNS)
+    residuals_df["label_source"] = meta_valid["label_source"].to_numpy()
+    residuals_df["label_weight"] = valid_weights
+    residual_by_source: Dict[str, Dict[str, Any]] = {}
+    for source, group in residuals_df.groupby("label_source"):
+        group_weights = pd.to_numeric(group["label_weight"], errors="coerce").fillna(1.0).to_numpy(dtype=float)
+        if group_weights.size and float(group_weights.sum()) > 0:
+            w = np.clip(group_weights, 1e-6, None)
+            rmse = np.sqrt(np.average(group[TARGET_COLUMNS].to_numpy(dtype=float) ** 2, weights=w[:, None], axis=0))
+        else:
+            rmse = group[TARGET_COLUMNS].to_numpy(dtype=float).std(axis=0)
+        residual_by_source[str(source)] = {
+            "count": int(len(group)),
+            "rmse": {target: float(rmse[idx]) for idx, target in enumerate(TARGET_COLUMNS)},
+        }
 
     matrix = pipeline.named_steps["preprocess"].transform(X_train)
     if hasattr(matrix, "toarray"):
@@ -408,7 +656,15 @@ def _train_random_forest(
         "n_estimators": rf.estimators_[0].n_estimators,
     }
 
-    return pipeline, rf_payload, feature_means, feature_stds, residual_std, feature_names
+    return (
+        pipeline,
+        rf_payload,
+        feature_means,
+        feature_stds,
+        residual_std,
+        feature_names,
+        residual_by_source,
+    )
 
 
 def _train_classifiers(
@@ -700,7 +956,15 @@ def train_and_save(n_samples: int = 1600, seed: int | None = 21) -> Dict[str, An
     df.to_parquet(DATASET_PATH, index=False)
     df.to_parquet(DATASET_ML_PATH, index=False)
 
-    pipeline, rf_payload, feature_means, feature_stds, residual_std, feature_names = _train_random_forest(df, seed)
+    (
+        pipeline,
+        rf_payload,
+        feature_means,
+        feature_stds,
+        residual_std,
+        feature_names,
+        residual_by_source,
+    ) = _train_random_forest(df, seed)
     joblib.dump(pipeline, PIPELINE_PATH)
 
     preprocessor = pipeline.named_steps["preprocess"]
@@ -714,6 +978,21 @@ def train_and_save(n_samples: int = 1600, seed: int | None = 21) -> Dict[str, An
     extras["autoencoder"] = _train_autoencoder(matrix)
     extras["tabtransformer"] = _train_tabtransformer(matrix, df[TARGET_COLUMNS].to_numpy(dtype=float))
     extras["classifiers"] = _train_classifiers(pipeline, df, seed)
+
+    label_summary = (
+        df.groupby("label_source")["label_weight"]
+        .agg(["count", "mean", "min", "max"])
+        .rename(columns={"count": "n", "mean": "mean", "min": "min", "max": "max"})
+    )
+    label_summary_dict = {
+        str(source): {
+            "count": int(values["n"]),
+            "mean_weight": float(values["mean"]),
+            "min_weight": float(values["min"]),
+            "max_weight": float(values["max"]),
+        }
+        for source, values in label_summary.iterrows()
+    }
 
     metadata = {
         "model_name": "rexai-rf-ensemble",
@@ -730,6 +1009,7 @@ def train_and_save(n_samples: int = 1600, seed: int | None = 21) -> Dict[str, An
         "feature_means": {name: float(val) for name, val in zip(feature_names, feature_means)},
         "feature_stds": {name: float(val) for name, val in zip(feature_names, feature_stds)},
         "residual_std": {target: float(val) for target, val in zip(TARGET_COLUMNS, residual_std)},
+        "residuals_by_label_source": residual_by_source,
         "random_forest": rf_payload,
         "artifacts": {
             "pipeline": PIPELINE_PATH.name,
@@ -738,9 +1018,18 @@ def train_and_save(n_samples: int = 1600, seed: int | None = 21) -> Dict[str, An
             "tabtransformer": extras["tabtransformer"],
         },
         "classifiers": extras["classifiers"],
+        "labeling": {
+            "columns": {"source": "label_source", "weight": "label_weight"},
+            "summary": label_summary_dict,
+        },
     }
 
-    METADATA_PATH.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
+    payload = json.dumps(metadata, indent=2, sort_keys=True)
+    METADATA_PATH.write_text(payload, encoding="utf-8")
+    try:
+        LEGACY_METADATA_PATH.write_text(payload, encoding="utf-8")
+    except Exception:  # pragma: no cover - legacy path optional
+        pass
     return metadata
 
 
