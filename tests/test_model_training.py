@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -199,6 +201,10 @@ def test_build_training_dataframe_falls_back_when_labels_missing(
         (["mission"], "gold_v1"),
         (["measured", "mission"], "gold_v1"),
         (["simulated", "mission"], "hybrid_v1"),
+        (["feedback"], "hil_v1"),
+        (["feedback", "mission"], "hil_v1"),
+        (["feedback", "simulated"], "hybrid_v2"),
+        (["feedback", "simulated", "mission"], "hybrid_v2"),
     ],
 )
 def test_infer_trained_on_label(label_sources: list[str], expected: str) -> None:
@@ -221,11 +227,17 @@ def test_cli_respects_custom_gold_paths(monkeypatch: pytest.MonkeyPatch, tmp_pat
     _write_parquet(pd.DataFrame([{column: 0.0 for column in model_training.TARGET_COLUMNS}]), labels_path)
 
     captured: dict[str, object] = {}
+    expected_logs = pd.DataFrame({"dummy": [1]})
+
+    def _fake_load_feedback_logs(patterns: object) -> pd.DataFrame:
+        captured["append_patterns"] = patterns
+        return expected_logs
 
     def _fake_train_and_save(**kwargs: object) -> dict[str, str]:
         captured.update(kwargs)
         return {"status": "ok"}
 
+    monkeypatch.setattr(model_training, "load_feedback_logs", _fake_load_feedback_logs)
     monkeypatch.setattr(model_training, "train_and_save", _fake_train_and_save)
 
     result = model_training.cli(
@@ -238,6 +250,8 @@ def test_cli_respects_custom_gold_paths(monkeypatch: pytest.MonkeyPatch, tmp_pat
             "3",
             "--seed",
             "17",
+            "--append-logs",
+            "logs/*.parquet",
         ]
     )
 
@@ -246,6 +260,10 @@ def test_cli_respects_custom_gold_paths(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert captured["seed"] == 17
     assert captured["gold_features_path"] == features_path
     assert captured["gold_labels_path"] == labels_path
+    assert captured["append_patterns"] == ["logs/*.parquet"]
+    assert captured["feedback_logs"] is expected_logs
+
+
 def test_lookup_labels_returns_measured_metadata(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     picks, process, weights = _sample_inputs()
     recipe_id = label_mapper.derive_recipe_id(picks, process)
@@ -318,3 +336,100 @@ def test_compute_targets_relabels_weak_sources(monkeypatch: pytest.MonkeyPatch) 
 
     assert result["label_source"] == "simulated"
     assert result.get("provenance") == "weak"
+
+
+def test_cli_appends_feedback_logs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    start_time = datetime.now(model_training.UTC)
+
+    feedback_path = tmp_path / "feedback" / "human_feedback.parquet"
+    feedback_row = {column: 1.0 for column in model_training.FEATURE_COLUMNS}
+    feedback_row["process_id"] = "PFBK"
+    feedback_row.update(
+        {
+            "rigidity_ok": False,
+            "tightness_ok": True,
+            "energy_kwh": 10.0,
+            "energy_penalty": 2.5,
+            "water_l": 5.0,
+            "water_penalty": 1.25,
+            "crew_min": 3.0,
+            "crew_penalty": 0.75,
+            "label_weight": 1.8,
+        }
+    )
+    _write_parquet(pd.DataFrame([feedback_row]), feedback_path)
+
+    models_dir = tmp_path / "models"
+    processed_dir = tmp_path / "processed"
+    processed_ml_dir = tmp_path / "processed_ml"
+    monkeypatch.setattr(model_training, "MODEL_DIR", models_dir)
+    monkeypatch.setattr(model_training, "PROCESSED_DIR", processed_dir)
+    monkeypatch.setattr(model_training, "PROCESSED_ML", processed_ml_dir)
+    monkeypatch.setattr(
+        model_training,
+        "DATASET_PATH",
+        processed_dir / "rexai_training_dataset.parquet",
+    )
+    monkeypatch.setattr(
+        model_training,
+        "DATASET_ML_PATH",
+        processed_ml_dir / "synthetic_runs.parquet",
+    )
+    monkeypatch.setattr(
+        model_training, "PIPELINE_PATH", models_dir / "rexai_regressor.joblib"
+    )
+    monkeypatch.setattr(
+        model_training, "AUTOENCODER_PATH", models_dir / "rexai_autoencoder.pt"
+    )
+    monkeypatch.setattr(
+        model_training, "XGBOOST_PATH", models_dir / "rexai_xgboost.joblib"
+    )
+    monkeypatch.setattr(
+        model_training, "TABTRANSFORMER_PATH", models_dir / "rexai_tabtransformer.pt"
+    )
+    monkeypatch.setattr(
+        model_training, "TIGHTNESS_MODEL_PATH", models_dir / "rexai_class_tightness.joblib"
+    )
+    monkeypatch.setattr(
+        model_training, "RIGIDITY_MODEL_PATH", models_dir / "rexai_class_rigidity.joblib"
+    )
+    monkeypatch.setattr(
+        model_training, "METADATA_PATH", models_dir / "metadata_gold.json"
+    )
+    monkeypatch.setattr(
+        model_training, "LEGACY_METADATA_PATH", models_dir / "metadata.json"
+    )
+    monkeypatch.setattr(model_training, "_train_classifiers", lambda *_, **__: {})
+
+    result = model_training.cli(
+        [
+            "--samples",
+            "8",
+            "--seed",
+            "3",
+            "--append-logs",
+            str(feedback_path),
+        ]
+    )
+
+    dataset = pd.read_parquet(model_training.DATASET_PATH)
+    appended = dataset[dataset["process_id"] == "PFBK"]
+    assert len(appended) == 1
+    appended_row = appended.iloc[0]
+    assert appended_row["rigidez"] == pytest.approx(model_training.RIGIDITY_SCORE_MAP[1])
+    assert appended_row["rigidity_level"] == pytest.approx(1)
+    assert appended_row["estanqueidad"] == pytest.approx(
+        model_training.TIGHTNESS_SCORE_MAP[1]
+    )
+    assert appended_row["tightness_pass"] == pytest.approx(1)
+    assert appended_row["energy_kwh"] == pytest.approx(12.5)
+    assert appended_row["water_l"] == pytest.approx(6.25)
+    assert appended_row["crew_min"] == pytest.approx(3.75)
+    assert appended_row["label_source"] == "feedback"
+    assert str(appended_row.get("provenance", "")).startswith("feedback:")
+
+    metadata = json.loads(model_training.METADATA_PATH.read_text(encoding="utf-8"))
+    trained_at = datetime.fromisoformat(metadata["trained_at"])
+    assert trained_at >= start_time
+    assert metadata["trained_on"] == "hybrid_v2"
+    assert result["trained_on"] == "hybrid_v2"

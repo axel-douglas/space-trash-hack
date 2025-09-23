@@ -13,6 +13,7 @@ intact while providing a clean, reproducible training entry-point.
 from __future__ import annotations
 
 import argparse
+import glob
 import hashlib
 import json
 import math
@@ -20,7 +21,7 @@ import random
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, Iterable, List, Sequence
 
 import joblib
 import numpy as np
@@ -159,8 +160,14 @@ def _infer_trained_on_label(df: DataFrame) -> str:
 
     if not normalized_sources or normalized_sources == {"simulated"}:
         return "synthetic_v0"
+    if normalized_sources == {"feedback"}:
+        return "hil_v1"
+    if "feedback" in normalized_sources and "simulated" in normalized_sources:
+        return "hybrid_v2"
     if "simulated" in normalized_sources:
         return "hybrid_v1"
+    if "feedback" in normalized_sources:
+        return "hil_v1"
     return "gold_v1"
 
 
@@ -195,6 +202,163 @@ def _set_seed(seed: int | None) -> None:
     np.random.seed(seed)
     if HAS_TORCH:
         torch.manual_seed(seed)  # type: ignore[arg-type]
+
+
+def load_feedback_logs(patterns: Iterable[str | Path] | None) -> DataFrame:
+    """Load feedback parquet logs matching ``patterns`` into a dataframe."""
+
+    if not patterns:
+        return pd.DataFrame()
+
+    paths: list[Path] = []
+    for pattern in patterns:
+        if pattern is None:
+            continue
+        pattern_str = str(pattern)
+        matches = [Path(p) for p in glob.glob(pattern_str)]
+        if not matches and Path(pattern_str).exists():
+            matches = [Path(pattern_str)]
+        for match in matches:
+            if match.suffix.lower() == ".parquet" and match.is_file():
+                paths.append(match)
+
+    if not paths:
+        return pd.DataFrame()
+
+    frames: list[DataFrame] = []
+    for path in sorted(set(paths)):
+        frame = pd.read_parquet(path)
+        frame = frame.copy()
+        frame["_feedback_path"] = str(path)
+        frames.append(frame)
+
+    if not frames:
+        return pd.DataFrame()
+
+    return pd.concat(frames, ignore_index=True)
+
+
+def _coerce_bool(value: Any) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, np.integer)):
+        return bool(int(value))
+    if isinstance(value, (float, np.floating)):
+        if np.isnan(value):
+            return None
+        return bool(float(value))
+    if isinstance(value, str):
+        token = value.strip().lower()
+        if not token:
+            return None
+        if token in {"1", "true", "t", "yes", "y", "si", "sí", "ok", "pass", "passed"}:
+            return True
+        if token in {"0", "false", "f", "no", "n", "ko", "fail", "failed"}:
+            return False
+    return None
+
+
+def _prepare_feedback_rows(df: DataFrame) -> DataFrame:
+    if df.empty:
+        return df
+
+    data = df.copy()
+
+    for column in TARGET_COLUMNS:
+        if column in data.columns:
+            data[column] = pd.to_numeric(data[column], errors="coerce")
+
+    bool_rigidity = None
+    if "rigidity_ok" in data.columns:
+        bool_rigidity = data["rigidity_ok"].map(_coerce_bool)
+    elif "rigidez_ok" in data.columns:
+        bool_rigidity = data["rigidez_ok"].map(_coerce_bool)
+
+    if bool_rigidity is not None:
+        data["rigidez"] = bool_rigidity.map(
+            lambda v: float(RIGIDITY_SCORE_MAP[3])
+            if v is True
+            else (float(RIGIDITY_SCORE_MAP[1]) if v is False else np.nan)
+        )
+        data["rigidity_level"] = bool_rigidity.map(
+            lambda v: 3 if v is True else (1 if v is False else np.nan)
+        )
+
+    bool_tightness = None
+    if "tightness_ok" in data.columns:
+        bool_tightness = data["tightness_ok"].map(_coerce_bool)
+    elif "ease_ok" in data.columns:
+        bool_tightness = data["ease_ok"].map(_coerce_bool)
+
+    if bool_tightness is not None:
+        data["estanqueidad"] = bool_tightness.map(
+            lambda v: float(TIGHTNESS_SCORE_MAP[1])
+            if v is True
+            else (float(TIGHTNESS_SCORE_MAP[0]) if v is False else np.nan)
+        )
+        data["tightness_pass"] = bool_tightness.map(
+            lambda v: 1 if v is True else (0 if v is False else np.nan)
+        )
+
+    penalty_map = {
+        "energy_kwh": ["energy_penalty", "energy_delta", "delta_energy_kwh"],
+        "water_l": ["water_penalty", "water_delta", "delta_water_l"],
+        "crew_min": ["crew_penalty", "crew_delta", "delta_crew_min"],
+    }
+    for target, extras in penalty_map.items():
+        if target in data.columns or any(col in data.columns for col in extras):
+            base = pd.to_numeric(data.get(target, 0.0), errors="coerce").fillna(0.0)
+            for extra in extras:
+                if extra in data.columns:
+                    base = base + pd.to_numeric(data[extra], errors="coerce").fillna(0.0)
+            data[target] = base
+
+    if "label_source" in data.columns:
+        label_source = data["label_source"].astype(str)
+    else:
+        label_source = pd.Series(["feedback"] * len(data), index=data.index)
+    label_source = label_source.replace({"": "feedback"})
+    data["label_source"] = label_source.where(label_source.str.strip() != "", "feedback")
+    data["label_weight"] = pd.to_numeric(
+        data.get("label_weight", 1.0), errors="coerce"
+    ).fillna(1.0)
+
+    if "_feedback_path" in data.columns:
+        path_series = data.pop("_feedback_path")
+        provenance = path_series.map(lambda p: f"feedback:{Path(str(p)).name}")
+        if "provenance" in data.columns:
+            current = data["provenance"].astype(str).fillna("")
+            mask = current.str.strip() == ""
+            data.loc[mask, "provenance"] = provenance[mask]
+        else:
+            data["provenance"] = provenance
+
+    for column in TARGET_COLUMNS + ["tightness_pass", "rigidity_level"]:
+        if column in data.columns:
+            data[column] = pd.to_numeric(data[column], errors="coerce")
+
+    drop_candidates = [
+        "rigidity_ok",
+        "rigidez_ok",
+        "tightness_ok",
+        "ease_ok",
+        "energy_penalty",
+        "energy_delta",
+        "delta_energy_kwh",
+        "water_penalty",
+        "water_delta",
+        "delta_water_l",
+        "crew_penalty",
+        "crew_delta",
+        "delta_crew_min",
+    ]
+    existing_drop = [col for col in drop_candidates if col in data.columns]
+    if existing_drop:
+        data = data.drop(columns=existing_drop)
+
+    return data
 
 
 def _load_csv(path: Path) -> DataFrame:
@@ -1055,6 +1219,7 @@ def train_and_save(
     *,
     gold_features_path: Path | None = None,
     gold_labels_path: Path | None = None,
+    feedback_logs: DataFrame | None = None,
 ) -> Dict[str, Any]:
     """Generate data, train models and persist artefacts to disk."""
 
@@ -1069,6 +1234,25 @@ def train_and_save(
         gold_features_path=gold_features_path,
         gold_labels_path=gold_labels_path,
     )
+
+    if feedback_logs is not None and not feedback_logs.empty:
+        feedback_rows = _prepare_feedback_rows(feedback_logs)
+        missing_features = [
+            column for column in FEATURE_COLUMNS if column not in feedback_rows.columns
+        ]
+        if missing_features:
+            raise ValueError(
+                "Los logs de feedback no contienen todas las columnas de features requeridas: "
+                + ", ".join(sorted(missing_features))
+            )
+        for column in TARGET_COLUMNS + CLASS_TARGET_COLUMNS:
+            if column not in feedback_rows.columns:
+                raise ValueError(
+                    "Los logs de feedback no contienen la columna objetivo requerida: "
+                    + column
+                )
+        df = pd.concat([df, feedback_rows], ignore_index=True, sort=False)
+
     df.to_parquet(DATASET_PATH, index=False)
     df.to_parquet(DATASET_ML_PATH, index=False)
 
@@ -1186,6 +1370,15 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         default=21,
         help="Semilla usada para generación y entrenamiento.",
     )
+    parser.add_argument(
+        "--append-logs",
+        nargs="+",
+        default=None,
+        help=(
+            "Glob (o ruta directa) a archivos Parquet con feedback humano para "
+            "incorporar en el entrenamiento."
+        ),
+    )
     return parser
 
 
@@ -1210,11 +1403,13 @@ def _resolve_gold_paths(args: argparse.Namespace) -> tuple[Path | None, Path | N
 def cli(argv: Sequence[str] | None = None) -> Dict[str, Any]:
     args = _build_arg_parser().parse_args(list(argv) if argv is not None else None)
     gold_features_path, gold_labels_path = _resolve_gold_paths(args)
+    feedback_df = load_feedback_logs(args.append_logs)
     return train_and_save(
         n_samples=args.samples,
         seed=args.seed,
         gold_features_path=gold_features_path,
         gold_labels_path=gold_labels_path,
+        feedback_logs=feedback_df,
     )
 
 
