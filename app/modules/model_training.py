@@ -133,6 +133,28 @@ _GOLD_FEATURES_CACHE: DataFrame | None = None
 _GOLD_TARGETS_CACHE: DataFrame | None = None
 
 
+def _infer_trained_on_label(df: DataFrame) -> str:
+    """Infer the training dataset label based on ``label_source`` values."""
+
+    if "label_source" not in df.columns:
+        return "synthetic_v0"
+
+    sources = (
+        df["label_source"]
+        .dropna()
+        .astype(str)
+        .map(str.strip)
+        .str.lower()
+    )
+    unique_sources = {value for value in sources.tolist() if value}
+
+    if not unique_sources or unique_sources == {"simulated"}:
+        return "synthetic_v0"
+    if "simulated" in unique_sources:
+        return "hybrid_v1"
+    return "gold_v1"
+
+
 def _relative_path(path: Path) -> str:
     """Return path relative to repository root for metadata serialisation."""
 
@@ -1083,9 +1105,11 @@ def train_and_save(n_samples: int = 1600, seed: int | None = 21) -> Dict[str, An
         for source, values in label_summary.iterrows()
     }
 
+    trained_on = _infer_trained_on_label(df)
+
     metadata = {
         "model_name": "rexai-rf-ensemble",
-        "trained_on": "synthetic_v0",
+        "trained_on": trained_on,
         "trained_at": datetime.now(tz=UTC).isoformat(),
         "n_samples": int(len(df)),
         "dataset": {

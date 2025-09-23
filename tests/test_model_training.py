@@ -142,3 +142,21 @@ def test_build_training_dataframe_falls_back_when_labels_missing(
     assert row["rigidez"] == pytest.approx(0.5)
     assert row["label_source"] == "simulated"
     assert row["label_weight"] == pytest.approx(0.7)
+
+
+@pytest.mark.parametrize(
+    "label_sources, expected",
+    [
+        ([], "synthetic_v0"),
+        (["simulated"], "synthetic_v0"),
+        (["mission"], "gold_v1"),
+        (["measured", "mission"], "gold_v1"),
+        (["simulated", "mission"], "hybrid_v1"),
+    ],
+)
+def test_infer_trained_on_label(label_sources: list[str], expected: str) -> None:
+    """Training provenance is derived from the label_source distribution."""
+
+    df = pd.DataFrame({"label_source": label_sources})
+    result = model_training._infer_trained_on_label(df)
+    assert result == expected
