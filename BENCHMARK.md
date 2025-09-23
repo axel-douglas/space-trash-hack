@@ -58,27 +58,32 @@ escenario (promediado sobre las cinco métricas) incorpora también el ancho
 medio de los intervalos de confianza al 95% (`ci95_width_mean`):
 
 | Escenario | MAE medio | RMSE | CI95 (ancho medio) |
-|-----------|-----------|------|--------------------|
-| Multicapa + Laminar | 197.76 | 381.53 | 627.83 |
-| Espuma + MGS-1 + Sinter | 594.04 | 1 211.11 | 668.25 |
-| CTB Reconfig | 632.74 | 1 192.88 | 592.79 |
-| Global (los 3 escenarios) | 474.85 | 1 005.87 | 629.62 |
+|-----------|----------:|-----:|-------------------:|
+| CTB Reconfig | 197 882 | 435 212 | 322 693 |
+| Espuma + MGS-1 + Sinter | 203 085 | 447 205 | 308 786 |
+| Multicapa + Laminar | 200 600 | 441 213 | 315 995 |
+| Global (los 3 escenarios) | 200 522 | 441 237 | 315 825 |
 
 Los valores anteriores provienen de `data/benchmarks/scenario_metrics.csv` y se
-actualizan automáticamente al rerunear el script.【F:data/benchmarks/scenario_metrics.csv†L2-L23】【F:data/benchmarks/scenario_metrics.csv†L24-L25】
+actualizan automáticamente al rerunear el script.【F:data/benchmarks/scenario_metrics.csv†L17-L25】
 
 ### Observaciones
 
-* **Consumo de crew**: continúa siendo la métrica con mayor desviación. En
-  espuma+sinter el modelo estima 2 751.60 min frente a 50.57 min heurísticos,
-  un error absoluto de 2 701.03 min.【F:data/benchmarks/scenario_predictions.csv†L11-L11】
-* **Energía y agua**: en P03 la energía cae 168.31 kWh por debajo de la
-  heurística, mientras que el agua sube 100.31 L; en P02 la energía se mantiene
-  cercana con 80.81 kWh de gap.【F:data/benchmarks/scenario_predictions.csv†L4-L10】
-* **Rigidez/estanqueidad**: los desvíos siguen siendo moderados (≤0.31), útiles
-  para validar calibración de targets mecánicos.【F:data/benchmarks/scenario_predictions.csv†L2-L8】【F:data/benchmarks/scenario_predictions.csv†L12-L16】
-* **CI95**: los anchos medios rondan los 600 puntos, lo que da margen para
-  monitorear la convergencia del ensemble tras nuevas rondas de feedback.【F:data/benchmarks/scenario_metrics.csv†L2-L25】
+* **Gap frente a las heurísticas**: el ensemble entrenado mantiene una distancia
+  elevada respecto a las reglas determinísticas (MAE global 200 522 y RMSE
+  441 237), por lo que no se observa una mejora frente al baseline en esta
+  corrida.【F:data/benchmarks/scenario_metrics.csv†L17-L25】
+* **Consumo de crew**: continúa siendo la métrica más conflictiva; el modelo
+  entrega estimaciones del orden de 0.98–1.00 millones de minutos frente a
+  heurísticas de 33–51 min, generando errores absolutos cercanos al millón en
+  los tres escenarios.【F:data/benchmarks/scenario_predictions.csv†L6-L16】
+* **Energía y agua**: los desvíos rondan 16 000 kWh y 166–182 L según el
+  escenario, muy por encima de las reglas base.【F:data/benchmarks/scenario_predictions.csv†L4-L15】
+* **Rigidez/estanqueidad**: las discrepancias siguen acotadas (≤0.29), lo que
+  facilita auditar calibraciones mecánicas pese al desfasaje global.【F:data/benchmarks/scenario_predictions.csv†L2-L14】
+* **CI95**: las bandas medias se ensanchan hasta ~316 000 unidades a nivel
+  global, reflejando la gran dispersión asociada a las predicciones actuales de
+  energía, agua y crew.【F:data/benchmarks/scenario_metrics.csv†L17-L25】
 
 ## Archivos generados
 
@@ -107,36 +112,32 @@ MAE/RMSE/CI95. Los resultados completos están en
 
 ### Impacto global
 
-| Grupo desactivado | MAE global | Δ vs base | RMSE global | Δ vs base |
-|-------------------|-----------:|----------:|------------:|----------:|
-| Índices logísticos | 468.27 | −6.58 | 995.75 | −10.12 |
-| Composición MGS-1 | 479.65 | +4.80 | 1 009.44 | +3.57 |
-| Banderas NASA | 477.73 | +2.88 | 1 008.34 | +2.46 |
+| Grupo desactivado | MAE global | Δ vs base | RMSE global | Δ vs base | CI95 (ancho) | Δ CI95 |
+|-------------------|-----------:|----------:|------------:|----------:|-------------:|-------:|
+| Índices logísticos | 199 918 | −605 | 439 883 | −1 354 | 317 484 | +1 659 |
+| Composición MGS-1 | 200 522 | −1 | 441 237 | 0 | 315 824 | −1 |
+| Banderas NASA | 199 313 | −1 209 | 438 603 | −2 634 | 318 659 | +2 834 |
 
-Los índices logísticos reducen ligeramente el error medio al apagarlos, lo que
-sugiere que ese subconjunto podría estar sobreajustado a los heurísticos.
-En cambio, quitar la composición MGS-1 o las banderas NASA aumenta el MAE
-global, confirmando que ambas familias aportan señal útil en el baseline
-actual.【F:data/benchmarks/ablation_metrics.csv†L71-L73】【F:data/benchmarks/scenario_metrics.csv†L20-L25】
+Todos los grupos producen desvíos similares, pero ningún apagado consigue cerrar
+la brecha respecto a las heurísticas: incluso las reducciones de MAE vienen
+acompañadas por un ensanchamiento de las bandas de confianza o mejoras
+marginales.【F:data/benchmarks/ablation_metrics.csv†L71-L73】【F:data/benchmarks/scenario_metrics.csv†L25-L25】
 
 ### Contribución por target
 
-* **Crew_min**: quitar las banderas NASA incrementa el MAE a 2 073 min
-  (+13.6 vs base), lo que indica que las fracciones de materiales blandos siguen
-  modulando la estimación de mano de obra.【F:data/benchmarks/ablation_metrics.csv†L66-L69】【F:data/benchmarks/scenario_metrics.csv†L20-L23】
-* **Energy_kwh**: la composición MGS-1 es clave; al apagarla el MAE sube a
-  273.35 (+47.2), evidenciando que las cargas de óxidos aportan contexto sobre
-  la energía de proceso.【F:data/benchmarks/ablation_metrics.csv†L61-L63】【F:data/benchmarks/scenario_metrics.csv†L21-L24】
-* **Estanqueidad y rigidez**: al quitar MGS-1 la estanqueidad sube apenas a
-  0.200 (+0.0008), mientras que las banderas NASA elevan la rigidez a 0.136
-  (+0.024); ambos cambios son pequeños pero consistentes con lo observado en la
-  app.【F:data/benchmarks/ablation_metrics.csv†L63-L69】【F:data/benchmarks/scenario_metrics.csv†L22-L23】
-* **Water_l**: los índices logísticos parecen introducir ruido; al apagarlos el
-  MAE cae a 51.35 L (−36.8 frente al baseline).【F:data/benchmarks/ablation_metrics.csv†L60-L65】【F:data/benchmarks/scenario_metrics.csv†L21-L24】
+* **Índices logísticos**: al removerlos el MAE cae levemente en crew_min (983 461
+  vs 986 445) y energía (16 009 vs 16 049), pero el CI95 se amplía en +8 210 min
+  para crew y +84 kWh para energía.【F:data/benchmarks/ablation_metrics.csv†L56-L60】【F:data/benchmarks/scenario_metrics.csv†L20-L21】
+* **Composición MGS-1**: apenas altera los promedios globales, aunque reduce el
+  MAE de water_l a 113.79 L y estrecha la banda a 341.61 L (−2.22 vs la base).
+  Rigidez y estanqueidad prácticamente no cambian.【F:data/benchmarks/ablation_metrics.csv†L63-L65】【F:data/benchmarks/scenario_metrics.csv†L22-L24】
+* **Banderas NASA**: disminuyen el MAE de crew_min hasta 980 478 y de energía a
+  15 969, a costa de CI95 más anchos (hasta 1 564 899 min y 28 049 kWh).【F:data/benchmarks/ablation_metrics.csv†L66-L70】【F:data/benchmarks/scenario_metrics.csv†L20-L21】
 
-Estas observaciones facilitan priorizar futuras iteraciones del modelo (p.ej.
-refinar los features logísticos o enriquecer las fracciones NASA para mejorar
-rigidez).
+Estas observaciones ayudan a priorizar próximos ajustes: optimizar los índices
+logísticos para no degradar la incertidumbre, revisar el escalado de energía/crew
+cuando se combinan banderas NASA y evaluar si la composición MGS-1 sigue siendo
+redundante bajo el modelo actual.
 
 ## Comparar mejoras post-feedback
 
