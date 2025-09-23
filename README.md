@@ -10,6 +10,24 @@ Demo ligera que muestra la lógica del "cerebro de reciclaje" para Marte:
 - Python 3.10+
 - `pip install -r requirements.txt`
 
+### Fase 0 — Verificaciones antes de entrenar
+
+1. **Validar ingestas y revisar errores**. Ejecuta las utilidades de `app.modules.data_pipeline`
+   (o los tests asociados) para verificar que los CSV/Parquet crudos cumplen los modelos de
+   datos. Cada incidencia se registra en `data/logs/ingestion.errors.jsonl`; inspecciona ese
+   archivo antes de continuar para corregir filas inválidas o faltantes.
+2. **Generar artefactos mínimos**. Una vez limpia la ingesta, corre
+   `python -m app.modules.model_training` para producir el pipeline base y los metadatos
+   indispensables en `data/models/` (por ejemplo `data/models/rexai_regressor.joblib` y
+   `data/models/metadata.json`). El plan detallado de entrenamiento y variantes está descrito
+   en [README_ML_GAMEPLAN.md](README_ML_GAMEPLAN.md).
+3. **Confirmar el modo activo**. La app opera en modo heurístico cuando falta
+   `data/models/rexai_regressor.joblib` y, por tanto, recurre a las reglas `heuristic_props`
+   para estimar rigidez, estanqueidad, energía, agua y minutos de crew. En cuanto el modelo y
+   sus metadatos existen en `data/models/`, `ModelRegistry.ready` habilita el modo IA y las
+   predicciones pasan a provenir del ensemble entrenado (RandomForest + ensambles opcionales)
+   con intervalos de confianza y explicabilidad.
+
 ## Entrenar y generar artefactos de IA
 
 El pipeline de entrenamiento consume datasets físicos/químicos alineados con
