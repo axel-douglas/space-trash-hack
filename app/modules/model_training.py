@@ -12,6 +12,7 @@ intact while providing a clean, reproducible training entry-point.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import math
@@ -19,7 +20,7 @@ import random
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence
 
 import joblib
 import numpy as np
@@ -131,7 +132,9 @@ TABTRANSFORMER_TOKENS = 8
 TABTRANSFORMER_DIM = 64
 
 _GOLD_FEATURES_CACHE: DataFrame | None = None
+_GOLD_FEATURES_CACHE_PATH: Path | None = None
 _GOLD_TARGETS_CACHE: DataFrame | None = None
+_GOLD_TARGETS_CACHE_PATH: Path | None = None
 
 
 def _infer_trained_on_label(df: DataFrame) -> str:
@@ -223,38 +226,45 @@ def _normalise_key_column(series: pd.Series) -> pd.Series:
     return series.astype(str).str.upper().str.strip()
 
 
-def _load_gold_features() -> DataFrame:
-    global _GOLD_FEATURES_CACHE
-    if _GOLD_FEATURES_CACHE is not None:
+def _load_gold_features(path: Path | None = None) -> DataFrame:
+    global _GOLD_FEATURES_CACHE, _GOLD_FEATURES_CACHE_PATH
+    target_path = Path(path) if path is not None else GOLD_FEATURES_PATH
+
+    if _GOLD_FEATURES_CACHE is not None and _GOLD_FEATURES_CACHE_PATH == target_path:
         return _GOLD_FEATURES_CACHE
 
-    table = _load_parquet(GOLD_FEATURES_PATH)
+    table = _load_parquet(target_path)
     if table.empty:
         _GOLD_FEATURES_CACHE = pd.DataFrame()
+        _GOLD_FEATURES_CACHE_PATH = target_path
         return _GOLD_FEATURES_CACHE
 
     required = {"recipe_id", "process_id"}
     missing = required - set(table.columns)
     if missing:
-        raise ValueError(f"Faltan columnas {sorted(missing)} en {GOLD_FEATURES_PATH}")
+        raise ValueError(f"Faltan columnas {sorted(missing)} en {target_path}")
 
     table = table.copy()
     table["recipe_id"] = _normalise_key_column(table["recipe_id"])
     table["process_id"] = _normalise_key_column(table["process_id"])
+    _GOLD_FEATURES_CACHE_PATH = target_path
     _GOLD_FEATURES_CACHE = table
     return table
 
 
-def _load_gold_targets() -> DataFrame:
-    global _GOLD_TARGETS_CACHE
-    if _GOLD_TARGETS_CACHE is not None:
+def _load_gold_targets(path: Path | None = None) -> DataFrame:
+    global _GOLD_TARGETS_CACHE, _GOLD_TARGETS_CACHE_PATH
+    target_path = Path(path) if path is not None else GOLD_LABELS_PATH
+
+    if _GOLD_TARGETS_CACHE is not None and _GOLD_TARGETS_CACHE_PATH == target_path:
         return _GOLD_TARGETS_CACHE
 
-    table = load_curated_labels()
+    table = load_curated_labels(target_path)
     if table.empty:
         _GOLD_TARGETS_CACHE = pd.DataFrame()
     else:
         _GOLD_TARGETS_CACHE = table
+    _GOLD_TARGETS_CACHE_PATH = target_path
     return _GOLD_TARGETS_CACHE
 
 
@@ -459,9 +469,15 @@ def _generate_samples(n_samples: int, seed: int | None) -> List[SampledCombinati
     return samples
 
 
-def build_training_dataframe(n_samples: int = 1600, seed: int | None = 21) -> DataFrame:
-    gold_features = _load_gold_features()
-    gold_targets = _load_gold_targets()
+def build_training_dataframe(
+    n_samples: int = 1600,
+    seed: int | None = 21,
+    *,
+    gold_features_path: Path | None = None,
+    gold_labels_path: Path | None = None,
+) -> DataFrame:
+    gold_features = _load_gold_features(gold_features_path)
+    gold_targets = _load_gold_targets(gold_labels_path)
 
     if gold_features.empty or gold_targets.empty:
         samples = _generate_samples(n_samples, seed)
@@ -1033,7 +1049,13 @@ def _hash_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def train_and_save(n_samples: int = 1600, seed: int | None = 21) -> Dict[str, Any]:
+def train_and_save(
+    n_samples: int = 1600,
+    seed: int | None = 21,
+    *,
+    gold_features_path: Path | None = None,
+    gold_labels_path: Path | None = None,
+) -> Dict[str, Any]:
     """Generate data, train models and persist artefacts to disk."""
 
     _set_seed(seed)
@@ -1041,7 +1063,12 @@ def train_and_save(n_samples: int = 1600, seed: int | None = 21) -> Dict[str, An
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     PROCESSED_ML.mkdir(parents=True, exist_ok=True)
 
-    df = build_training_dataframe(n_samples=n_samples, seed=seed)
+    df = build_training_dataframe(
+        n_samples=n_samples,
+        seed=seed,
+        gold_features_path=gold_features_path,
+        gold_labels_path=gold_labels_path,
+    )
     df.to_parquet(DATASET_PATH, index=False)
     df.to_parquet(DATASET_ML_PATH, index=False)
 
@@ -1127,6 +1154,70 @@ def train_and_save(n_samples: int = 1600, seed: int | None = 21) -> Dict[str, An
     return metadata
 
 
+def _build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Training pipeline para Rex-AI")
+    parser.add_argument(
+        "--gold",
+        type=Path,
+        default=None,
+        help=(
+            "Directorio que contiene features.parquet y labels.parquet para "
+            "entrenamiento con datos dorados."
+        ),
+    )
+    parser.add_argument(
+        "--features",
+        type=Path,
+        default=None,
+        help=(
+            "Ruta alternativa (o directorio) para features.parquet. Si se proporciona "
+            "un directorio se asumirá un archivo llamado features.parquet."
+        ),
+    )
+    parser.add_argument(
+        "--samples",
+        type=int,
+        default=1600,
+        help="Número de combinaciones sintéticas a generar si faltan etiquetas doradas.",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=21,
+        help="Semilla usada para generación y entrenamiento.",
+    )
+    return parser
+
+
+def _resolve_gold_paths(args: argparse.Namespace) -> tuple[Path | None, Path | None]:
+    gold_features: Path | None = None
+    gold_labels: Path | None = None
+
+    if args.gold is not None:
+        gold_dir = Path(args.gold)
+        gold_features = gold_dir / "features.parquet"
+        gold_labels = gold_dir / "labels.parquet"
+
+    if args.features is not None:
+        features_path = Path(args.features)
+        if features_path.is_dir():
+            features_path = features_path / "features.parquet"
+        gold_features = features_path
+
+    return gold_features, gold_labels
+
+
+def cli(argv: Sequence[str] | None = None) -> Dict[str, Any]:
+    args = _build_arg_parser().parse_args(list(argv) if argv is not None else None)
+    gold_features_path, gold_labels_path = _resolve_gold_paths(args)
+    return train_and_save(
+        n_samples=args.samples,
+        seed=args.seed,
+        gold_features_path=gold_features_path,
+        gold_labels_path=gold_labels_path,
+    )
+
+
 if __name__ == "__main__":  # pragma: no cover - CLI entry point
-    info = train_and_save()
+    info = cli()
     print(json.dumps(info, indent=2))
