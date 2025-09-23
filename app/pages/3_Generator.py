@@ -211,6 +211,10 @@ for i, c in enumerate(cands):
         if badges:
             st.markdown(" ".join([f'<span class="badge">{b}</span>' for b in badges]), unsafe_allow_html=True)
 
+        pred_error = c.get("prediction_error")
+        if pred_error:
+            st.error(f"Predicción ML no disponible: {pred_error}")
+
         # Resumen técnico
         colA, colB = st.columns([1.1, 1])
         with colA:
@@ -219,13 +223,20 @@ for i, c in enumerate(cands):
             st.markdown("**⚖️ Pesos en mezcla**")
             st.write(c["weights"])
 
-            st.markdown("**🔬 Predicción**")
+            st.markdown("**🔬 Predicción**" if not pred_error else "**🔬 Estimación heurística**")
             colA1, colA2, colA3 = st.columns(3)
-            colA1.metric("Rigidez", f"{p.rigidity:.2f}")
-            colA2.metric("Estanqueidad", f"{p.tightness:.2f}")
-            colA3.metric("Masa final", f"{p.mass_final_kg:.2f} kg")
+            if pred_error:
+                colA1.write(f"Rigidez: {p.rigidity:.2f}")
+                colA2.write(f"Estanqueidad: {p.tightness:.2f}")
+                colA3.write(f"Masa final: {p.mass_final_kg:.2f} kg")
+            else:
+                colA1.metric("Rigidez", f"{p.rigidity:.2f}")
+                colA2.metric("Estanqueidad", f"{p.tightness:.2f}")
+                colA3.metric("Masa final", f"{p.mass_final_kg:.2f} kg")
             src = c.get("prediction_source", "heuristic")
-            if str(src).startswith("rexai"):
+            if pred_error:
+                st.caption("Fallback heurístico mostrado por indisponibilidad del modelo.")
+            elif str(src).startswith("rexai"):
                 meta = c.get("ml_prediction", {}).get("metadata", {})
                 t_at = meta.get("trained_at", "?")
                 latent = c.get("latent_vector", [])
