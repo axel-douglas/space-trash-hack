@@ -10,6 +10,7 @@ __pycache__/
 # Processed datasets
 /data/processed/
 !/data/processed/
+/data/logs/
 /datasets/processed/
 !/datasets/processed/
 /datasets/derived/
