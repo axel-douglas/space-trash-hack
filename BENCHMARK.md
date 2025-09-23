@@ -31,7 +31,11 @@ reproduce el experimento y guarda la evidencia en `data/benchmarks/`.
 
 3. Añadí `--with-ablation` para ejecutar barridos desactivando grupos de
    features (ver sección "Ablation de features"). Opcionalmente, usá
-   `--format both` para obtener también los Parquet.
+   `--format both` para obtener también los Parquet y `--output-dir` para
+   versionar corridas separadas (por ejemplo `data/benchmarks/pre_feedback/`).
+
+4. Repetí el comando después de incorporar feedback humano (reentrenamiento) y
+   conservá ambos subdirectorios para analizar la evolución de métricas.
 
 ## Escenarios evaluados
 
@@ -50,17 +54,18 @@ se reflejará automáticamente al rerunear el script.
 ## Resultados principales
 
 Los errores se calculan tratando las heurísticas como baseline. El resumen por
-escenario (promediado sobre las cinco métricas) es:
+escenario (promediado sobre las cinco métricas) incorpora también el ancho
+medio de los intervalos de confianza al 95% (`ci95_width_mean`):
 
-| Escenario | MAE medio | RMSE |
-|-----------|-----------|------|
-| Multicapa + Laminar | 197.76 | 381.53 |
-| Espuma + MGS-1 + Sinter | 594.04 | 1 211.11 |
-| CTB Reconfig | 632.74 | 1 192.88 |
-| Global (los 3 escenarios) | 474.85 | 1 005.87 |
+| Escenario | MAE medio | RMSE | CI95 (ancho medio) |
+|-----------|-----------|------|--------------------|
+| Multicapa + Laminar | 197.76 | 381.53 | 627.83 |
+| Espuma + MGS-1 + Sinter | 594.04 | 1 211.11 | 668.25 |
+| CTB Reconfig | 632.74 | 1 192.88 | 592.79 |
+| Global (los 3 escenarios) | 474.85 | 1 005.87 | 629.62 |
 
 Los valores anteriores provienen de `data/benchmarks/scenario_metrics.csv` y se
-actualizan automáticamente al rerunear el script.【F:data/benchmarks/scenario_metrics.csv†L2-L25】
+actualizan automáticamente al rerunear el script.【F:data/benchmarks/scenario_metrics.csv†L2-L23】【F:data/benchmarks/scenario_metrics.csv†L24-L25】
 
 ### Observaciones
 
@@ -71,18 +76,21 @@ actualizan automáticamente al rerunear el script.【F:data/benchmarks/scenario_
   heurística, mientras que el agua sube 100.31 L; en P02 la energía se mantiene
   cercana con 80.81 kWh de gap.【F:data/benchmarks/scenario_predictions.csv†L4-L10】
 * **Rigidez/estanqueidad**: los desvíos siguen siendo moderados (≤0.31), útiles
-  para validar calibración de targets mecánicos.【F:data/benchmarks/scenario_predictions.csv†L2-L8】【F:data/benchmarks/scenario_predictions.csv†L12-L13】
+  para validar calibración de targets mecánicos.【F:data/benchmarks/scenario_predictions.csv†L2-L8】【F:data/benchmarks/scenario_predictions.csv†L12-L16】
+* **CI95**: los anchos medios rondan los 600 puntos, lo que da margen para
+  monitorear la convergencia del ensemble tras nuevas rondas de feedback.【F:data/benchmarks/scenario_metrics.csv†L2-L25】
 
 ## Archivos generados
 
 * `data/benchmarks/scenario_predictions.csv`: detalle por target con
-  predicciones ML, heurística, error absoluto y bandas CI95.
+  predicciones ML, heurística, error absoluto y bandas CI95 (valores mínimos,
+  máximos y ancho).
 * `data/benchmarks/scenario_metrics.csv`: métricas agregadas por escenario,
-  por target y resumen global.
+  por target y resumen global incluyendo los promedios de CI95 (`ci95_*`).
 * `data/benchmarks/ablation_predictions.csv`: detalle de cada corrida de
   ablation por escenario y target.
 * `data/benchmarks/ablation_metrics.csv`: métricas agregadas por grupo de
-  features desactivado.
+  features desactivado, con los anchos de CI95 posteriores a la intervención.
 
 Ambos archivos pueden versionarse junto con el repositorio para documentar el
 estado actual del modelo.
@@ -129,3 +137,24 @@ actual.【F:data/benchmarks/ablation_metrics.csv†L71-L73】【F:data/benchmark
 Estas observaciones facilitan priorizar futuras iteraciones del modelo (p.ej.
 refinar los features logísticos o enriquecer las fracciones NASA para mejorar
 rigidez).
+
+## Comparar mejoras post-feedback
+
+Para medir el impacto real del feedback humano:
+
+1. Guarda una corrida base antes de reentrenar (por ejemplo
+   `python scripts/run_benchmarks.py --output-dir data/benchmarks/pre_feedback --format csv --with-ablation`).
+2. Reentrena con los logs de feedback y vuelve a ejecutar el script apuntando a
+   otro directorio (por ejemplo `data/benchmarks/post_feedback`).
+3. Generá un gráfico interactivo de deltas con:
+
+   ```bash
+   python scripts/plot_benchmark_deltas.py \
+     --before data/benchmarks/pre_feedback/scenario_metrics.csv \
+     --after data/benchmarks/post_feedback/scenario_metrics.csv \
+     --output data/benchmarks/feedback_deltas.html
+   ```
+
+El HTML resultante muestra, para cada escenario, cuánto se redujeron (positivos)
+o aumentaron (negativos) el MAE, el RMSE y el ancho del CI95 respecto al modelo
+anterior.【F:scripts/plot_benchmark_deltas.py†L1-L107】
