@@ -1338,6 +1338,20 @@ def train_and_save(
     return metadata
 
 
+def bootstrap_demo_model(*, seed: int | None = 21, n_samples: int = 64) -> Path:
+    """Train a lightweight synthetic model when no artefacts are present."""
+
+    metadata = train_and_save(n_samples=n_samples, seed=seed)
+    metadata["trained_on"] = "synthetic_v0_bootstrap"
+    payload = json.dumps(metadata, indent=2, sort_keys=True)
+    METADATA_PATH.write_text(payload, encoding="utf-8")
+    try:
+        LEGACY_METADATA_PATH.write_text(payload, encoding="utf-8")
+    except Exception:  # pragma: no cover - legacy path opcional
+        pass
+    return PIPELINE_PATH
+
+
 def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Training pipeline para Rex-AI")
     parser.add_argument(

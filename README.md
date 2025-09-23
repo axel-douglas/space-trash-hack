@@ -21,11 +21,13 @@ Demo ligera que muestra la lógica del "cerebro de reciclaje" para Marte:
    indispensables en `data/models/` (por ejemplo `data/models/rexai_regressor.joblib` y
    `data/models/metadata.json`). El plan detallado de entrenamiento y variantes está descrito
    en [README_ML_GAMEPLAN.md](README_ML_GAMEPLAN.md).
-3. **Confirmar el modo activo**. La app opera en modo heurístico cuando falta
-   `data/models/rexai_regressor.joblib` y, por tanto, recurre a las reglas `heuristic_props`
-   para estimar rigidez, estanqueidad, energía, agua y minutos de crew. En cuanto el modelo y
-   sus metadatos existen en `data/models/`, `ModelRegistry.ready` habilita el modo IA y las
-   predicciones pasan a provenir del ensemble entrenado (RandomForest + ensambles opcionales)
+3. **Confirmar el modo activo**. Si `data/models/rexai_regressor.joblib` no existe cuando se
+   levanta la aplicación, `ModelRegistry` lanza un bootstrap automático que entrena un RandomForest
+   sintético ligero y lo guarda en `data/models/`. Esto evita tener que versionar binarios para
+   ejecutar la demo por primera vez. Mientras el bootstrap corre (o si fallara), la app recurre a
+   las reglas `heuristic_props` para estimar rigidez, estanqueidad, energía, agua y minutos de crew.
+   En cuanto el modelo y sus metadatos están presentes, `ModelRegistry.ready` habilita el modo IA y
+   las predicciones pasan a provenir del ensemble entrenado (RandomForest + ensambles opcionales)
    con intervalos de confianza y explicabilidad.
 
 ## Entrenar y generar artefactos de IA
@@ -69,7 +71,10 @@ Los binarios (`.joblib`, `.pt`, `.parquet`) permanecen ignorados por Git para
 mantener el repo liviano. Cuando existen localmente, la app reemplaza las
 predicciones heurísticas por las del modelo Rex-AI (RandomForest + XGBoost +
 TabTransformer), expone bandas de confianza 95%, importancias promedio y el
-vector latente entrenado sobre mezclas MGS-1 + residuos NASA.
+vector latente entrenado sobre mezclas MGS-1 + residuos NASA. El bootstrap
+automático genera un modelo sintético con la etiqueta `trained_on = "synthetic_v0_bootstrap"`,
+que podés reemplazar en cualquier momento por artefactos reales empaquetados con
+`python -m scripts.package_model_bundle`.
 
 ## Distribución de artefactos ML
 
