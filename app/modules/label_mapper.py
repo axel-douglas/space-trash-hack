@@ -29,6 +29,7 @@ CLASS_TARGET_COLUMNS: Tuple[str, ...] = (
 )
 
 _LABELS_CACHE: pd.DataFrame | None = None
+_LABELS_CACHE_PATH: Path | None = None
 
 
 def _normalise_key(value: Any) -> str:
@@ -38,31 +39,35 @@ def _normalise_key(value: Any) -> str:
     return text.upper().strip()
 
 
-def _load_labels_table() -> pd.DataFrame:
+def _load_labels_table(path: Path | None = None) -> pd.DataFrame:
     """Read and cache the curated labels table."""
 
-    global _LABELS_CACHE
-    if _LABELS_CACHE is not None:
+    global _LABELS_CACHE, _LABELS_CACHE_PATH
+    target_path = Path(path) if path is not None else GOLD_LABELS_PATH
+
+    if _LABELS_CACHE is not None and _LABELS_CACHE_PATH == target_path:
         return _LABELS_CACHE
 
-    if not GOLD_LABELS_PATH.exists():
+    if not target_path.exists():
         _LABELS_CACHE = pd.DataFrame()
+        _LABELS_CACHE_PATH = target_path
         return _LABELS_CACHE
 
     try:
-        table = pd.read_parquet(GOLD_LABELS_PATH)
+        table = pd.read_parquet(target_path)
     except Exception as exc:  # pragma: no cover - visibility of IO errors
-        raise RuntimeError(f"No se pudo leer parquet {GOLD_LABELS_PATH}: {exc}") from exc
+        raise RuntimeError(f"No se pudo leer parquet {target_path}: {exc}") from exc
 
     if table.empty:
         _LABELS_CACHE = pd.DataFrame()
+        _LABELS_CACHE_PATH = target_path
         return _LABELS_CACHE
 
     required = {"recipe_id", "process_id"}
     missing = required - set(table.columns)
     if missing:
         raise ValueError(
-            f"Faltan columnas {sorted(missing)} en {GOLD_LABELS_PATH}"
+            f"Faltan columnas {sorted(missing)} en {target_path}"
         )
 
     table = table.copy()
@@ -100,13 +105,14 @@ def _load_labels_table() -> pd.DataFrame:
     table = table.drop_duplicates(subset=["recipe_id", "process_id"], keep="last")
     table = table.set_index(["recipe_id", "process_id"], drop=False)
     _LABELS_CACHE = table
+    _LABELS_CACHE_PATH = target_path
     return table
 
 
-def load_curated_labels() -> pd.DataFrame:
+def load_curated_labels(path: Path | None = None) -> pd.DataFrame:
     """Return a copy of the curated labels table."""
 
-    table = _load_labels_table()
+    table = _load_labels_table(path)
     return table.copy(deep=False)
 
 

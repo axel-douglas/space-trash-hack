@@ -15,17 +15,26 @@ def _reset_gold_caches() -> None:
     """Ensure cached gold datasets do not leak across tests."""
 
     original_features_cache = model_training._GOLD_FEATURES_CACHE
+    original_features_path = model_training._GOLD_FEATURES_CACHE_PATH
     original_targets_cache = model_training._GOLD_TARGETS_CACHE
+    original_targets_path = model_training._GOLD_TARGETS_CACHE_PATH
     original_label_cache = label_mapper._LABELS_CACHE
+    original_label_path = label_mapper._LABELS_CACHE_PATH
     model_training._GOLD_FEATURES_CACHE = None
+    model_training._GOLD_FEATURES_CACHE_PATH = None
     model_training._GOLD_TARGETS_CACHE = None
+    model_training._GOLD_TARGETS_CACHE_PATH = None
     label_mapper._LABELS_CACHE = None
+    label_mapper._LABELS_CACHE_PATH = None
     try:
         yield
     finally:
         model_training._GOLD_FEATURES_CACHE = original_features_cache
+        model_training._GOLD_FEATURES_CACHE_PATH = original_features_path
         model_training._GOLD_TARGETS_CACHE = original_targets_cache
+        model_training._GOLD_TARGETS_CACHE_PATH = original_targets_path
         label_mapper._LABELS_CACHE = original_label_cache
+        label_mapper._LABELS_CACHE_PATH = original_label_path
 
 
 def _write_parquet(data: pd.DataFrame, path: Path) -> None:
@@ -198,6 +207,45 @@ def test_infer_trained_on_label(label_sources: list[str], expected: str) -> None
     df = pd.DataFrame({"label_source": label_sources})
     result = model_training._infer_trained_on_label(df)
     assert result == expected
+
+
+def test_cli_respects_custom_gold_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """La interfaz CLI propaga las rutas indicadas hacia el pipeline de entrenamiento."""
+
+    gold_dir = tmp_path / "gold"
+    features_dir = tmp_path / "alt_features"
+    features_path = features_dir / "features.parquet"
+    labels_path = gold_dir / "labels.parquet"
+
+    _write_parquet(pd.DataFrame([{column: 0.0 for column in model_training.FEATURE_COLUMNS}]), features_path)
+    _write_parquet(pd.DataFrame([{column: 0.0 for column in model_training.TARGET_COLUMNS}]), labels_path)
+
+    captured: dict[str, object] = {}
+
+    def _fake_train_and_save(**kwargs: object) -> dict[str, str]:
+        captured.update(kwargs)
+        return {"status": "ok"}
+
+    monkeypatch.setattr(model_training, "train_and_save", _fake_train_and_save)
+
+    result = model_training.cli(
+        [
+            "--gold",
+            str(gold_dir),
+            "--features",
+            str(features_dir),
+            "--samples",
+            "3",
+            "--seed",
+            "17",
+        ]
+    )
+
+    assert result == {"status": "ok"}
+    assert captured["n_samples"] == 3
+    assert captured["seed"] == 17
+    assert captured["gold_features_path"] == features_path
+    assert captured["gold_labels_path"] == labels_path
 def test_lookup_labels_returns_measured_metadata(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     picks, process, weights = _sample_inputs()
     recipe_id = label_mapper.derive_recipe_id(picks, process)
