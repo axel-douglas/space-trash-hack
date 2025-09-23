@@ -147,11 +147,16 @@ def _infer_trained_on_label(df: DataFrame) -> str:
         .map(str.strip)
         .str.lower()
     )
-    unique_sources = {value for value in sources.tolist() if value}
+    synthetic_aliases = {"simulated", "weak", "weakly_supervised"}
+    normalized_sources = set()
+    for value in sources.tolist():
+        if not value:
+            continue
+        normalized_sources.add("simulated" if value in synthetic_aliases else value)
 
-    if not unique_sources or unique_sources == {"simulated"}:
+    if not normalized_sources or normalized_sources == {"simulated"}:
         return "synthetic_v0"
-    if "simulated" in unique_sources:
+    if "simulated" in normalized_sources:
         return "hybrid_v1"
     return "gold_v1"
 
@@ -377,15 +382,16 @@ def _compute_targets(
         elif target in CLASS_TARGET_COLUMNS:
             payload[target] = int(value)
 
-    provenance = str(
-        curated_meta.get("provenance")
-        or curated_meta.get("label_source")
-        or ""
-    ).lower()
-    use_fallback = not payload or provenance == "weak"
+    raw_provenance = curated_meta.get("provenance") or curated_meta.get("label_source")
+    provenance = str(raw_provenance or "").lower()
+    use_fallback = not payload or provenance in {"weak", "weakly_supervised"}
 
+    original_label_source = None
     if "label_source" in curated_meta:
-        payload["label_source"] = str(curated_meta["label_source"])
+        original_label_source = str(curated_meta["label_source"])
+        payload["label_source"] = original_label_source
+    if "provenance" in curated_meta and curated_meta["provenance"]:
+        payload["provenance"] = str(curated_meta["provenance"])
     if "label_weight" in curated_meta:
         try:
             payload["label_weight"] = float(curated_meta["label_weight"])
@@ -411,8 +417,14 @@ def _compute_targets(
     if use_fallback or "rigidez" not in payload:
         payload["rigidez"] = float(RIGIDITY_SCORE_MAP.get(rigidity_label, rigidity_label))
 
-    if "label_source" not in payload:
-        payload["label_source"] = "simulated" if use_fallback else "measured"
+    if use_fallback:
+        if raw_provenance:
+            payload.setdefault("provenance", str(raw_provenance))
+        elif original_label_source:
+            payload.setdefault("provenance", original_label_source)
+        payload["label_source"] = "simulated"
+    elif "label_source" not in payload:
+        payload["label_source"] = "measured"
     payload.setdefault("label_weight", 0.7)
     return payload
 
