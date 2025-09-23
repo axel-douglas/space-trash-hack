@@ -1030,6 +1030,7 @@ def train_and_save(n_samples: int = 1600, seed: int | None = 21) -> Dict[str, An
 
     metadata = {
         "model_name": "rexai-rf-ensemble",
+        "trained_on": "synthetic_v0",
         "trained_at": datetime.now(tz=UTC).isoformat(),
         "n_samples": int(len(df)),
         "dataset": {

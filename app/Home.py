@@ -127,7 +127,9 @@ st.markdown(
 
 # ──────────── Pila/estado del modelo ────────────
 st.markdown("### Estado del modelo Rex-AI")
-trained_label = trained_dt.strftime("%d %b %Y %H:%M UTC") if trained_dt else "sin metadata"
+trained_label = MODEL_REGISTRY.trained_label()
+if not trained_label or trained_label == "—":
+    trained_label = trained_dt.strftime("%d %b %Y %H:%M UTC") if trained_dt else "sin metadata"
 ready = "✅ Modelo listo" if MODEL_REGISTRY.ready else "⚠️ Entrená localmente"
 
 st.markdown(
