@@ -35,7 +35,8 @@ LOGGER = logging.getLogger(__name__)
 DATA_ROOT = Path(__file__).resolve().parents[2] / "data"
 MODEL_DIR = DATA_ROOT / "models"
 PIPELINE_PATH = MODEL_DIR / "rexai_regressor.joblib"
-METADATA_PATH = MODEL_DIR / "metadata.json"
+METADATA_PATH = MODEL_DIR / "metadata_gold.json"
+LEGACY_METADATA_PATH = MODEL_DIR / "metadata.json"
 XGBOOST_PATH = MODEL_DIR / "rexai_xgboost.joblib"   # opcional
 AUTOENCODER_PATH = MODEL_DIR / "rexai_autoencoder.pt"
 TABTRANSFORMER_PATH = MODEL_DIR / "rexai_tabtransformer.pt"
@@ -153,11 +154,12 @@ class ModelRegistry:
             LOGGER.info("No hay modelo Rex-AI en %s", PIPELINE_PATH)
 
         # Metadata
-        if METADATA_PATH.exists():
+        metadata_path = METADATA_PATH if METADATA_PATH.exists() else LEGACY_METADATA_PATH
+        if metadata_path.exists():
             try:
-                self.metadata = json.loads(METADATA_PATH.read_text(encoding="utf-8"))
+                self.metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
             except Exception as exc:
-                LOGGER.warning("Fallo parsing metadata %s: %s", METADATA_PATH, exc)
+                LOGGER.warning("Fallo parsing metadata %s: %s", metadata_path, exc)
                 self.metadata = {}
         else:
             self.metadata = {}
