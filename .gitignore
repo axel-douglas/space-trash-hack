@@ -3,6 +3,7 @@ __pycache__/
 
 # Machine learning artifacts
 # By default ignore model outputs but allow committed reference artefacts
+/data/models/
 /data/models/*
 !/data/models/
 !/data/models/metadata.json
@@ -16,6 +17,17 @@ __pycache__/
 /datasets/derived/
 !/data/processed/.gitkeep
 !/datasets/processed/.gitkeep
+
+# Curated gold datasets
+/datasets/gold/
+
+# Binary dataset and model artefacts
+*.parquet
+*.joblib
+*.pt
+*.pkl
+*.onnx
+*.bin
 
 # Distribution bundles
 /dist/
