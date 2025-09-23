@@ -14,10 +14,12 @@ pipeline can rely on a single source of truth.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import random
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Iterable, Tuple
 
@@ -32,6 +34,69 @@ except Exception:  # pragma: no cover - fallback when models are not available
     MODEL_REGISTRY = None
 
 DATASETS_ROOT = Path(__file__).resolve().parents[2] / "datasets"
+LOGS_ROOT = Path(__file__).resolve().parents[2] / "data" / "logs"
+
+
+def _to_serializable(value: Any) -> Any:
+    """Convert *value* into a JSON-serializable structure."""
+
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, (list, tuple, set)):
+        return [_to_serializable(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _to_serializable(v) for k, v in value.items()}
+    if isinstance(value, np.ndarray):
+        return [_to_serializable(v) for v in value.tolist()]
+    return str(value)
+
+
+def _append_inference_log(
+    input_features: Dict[str, Any],
+    prediction: Dict[str, Any] | None,
+    uncertainty: Dict[str, Any] | None,
+    model_registry: Any | None,
+) -> None:
+    """Persist an inference event as a Parquet append."""
+
+    try:
+        LOGS_ROOT.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return
+
+    model_hash = ""
+    if model_registry is not None:
+        metadata = getattr(model_registry, "metadata", {}) or {}
+        if isinstance(metadata, dict):
+            model_hash = str(metadata.get("model_hash") or metadata.get("checksum") or "")
+        if not model_hash:
+            for attr in ("model_hash", "checksum", "pipeline_checksum", "pipeline_hash"):
+                value = getattr(model_registry, attr, None)
+                if value:
+                    model_hash = str(value)
+                    break
+
+    now = datetime.utcnow()
+    event = {
+        "timestamp": now.isoformat(),
+        "input_features": json.dumps(_to_serializable(input_features or {}), sort_keys=True),
+        "prediction": json.dumps(_to_serializable(prediction or {}), sort_keys=True),
+        "uncertainty": json.dumps(_to_serializable(uncertainty or {}), sort_keys=True),
+        "model_hash": model_hash,
+    }
+
+    log_path = LOGS_ROOT / f"inference_{now.strftime('%Y%m%d')}.parquet"
+
+    try:
+        new_row = pd.DataFrame([event])
+        if log_path.exists():
+            existing = pd.read_parquet(log_path)
+            new_row = pd.concat([existing, new_row], ignore_index=True)
+        new_row.to_parquet(log_path, index=False)
+    except Exception:
+        return
 
 
 def _load_regolith_vector() -> Dict[str, float]:
@@ -512,6 +577,46 @@ def _build_candidate(
         props = heuristic
         force_heuristic = os.getenv("REXAI_FORCE_HEURISTIC", "").lower() in {"1", "true", "yes"}
         if not force_heuristic and MODEL_REGISTRY is not None and getattr(MODEL_REGISTRY, "ready", False):
+            features_for_inference = dict(features)
+            prediction = {}
+            try:
+                prediction = MODEL_REGISTRY.predict(features_for_inference)
+            except Exception as exc:  # pragma: no cover - error path should still log
+                _append_inference_log(features_for_inference, {"error": str(exc)}, {}, MODEL_REGISTRY)
+                prediction = {}
+            else:
+                _append_inference_log(
+                    features_for_inference,
+                    prediction or {},
+                    ((prediction or {}).get("uncertainty") if isinstance(prediction, dict) else {}),
+                    MODEL_REGISTRY,
+                )
+
+            if prediction:
+                props = PredProps(
+                    rigidity=float(prediction.get("rigidez", props.rigidity)),
+                    tightness=float(prediction.get("estanqueidad", props.tightness)),
+                    mass_final_kg=heuristic.mass_final_kg,
+                    energy_kwh=float(prediction.get("energy_kwh", props.energy_kwh)),
+                    water_l=float(prediction.get("water_l", props.water_l)),
+                    crew_min=float(prediction.get("crew_min", props.crew_min)),
+                    source=str(prediction.get("source", "ml")),
+                    uncertainty={k: float(v) for k, v in (prediction.get("uncertainty") or {}).items()},
+                    confidence_interval={
+                        k: (float(v[0]), float(v[1])) for k, v in (prediction.get("confidence_interval") or {}).items()
+                    },
+                    feature_importance=[(str(k), float(v)) for k, v in (prediction.get("feature_importance") or [])],
+                    comparisons={
+                        k: {kk: float(vv) for kk, vv in val.items()} for k, val in (prediction.get("comparisons") or {}).items()
+                    },
+                )
+                features["prediction_model"] = props.source
+                features["model_metadata"] = prediction.get("metadata", {})
+                features["uncertainty"] = props.uncertainty or {}
+                features["confidence_interval"] = props.confidence_interval or {}
+                features["feature_importance"] = props.feature_importance or []
+                features["model_variants"] = props.comparisons or {}
+            else:
             try:
                 prediction = MODEL_REGISTRY.predict(features)
             except Exception as exc:  # pragma: no cover - defensive logging
