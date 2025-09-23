@@ -64,6 +64,33 @@ corpus dorado y feedback humano cuando está disponible):
 python -m app.modules.model_training --gold datasets/gold --append-logs "data/logs/feedback_*.parquet"
 ```
 
+### Reentrenar desde feedback humano
+
+Cada sesión de la tripulación registrada en el panel "Feedback & Impact"
+genera archivos `data/logs/feedback_*.parquet` con las correcciones aplicadas
+al proceso (rigidez, estanqueidad, penalizaciones de energía/agua/crew). El
+comando dedicado `retrain_from_feedback` consume esos logs, convierte las
+señales en targets supervisados y re-ejecuta el pipeline principal con
+`--append-logs` ya configurado:
+
+```bash
+python -m app.modules.retrain_from_feedback
+```
+
+Opcionalmente podés especificar rutas alternativas:
+
+```bash
+python -m app.modules.retrain_from_feedback \
+  --gold datasets/gold \
+  --features datasets/gold/features.parquet \
+  --logs "data/logs/custom_feedback_*.parquet"
+```
+
+Al finalizar, `data/models/metadata.json` y `metadata_gold.json` se actualizan
+con la nueva fecha (`trained_at`) y el label de procedencia (`trained_on`, por
+ejemplo `hil_v1` o `hybrid_v2`). La pantalla principal de la app refleja la
+última fecha de reentrenamiento y la mezcla utilizada.
+
 > Nota: la optimización bayesiana con Ax/BoTorch es opcional. El entorno Streamlit
 > detecta automáticamente si `ax-platform` y `botorch` están instalados; en caso
 > contrario utiliza el optimizador heurístico integrado. Para habilitarla basta con

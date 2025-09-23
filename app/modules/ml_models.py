@@ -132,12 +132,15 @@ class ModelRegistry:
         return self.pipeline is not None
 
     def trained_label(self) -> str:
+        metadata_label = self.metadata.get("trained_label")
         trained_on = self.metadata.get("trained_on")
         trained_at = self.metadata.get("trained_at")
 
         label_parts: List[str] = []
 
-        if trained_on:
+        if metadata_label:
+            label_parts.append(str(metadata_label))
+        elif trained_on:
             label_parts.append(str(trained_on))
 
         if trained_at:
