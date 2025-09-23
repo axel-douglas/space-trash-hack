@@ -30,7 +30,31 @@ DATASETS_ROOT = Path(__file__).resolve().parents[2] / "datasets"
 RAW_DIR = DATASETS_ROOT / "raw"
 GOLD_DIR = DATASETS_ROOT / "gold"
 
-CH4_SPECIFIC_ENERGY_KWH_KG = 13.9
+MOXIE_PEAK_O2_G_PER_HOUR = 12.0
+MOXIE_POWER_W = 300.0
+MOXIE_ENERGY_KWH_PER_KG = (MOXIE_POWER_W / 1000.0) / (MOXIE_PEAK_O2_G_PER_HOUR / 1000.0)
+CREW_O2_KG_PER_DAY = 0.84
+SABATIER_RECOVERY_FRACTION = 0.54
+WATER_RECOVERY_RATE = 0.98
+CREW_WATER_L_PER_DAY = 3.8
+WATER_EXTRACTION_KWH_PER_KG = 0.45
+MAINTENANCE_CREW_HOURS = 24.0
+
+NASA_RIGIDITY_MPA = {
+    "P02": 50.0,  # PLA + basalto impreso en 3D
+    "P03": 206.0,  # Regolito sinterizado basáltico
+}
+
+NASA_TIGHTNESS_LEAK_LPH = {
+    "P02": 0.05,  # Sellado hermético en hábitats 3D (prueba hidrostática)
+    "P03": 0.2,
+}
+
+RIGIDITY_MIN_MPA = 20.0  # Concreto Portland convencional
+RIGIDITY_MAX_MPA = 220.0  # Margen superior de experimentos con regolito
+MAX_LEAK_LPH = 10.0
+
+AUTONOMOUS_PROCESSES = {"P03"}
 
 MISSION_SCENARIO_MAP = {
     "Gateway Phase I": "Short Sortie",
@@ -185,6 +209,17 @@ def _compute_confidence_bounds(value: float, rel_width: float = 0.08) -> tuple[f
     return max(0.0, value - span), value + span
 
 
+def _normalise_rigidity(mpa: float) -> float:
+    span = max(RIGIDITY_MAX_MPA - RIGIDITY_MIN_MPA, 1.0)
+    score = (float(mpa) - RIGIDITY_MIN_MPA) / span
+    return float(np.clip(score, 0.0, 1.0))
+
+
+def _normalise_tightness(leak_lph: float) -> float:
+    score = 1.0 - float(leak_lph) / max(MAX_LEAK_LPH, 1.0)
+    return float(np.clip(score, 0.0, 1.0))
+
+
 def _build_gold_records() -> Iterator[GoldRecord]:
     inventory = _load_inventory()
     trash_to_gas = _load_trash_to_gas()
@@ -228,26 +263,41 @@ def _build_gold_records() -> Iterator[GoldRecord]:
         heuristics = generator.heuristic_props(picks, process, weights, regolith_pct)
         packaging_frac = float(features.get("packaging_frac", 0.0))
         eva_frac = float(features.get("eva_frac", 0.0))
-        structural_bonus = float(features.get("density_kg_m3", 0.0)) / 600.0
-        rigidity = float(np.clip(heuristics.rigidity + 0.12 * regolith_pct + 0.08 * structural_bonus, 0.0, 1.0))
-        tightness = float(
-            np.clip(
-                heuristics.tightness + 0.18 * packaging_frac + 0.05 * eva_frac - 0.05 * regolith_pct,
-                0.0,
-                1.0,
-            )
-        )
+
+        rigidity_mpa = NASA_RIGIDITY_MPA.get(process_id, 60.0)
+        rigidity_mpa += 20.0 * float(np.clip(heuristics.rigidity - 0.5, -0.5, 0.5))
+        if process_id == "P03":
+            rigidity_mpa += 15.0 * regolith_pct
+        rigidity = _normalise_rigidity(rigidity_mpa)
+
+        base_leak = NASA_TIGHTNESS_LEAK_LPH.get(process_id, 1.0)
+        leak_modifier = 1.0 - 0.4 * packaging_frac - 0.1 * eva_frac
+        leak_modifier += 0.25 * regolith_pct
+        leak_rate = max(base_leak * float(np.clip(leak_modifier, 0.3, 1.5)), 0.01)
+        tightness = _normalise_tightness(leak_rate)
+
+        crew_days = float(scenario.get("crew_days", 0.0))
+        crew_count = float(scenario.get("crew_count", 1.0))
+        water_demand = crew_count * crew_days * CREW_WATER_L_PER_DAY
+        recovered_water = water_demand * WATER_RECOVERY_RATE
+        water_l = water_demand - recovered_water
+
+        o2_need = crew_count * crew_days * CREW_O2_KG_PER_DAY
+        closed_loop = o2_need * SABATIER_RECOVERY_FRACTION
+        o2_external = max(o2_need - closed_loop, 0.0)
+        moxie_energy = o2_external * MOXIE_ENERGY_KWH_PER_KG
 
         mission_mass = max(total_mass, scenario.get("packaging_kg", 0.0) + scenario.get("residual_waste_kg", 0.0))
-        crew_count = float(scenario.get("crew_count", 1.0))
-        kg_per_cm_day = float(row.get("kg_per_cm_day", 1.0))
-        throughput = max(kg_per_cm_day * crew_count, 0.5)
-        crew_days_required = mission_mass / throughput
-        crew_min = crew_days_required * 24.0 * 60.0
-        crew_min += crew_count * 45.0
+        process_energy = float(process.get("energy_kwh_per_kg", 0.0)) * mission_mass
+        water_energy = recovered_water * WATER_EXTRACTION_KWH_PER_KG
+        energy_kwh = process_energy + water_energy + moxie_energy
 
-        energy_kwh = float(row.get("o2_ch4_yield_kg", 0.0)) * CH4_SPECIFIC_ENERGY_KWH_KG
-        water_l = float(row.get("water_makeup_kg", 0.0))
+        crew_hours = MAINTENANCE_CREW_HOURS
+        if process_id in AUTONOMOUS_PROCESSES:
+            crew_hours = 0.0
+        else:
+            crew_hours += 0.1 * crew_days
+        crew_min = crew_hours * 60.0
 
         label_weight = float(1.0 + 0.002 * mission_mass + 0.15 * np.log1p(crew_count))
         provenance = f"nasa/{mission.lower().replace(' ', '_')}"
