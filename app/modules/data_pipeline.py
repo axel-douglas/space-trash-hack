@@ -172,6 +172,70 @@ class ProcessRunLog(BaseModel):
         return value
 
 
+class GoldFeatureRow(BaseModel):
+    """Schema for curated feature entries used by the training pipeline."""
+
+    model_config = ConfigDict(extra="allow")
+
+    recipe_id: str
+    process_id: str
+    regolith_pct: float = Field(ge=0.0, le=1.0)
+    total_mass_kg: float = Field(gt=0.0)
+    mass_input_kg: float = Field(gt=0.0)
+    num_items: int = Field(ge=1)
+    density_kg_m3: float = Field(gt=0.0)
+    moisture_frac: float = Field(ge=0.0)
+    difficulty_index: float = Field(ge=0.0)
+    problematic_mass_frac: float = Field(ge=0.0)
+    problematic_item_frac: float = Field(ge=0.0)
+    aluminum_frac: float = Field(ge=0.0)
+    foam_frac: float = Field(ge=0.0)
+    eva_frac: float = Field(ge=0.0)
+    textile_frac: float = Field(ge=0.0)
+    multilayer_frac: float = Field(ge=0.0)
+    glove_frac: float = Field(ge=0.0)
+    polyethylene_frac: float = Field(ge=0.0)
+    carbon_fiber_frac: float = Field(ge=0.0)
+    hydrogen_rich_frac: float = Field(ge=0.0)
+    packaging_frac: float = Field(ge=0.0)
+    gas_recovery_index: float = Field(ge=0.0)
+    logistics_reuse_index: float = Field(ge=0.0)
+    oxide_sio2: float = Field(ge=0.0)
+    oxide_feot: float = Field(ge=0.0)
+    oxide_mgo: float = Field(ge=0.0)
+    oxide_cao: float = Field(ge=0.0)
+    oxide_so3: float = Field(ge=0.0)
+    oxide_h2o: float = Field(ge=0.0)
+
+
+class GoldLabelRow(BaseModel):
+    """Schema for curated label entries used by the training pipeline."""
+
+    model_config = ConfigDict(extra="allow")
+
+    recipe_id: str
+    process_id: str
+    rigidez: float = Field(ge=0.0, le=1.0)
+    estanqueidad: float = Field(ge=0.0, le=1.0)
+    energy_kwh: float = Field(ge=0.0)
+    water_l: float = Field(ge=0.0)
+    crew_min: float = Field(ge=0.0)
+    tightness_pass: int = Field(ge=0)
+    rigidity_level: int = Field(ge=0)
+    label_source: str = Field(min_length=1)
+    label_weight: float = Field(gt=0.0)
+    provenance: str = Field(min_length=1)
+    conf_lo_rigidez: float = Field(ge=0.0)
+    conf_hi_rigidez: float = Field(ge=0.0)
+    conf_lo_estanqueidad: float = Field(ge=0.0)
+    conf_hi_estanqueidad: float = Field(ge=0.0)
+    conf_lo_energy_kwh: float = Field(ge=0.0)
+    conf_hi_energy_kwh: float = Field(ge=0.0)
+    conf_lo_water_l: float = Field(ge=0.0)
+    conf_hi_water_l: float = Field(ge=0.0)
+    conf_lo_crew_min: float = Field(ge=0.0)
+    conf_hi_crew_min: float = Field(ge=0.0)
+
 def _read_csv_records(path: Path) -> List[Dict[str, Any]]:
     with path.open("r", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)

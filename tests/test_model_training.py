@@ -6,10 +6,11 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
-from app.modules import generator, label_mapper, model_training
+from app.modules import data_build, generator, label_mapper, model_training
 
 
 @pytest.fixture(autouse=True)
@@ -140,6 +141,50 @@ def test_build_training_dataframe_prefers_gold_labels(monkeypatch: pytest.Monkey
     assert row["conf_hi_energy_kwh"] == pytest.approx(130.0)
 
 
+def test_build_training_dataframe_uses_nasa_gold(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The curated NASA dataset should be merged verbatim into the training frame."""
+
+    features_df, labels_df = data_build.build_gold_dataset(tmp_path, return_frames=True)
+    features_path = tmp_path / "features.parquet"
+    labels_path = tmp_path / "labels.parquet"
+
+    monkeypatch.setattr(model_training, "GOLD_FEATURES_PATH", features_path)
+    monkeypatch.setattr(model_training, "GOLD_LABELS_PATH", labels_path)
+    monkeypatch.setattr(label_mapper, "GOLD_LABELS_PATH", labels_path)
+
+    def _fail_generate(*_: object, **__: object) -> None:  # pragma: no cover - guard
+        raise AssertionError("_generate_samples should not be called when gold artefacts exist")
+
+    monkeypatch.setattr(model_training, "_generate_samples", _fail_generate)
+
+    df = model_training.build_training_dataframe()
+
+    assert len(df) == len(features_df)
+
+    df_sorted = df.sort_values(["process_id", "recipe_id"]).reset_index(drop=True)
+    expected = labels_df.set_index(["recipe_id", "process_id"])
+
+    target_columns = ["rigidez", "estanqueidad", "energy_kwh", "water_l", "crew_min"]
+
+    for _, row in df_sorted.iterrows():
+        key = (row["recipe_id"], row["process_id"])
+        expected_rows = expected.loc[key]
+        if isinstance(expected_rows, pd.Series):
+            expected_rows = expected_rows.to_frame().T
+
+        comparisons = expected_rows.apply(
+            lambda candidate: all(
+                row[column] == pytest.approx(float(candidate[column]))
+                for column in target_columns
+            ),
+            axis=1,
+        )
+        assert comparisons.any(), f"Valores inesperados para {key}: {row[target_columns]}"
+        assert row["label_source"] == "mission"
+
+
 def test_build_training_dataframe_falls_back_when_labels_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -189,6 +234,38 @@ def test_build_training_dataframe_falls_back_when_labels_missing(
     assert row["rigidez"] == pytest.approx(0.5)
     assert row["label_source"] == "simulated"
     assert row["label_weight"] == pytest.approx(0.7)
+
+
+def test_compute_targets_prefers_curated_labels(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When a curated recipe exists the mission-provided targets must be used."""
+
+    _, labels_df = data_build.build_gold_dataset(tmp_path, return_frames=True)
+    labels_path = tmp_path / "labels.parquet"
+
+    monkeypatch.setattr(label_mapper, "GOLD_LABELS_PATH", labels_path)
+    label_mapper._LABELS_CACHE = None
+    label_mapper._LABELS_CACHE_PATH = None
+
+    record = data_build.generate_gold_records()[0]
+    recipe_id = record.features["recipe_id"]
+    process_id = record.features["process_id"]
+
+    process = record.process
+    picks = record.picks
+    features = {key: record.features[key] for key in model_training.FEATURE_COLUMNS}
+    features["recipe_id"] = recipe_id
+    features["process_id"] = process_id
+
+    targets = model_training._compute_targets(picks, process, features)
+
+    expected = labels_df.set_index(["recipe_id", "process_id"]).loc[(recipe_id, process_id)]
+
+    assert targets["rigidez"] == pytest.approx(expected["rigidez"])
+    assert targets["estanqueidad"] == pytest.approx(expected["estanqueidad"])
+    assert targets["energy_kwh"] == pytest.approx(expected["energy_kwh"])
+    assert targets["label_source"] == "mission"
 
 
 @pytest.mark.parametrize(
@@ -341,6 +418,11 @@ def test_compute_targets_relabels_weak_sources(monkeypatch: pytest.MonkeyPatch) 
 def test_cli_appends_feedback_logs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     start_time = datetime.now(model_training.UTC)
 
+    gold_dir = tmp_path / "gold"
+    features_path = gold_dir / "features.parquet"
+    labels_path = gold_dir / "labels.parquet"
+    data_build.build_gold_dataset(gold_dir, return_frames=False)
+
     feedback_path = tmp_path / "feedback" / "human_feedback.parquet"
     feedback_row = {column: 1.0 for column in model_training.FEATURE_COLUMNS}
     feedback_row["process_id"] = "PFBK"
@@ -365,6 +447,9 @@ def test_cli_appends_feedback_logs(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     monkeypatch.setattr(model_training, "MODEL_DIR", models_dir)
     monkeypatch.setattr(model_training, "PROCESSED_DIR", processed_dir)
     monkeypatch.setattr(model_training, "PROCESSED_ML", processed_ml_dir)
+    monkeypatch.setattr(model_training, "GOLD_FEATURES_PATH", features_path)
+    monkeypatch.setattr(model_training, "GOLD_LABELS_PATH", labels_path)
+    monkeypatch.setattr(label_mapper, "GOLD_LABELS_PATH", labels_path)
     monkeypatch.setattr(
         model_training,
         "DATASET_PATH",
@@ -431,5 +516,5 @@ def test_cli_appends_feedback_logs(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     metadata = json.loads(model_training.METADATA_PATH.read_text(encoding="utf-8"))
     trained_at = datetime.fromisoformat(metadata["trained_at"])
     assert trained_at >= start_time
-    assert metadata["trained_on"] == "hybrid_v2"
-    assert result["trained_on"] == "hybrid_v2"
+    assert metadata["trained_on"] == "hil_v1"
+    assert result["trained_on"] == "hil_v1"
