@@ -188,6 +188,8 @@ class ModelRegistry:
         self.feature_stds: Dict[str, float] = {}
         self.residual_std: np.ndarray | None = None
         self.feature_importance_avg: List[Tuple[str, float]] = []
+        self.label_summary: Dict[str, Dict[str, Any]] = {}
+        self.label_columns: Dict[str, str] = {}
         self.xgb_models: Dict[str, Any] = {}   # comparador opcional
         self.autoencoder = None
         self.autoencoder_meta: Dict[str, Any] = {}
@@ -278,6 +280,45 @@ class ModelRegistry:
                 self.metadata = {}
         else:
             self.metadata = {}
+
+        labeling = self.metadata.get("labeling") or {}
+        if isinstance(labeling, dict):
+            columns = labeling.get("columns", {})
+            if isinstance(columns, dict):
+                self.label_columns = {str(k): str(v) for k, v in columns.items()}
+
+            summary_raw = labeling.get("summary", {})
+            parsed_summary: Dict[str, Dict[str, Any]] = {}
+            if isinstance(summary_raw, dict):
+                for source, payload in summary_raw.items():
+                    if not isinstance(payload, dict):
+                        continue
+                    try:
+                        count_val = int(payload.get("count") or payload.get("n") or 0)
+                    except (TypeError, ValueError):
+                        count_val = 0
+                    try:
+                        mean_weight = float(payload.get("mean_weight") or payload.get("mean") or 0.0)
+                    except (TypeError, ValueError):
+                        mean_weight = 0.0
+                    try:
+                        min_weight = float(payload.get("min_weight") or payload.get("min") or 0.0)
+                    except (TypeError, ValueError):
+                        min_weight = 0.0
+                    try:
+                        max_weight = float(payload.get("max_weight") or payload.get("max") or 0.0)
+                    except (TypeError, ValueError):
+                        max_weight = 0.0
+
+                    parsed_summary[str(source)] = {
+                        "count": count_val,
+                        "mean_weight": mean_weight,
+                        "min_weight": min_weight,
+                        "max_weight": max_weight,
+                    }
+
+            if parsed_summary:
+                self.label_summary = parsed_summary
 
         # Fallbacks robustos
         feats = (
@@ -370,6 +411,8 @@ class ModelRegistry:
                 "n_samples": self.metadata.get("n_samples"),
                 "features": self.feature_names,
                 "targets": TARGET_COLUMNS,
+                "label_summary": self.label_summary,
+                "label_columns": self.label_columns,
             },
             uncertainty={t: float(combined_std[i]) for i, t in enumerate(TARGET_COLUMNS)},
             confidence_interval=ci,
@@ -378,6 +421,40 @@ class ModelRegistry:
             latent_vector=(),  # sin PyTorch mantemos vacío
         )
         return result.as_dict()
+
+    def label_distribution_label(self) -> str:
+        if not self.label_summary:
+            return "—"
+
+        def _sort_key(item: Tuple[str, Dict[str, Any]]) -> Tuple[int, str]:
+            count = item[1].get("count")
+            try:
+                sortable = -int(count) if count is not None else 0
+            except (TypeError, ValueError):
+                sortable = 0
+            return sortable, str(item[0])
+
+        parts: List[str] = []
+        for source, stats in sorted(self.label_summary.items(), key=_sort_key):
+            label = str(source)
+            count = stats.get("count")
+            mean_weight = stats.get("mean_weight")
+            fragment = label
+            try:
+                if count is not None:
+                    fragment = f"{label}×{int(count)}"
+            except (TypeError, ValueError):
+                fragment = label
+
+            try:
+                if mean_weight is not None:
+                    fragment = f"{fragment} (w≈{float(mean_weight):.2f})"
+            except (TypeError, ValueError):
+                pass
+
+            parts.append(fragment)
+
+        return " · ".join(parts)
 
     # ---------------------- helpers internos --------------------------
     def _prepare_frame(self, features: Mapping[str, Any]) -> tuple[pd.DataFrame, np.ndarray]:

@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 
 import pandas as pd
+import pytest
 
 from app.modules import generator
 
@@ -75,4 +76,69 @@ def test_generate_candidates_appends_inference_log(monkeypatch):
     uncertainty_payload = json.loads(last_event["uncertainty"])
     assert "rigidez" in uncertainty_payload
 
+    cand = candidates[0]
+    breakdown = cand.get("score_breakdown")
+    assert isinstance(breakdown, dict)
+    assert "contributions" in breakdown
+    assert "auxiliary" in breakdown
+    assert pytest.approx(breakdown.get("total", cand["score"]), rel=1e-2) == cand["score"]
+    auxiliary = cand.get("auxiliary")
+    assert isinstance(auxiliary, dict)
+    assert "passes_seal" in auxiliary
+
     log_path.unlink(missing_ok=True)
+
+
+def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch):
+    calls: list[str] = []
+
+    class NoCallRegistry:
+        ready = True
+        metadata = {"model_hash": "noop"}
+
+        def predict(self, features):
+            calls.append("predict")
+            return {}
+
+        def embed(self, features):
+            return []
+
+    monkeypatch.setattr(generator, "MODEL_REGISTRY", NoCallRegistry())
+
+    log_dir = generator.LOGS_ROOT
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"inference_{datetime.utcnow().strftime('%Y%m%d')}.parquet"
+    log_path.unlink(missing_ok=True)
+
+    waste_df = pd.DataFrame(
+        {
+            "id": ["W1", "W2"],
+            "category": ["packaging", "eva"],
+            "material": ["plastic", "foam"],
+            "kg": [1.0, 2.0],
+            "volume_l": [10.0, 5.0],
+            "flags": ["", "ctb"],
+        }
+    )
+    proc_df = pd.DataFrame(
+        {
+            "process_id": ["P01"],
+            "name": ["Demo"],
+            "energy_kwh_per_kg": [1.0],
+            "water_l_per_kg": [0.5],
+            "crew_min_per_batch": [30.0],
+        }
+    )
+
+    candidates, history = generator.generate_candidates(
+        waste_df, proc_df, target={}, n=1, use_ml=False
+    )
+
+    assert candidates, "Expected heuristic candidate even when ML disabled"
+    assert history.empty
+    assert not calls, "ML predict should not be invoked in heuristic mode"
+    assert not log_path.exists(), "Inference log should not be created in heuristic mode"
+
+    cand = candidates[0]
+    assert "score_breakdown" in cand
+    assert "auxiliary" in cand

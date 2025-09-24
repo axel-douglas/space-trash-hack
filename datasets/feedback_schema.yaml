@@ -1,0 +1,163 @@
+version: 0.1
+updated_at: 2025-09-24
+path: feedback/recipes.parquet
+description: >-
+  Registros de feedback humano o de simuladores validados posterior a la
+  ejecución de una receta. Cada fila complementa al dataset gold aportando
+  mediciones reales, bandas de confianza y notas operativas.
+primary_keys:
+  - recipe_id
+  - process_id
+columns:
+  recipe_id:
+    dtype: string
+    description: Identificador estable de la receta generada.
+  process_id:
+    dtype: category
+    categories: [P01, P02, P03, P04]
+    description: Proceso aplicado durante el ensayo.
+  measurement_ts:
+    dtype: timestamp[ms]
+    nullable: true
+    description: Marca temporal ISO8601 de la medición/ensayo.
+  operator_id:
+    dtype: string
+    nullable: true
+    description: Identificador de astronauta/operador responsable.
+  label_source:
+    dtype: category
+    categories: [mission, simulated, weak]
+    description: Fuente de la etiqueta registrada.
+  label_weight:
+    dtype: float32
+    description: Peso relativo usado durante el reentrenamiento.
+  notes:
+    dtype: string
+    nullable: true
+    description: Observaciones operativas relevantes.
+  rigidez:
+    dtype: float32
+  estanqueidad:
+    dtype: float32
+  energy_kwh:
+    dtype: float32
+  water_l:
+    dtype: float32
+  crew_min:
+    dtype: float32
+  tightness_pass:
+    dtype: bool
+  rigidity_level:
+    dtype: int32
+  conf_lo_rigidez:
+    dtype: float32
+    nullable: true
+  conf_hi_rigidez:
+    dtype: float32
+    nullable: true
+  conf_lo_estanqueidad:
+    dtype: float32
+    nullable: true
+  conf_hi_estanqueidad:
+    dtype: float32
+    nullable: true
+  conf_lo_energy_kwh:
+    dtype: float32
+    nullable: true
+  conf_hi_energy_kwh:
+    dtype: float32
+    nullable: true
+  conf_lo_water_l:
+    dtype: float32
+    nullable: true
+  conf_hi_water_l:
+    dtype: float32
+    nullable: true
+  conf_lo_crew_min:
+    dtype: float32
+    nullable: true
+  conf_hi_crew_min:
+    dtype: float32
+    nullable: true
+  regolith_pct:
+    dtype: float32
+  total_mass_kg:
+    dtype: float32
+  mass_input_kg:
+    dtype: float32
+  num_items:
+    dtype: int32
+  density_kg_m3:
+    dtype: float32
+  moisture_frac:
+    dtype: float32
+  difficulty_index:
+    dtype: float32
+  problematic_mass_frac:
+    dtype: float32
+  problematic_item_frac:
+    dtype: float32
+  gas_recovery_index:
+    dtype: float32
+  logistics_reuse_index:
+    dtype: float32
+  energy_kwh_per_kg:
+    dtype: float32
+  water_l_per_kg:
+    dtype: float32
+  crew_min_per_batch:
+    dtype: float32
+  oxide_sio2:
+    dtype: float32
+  oxide_feot:
+    dtype: float32
+  oxide_mgo:
+    dtype: float32
+  oxide_cao:
+    dtype: float32
+  oxide_so3:
+    dtype: float32
+  oxide_h2o:
+    dtype: float32
+  foam_frac:
+    dtype: float32
+  eva_frac:
+    dtype: float32
+  textile_frac:
+    dtype: float32
+  multilayer_frac:
+    dtype: float32
+  glove_frac:
+    dtype: float32
+  polyethylene_frac:
+    dtype: float32
+  carbon_fiber_frac:
+    dtype: float32
+  hydrogen_rich_frac:
+    dtype: float32
+  packaging_frac:
+    dtype: float32
+  trash_to_gas_score:
+    dtype: float32
+    nullable: true
+  target_rigidity:
+    dtype: float32
+    nullable: true
+  target_tightness:
+    dtype: float32
+    nullable: true
+  target_energy_kwh:
+    dtype: float32
+    nullable: true
+  target_water_l:
+    dtype: float32
+    nullable: true
+  target_crew_min:
+    dtype: float32
+    nullable: true
+  label_source_hint:
+    dtype: category
+    nullable: true
+schema_usage:
+  gold_ingest_script: scripts/ingest_feedback.py
+  retrain_cli: app/modules/retrain_from_feedback.py
