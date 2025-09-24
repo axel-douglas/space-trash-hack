@@ -361,6 +361,17 @@ def _prepare_feedback_rows(df: DataFrame) -> DataFrame:
     return data
 
 
+def prepare_feedback_dataframe(df: DataFrame) -> DataFrame:
+    """Public helper that normalises astronaut feedback logs.
+
+    The function mirrors the internal cleaning done during training so that
+    external ingestion scripts can reuse the same canonical preparation step
+    without relying on the private ``_prepare_feedback_rows`` helper.
+    """
+
+    return _prepare_feedback_rows(df)
+
+
 def _load_csv(path: Path) -> DataFrame:
     if not path.exists():
         raise FileNotFoundError(f"Required dataset not found: {path}")

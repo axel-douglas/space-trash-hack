@@ -109,6 +109,7 @@ def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch):
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"inference_{datetime.utcnow().strftime('%Y%m%d')}.parquet"
     log_path.unlink(missing_ok=True)
+    log_path.unlink(missing_ok=True)
 
 def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch):
     calls: list[str] = []

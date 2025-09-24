@@ -24,6 +24,12 @@ __pycache__/
 
 # Binary dataset and model artefacts
 *.parquet
+*/**/*.parquet
+!/datasets/gold/*.parquet
+!/datasets/processed/*.parquet
+feedback/*.parquet
+!feedback/.gitkeep
+!feedback/README.md
 *.joblib
 *.zip
 *.pt
