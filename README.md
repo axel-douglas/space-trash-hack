@@ -146,6 +146,20 @@ Antes de lanzar Streamlit ejecutá `python -m scripts.verify_model_ready` para
 confirmar que `ModelRegistry.ready` devuelve `True` y que la app usará el
 ensemble entrenado desde el inicio.
 
+### Actualizar el bundle publicado
+
+1. **Entrenar**: `python -m app.modules.model_training --gold datasets/gold --append-logs "data/logs/feedback_*.parquet"`
+   genera los `.joblib` y `metadata*.json` bajo `data/models/`.
+2. **Verificar**: ejecutá `python -m scripts.verify_model_ready` y conservá el
+   JSON resultante como bitácora del reentrenamiento.
+3. **Empaquetar**: `python -m scripts.package_model_bundle --output dist/rexai_model_bundle_<tag>.zip`
+   produce el ZIP reproducible con todos los artefactos.
+4. **Publicar**: subí el ZIP como release asset (o al almacenamiento acordado) y
+   registrá la URL final en `MODEL_BUNDLE_URL` junto con el hash en
+   `MODEL_BUNDLE_SHA256` dentro de los secrets del despliegue. Actualizá la
+   referencia cada vez que cambie `<tag>` para que la descarga automática apunte
+   al bundle nuevo.
+
 ### Descarga automática desde secrets
 
 Para despliegues donde no queremos subir los binarios al repositorio, la app
