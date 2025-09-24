@@ -18,7 +18,7 @@ import zipfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Mapping, Dict, List, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 
 import joblib
 import numpy as np
@@ -468,6 +468,99 @@ class ModelRegistry:
             matrix = matrix.toarray()
         return frame, np.asarray(matrix, dtype=float)
 
+    def transform_features(self, frame: pd.DataFrame) -> np.ndarray:
+        """Transforma un *DataFrame* usando el preprocesador entrenado."""
+
+        if frame.empty:
+            return np.zeros((0, max(1, len(self.feature_names))), dtype=float)
+
+        if self.preprocessor is None:
+            return np.zeros((len(frame), max(1, len(self.feature_names))), dtype=float)
+
+        matrix = self.preprocessor.transform(frame)
+        if hasattr(matrix, "toarray"):
+            matrix = matrix.toarray()
+        return np.asarray(matrix, dtype=float)
+
+    def has_autoencoder(self) -> bool:
+        return bool(HAS_TORCH and self.autoencoder is not None and self.preprocessor is not None)
+
+    def encode_matrix(self, matrix: np.ndarray) -> np.ndarray:
+        if matrix.size == 0:
+            return np.zeros((matrix.shape[0], 0), dtype=float)
+
+        if not self.has_autoencoder():
+            return np.zeros((matrix.shape[0], 0), dtype=float)
+
+        tensor = torch.tensor(matrix, dtype=torch.float32)
+        with torch.no_grad():
+            latent = self.autoencoder.encode(tensor).cpu().numpy()
+        return np.asarray(latent, dtype=float)
+
+    def decode_latent(self, latent: Sequence[float]) -> Dict[str, Any]:
+        if not latent:
+            return {}
+
+        if not self.has_autoencoder():
+            return {}
+
+        vector = np.asarray(latent, dtype=float).reshape(1, -1)
+        tensor = torch.tensor(vector, dtype=torch.float32)
+        try:
+            with torch.no_grad():
+                decoded = self.autoencoder.decode(tensor).cpu().numpy()
+        except Exception as exc:  # pragma: no cover - fallos raros de torch
+            LOGGER.warning("Fallo decodificando vector latente: %s", exc)
+            return {}
+
+        try:
+            original = self.preprocessor.inverse_transform(decoded)
+        except Exception as exc:  # pragma: no cover - transformadores sin inverse
+            LOGGER.warning("No se pudo invertir el preprocesamiento: %s", exc)
+            return {}
+
+        if isinstance(original, pd.DataFrame):
+            row = original.iloc[0].to_dict()
+        else:
+            arr = np.asarray(original)
+            if arr.ndim == 1:
+                arr = arr.reshape(1, -1)
+
+            names: Iterable[str]
+            names = getattr(self.preprocessor, "feature_names_in_", None) or []
+            if not names:
+                meta_columns = self.metadata.get("feature_columns") or []
+                names = [str(col) for col in meta_columns]
+            names = list(names)
+            if len(names) < arr.shape[1]:
+                names.extend(str(i) for i in range(len(names), arr.shape[1]))
+            row = {str(names[i]): arr[0, i] for i in range(arr.shape[1])}
+
+        feature_columns = self.metadata.get("feature_columns") or list(row.keys())
+        cleaned: Dict[str, Any] = {}
+        for column in feature_columns:
+            value = row.get(column)
+            if column == "process_id":
+                if value is None or value == "":
+                    continue
+                cleaned[column] = str(value).strip().upper()
+                continue
+
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                continue
+
+            if column.endswith("_frac"):
+                numeric = float(np.clip(numeric, 0.0, 1.0))
+            elif column.endswith("_pct"):
+                numeric = float(np.clip(numeric, 0.0, 100.0))
+            else:
+                numeric = float(max(numeric, 0.0))
+            cleaned[column] = numeric
+
+        return cleaned
+
     def _rf_uncertainty(self, matrix: np.ndarray) -> np.ndarray:
         """Desviación entre árboles del RandomForestRegressor multi-salida."""
         regressor = getattr(self.pipeline, "named_steps", {}).get("regressor") if self.pipeline else None
@@ -629,15 +722,16 @@ class ModelRegistry:
         return updates
 
     def embed(self, features: Mapping[str, Any]) -> Tuple[float, ...]:
-        if not HAS_TORCH or self.autoencoder is None:
+        if not self.has_autoencoder():
             return ()
 
         try:
-            _, matrix = self._prepare_frame(features)
-            tensor = torch.tensor(matrix, dtype=torch.float32)
-            with torch.no_grad():
-                latent = self.autoencoder.encode(tensor).cpu().numpy().reshape(-1)
-            return tuple(float(x) for x in latent)
+            frame = pd.DataFrame([features])
+            matrix = self.transform_features(frame)
+            latent = self.encode_matrix(matrix)
+            if latent.size == 0:
+                return ()
+            return tuple(float(x) for x in latent.reshape(-1))
         except Exception as exc:
             LOGGER.warning("Fallo generando embedding: %s", exc)
             return ()
@@ -750,6 +844,9 @@ class _Autoencoder(nn.Module if HAS_TORCH else object):
 
     def encode(self, x: torch.Tensor) -> torch.Tensor:
         return self.encoder(x)
+
+    def decode(self, latent: torch.Tensor) -> torch.Tensor:
+        return self.decoder(latent)
 
 
 # Instancia global usada por la app

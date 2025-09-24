@@ -109,6 +109,30 @@ def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch):
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"inference_{datetime.utcnow().strftime('%Y%m%d')}.parquet"
     log_path.unlink(missing_ok=True)
+
+    log_path.unlink(missing_ok=True)
+
+
+def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch):
+    calls: list[str] = []
+
+    class NoCallRegistry:
+        ready = True
+        metadata = {"model_hash": "noop"}
+
+        def predict(self, features):
+            calls.append("predict")
+            return {}
+
+        def embed(self, features):
+            return []
+
+    monkeypatch.setattr(generator, "MODEL_REGISTRY", NoCallRegistry())
+
+    log_dir = generator.LOGS_ROOT
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"inference_{datetime.utcnow().strftime('%Y%m%d')}.parquet"
+    log_path.unlink(missing_ok=True)
     log_path.unlink(missing_ok=True)
 
 def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch):
