@@ -21,12 +21,13 @@ import random
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, Tuple
+from typing import Any, Dict, Iterable, Mapping, Tuple
 
 import numpy as np
 import pandas as pd
 
 from app.modules.label_mapper import derive_recipe_id, lookup_labels
+from app.modules.ranking import derive_auxiliary_signals, score_recipe
 
 try:  # Lazy import to avoid circular dependency during training pipelines
     from app.modules.ml_models import MODEL_REGISTRY
@@ -161,6 +162,89 @@ class PredProps:
             "water_l": float(self.water_l),
             "crew_min": float(self.crew_min),
         }
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "rigidez": float(self.rigidity),
+            "estanqueidad": float(self.tightness),
+            "mass_final_kg": float(self.mass_final_kg),
+            "energy_kwh": float(self.energy_kwh),
+            "water_l": float(self.water_l),
+            "crew_min": float(self.crew_min),
+            "source": str(self.source),
+            "uncertainty": {
+                str(k): float(v) for k, v in (self.uncertainty or {}).items()
+            },
+            "confidence_interval": {
+                str(k): [float(x) for x in v] for k, v in (self.confidence_interval or {}).items()
+            },
+            "feature_importance": [
+                (str(name), float(weight)) for name, weight in (self.feature_importance or [])
+            ],
+            "comparisons": {
+                str(name): {str(k): float(vv) for k, vv in val.items()}
+                for name, val in (self.comparisons or {}).items()
+            },
+        }
+
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, Any]) -> "PredProps":
+        def _get(name: str, alt: str | None = None, default: float = 0.0) -> float:
+            if alt is not None and alt in payload:
+                value = payload.get(alt)
+            else:
+                value = payload.get(name)
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return default
+
+        uncertainty_raw = payload.get("uncertainty") or {}
+        confidence_raw = payload.get("confidence_interval") or {}
+        feature_imp_raw = payload.get("feature_importance") or []
+        comparisons_raw = payload.get("comparisons") or {}
+
+        if isinstance(uncertainty_raw, Mapping):
+            uncertainty_map = {str(k): float(v) for k, v in uncertainty_raw.items()}
+        else:
+            uncertainty_map = {}
+
+        confidence_map: Dict[str, Tuple[float, float]] = {}
+        if isinstance(confidence_raw, Mapping):
+            for key, bounds in confidence_raw.items():
+                try:
+                    lo, hi = bounds
+                    confidence_map[str(key)] = (float(lo), float(hi))
+                except Exception:
+                    confidence_map[str(key)] = (0.0, 0.0)
+
+        feature_importance_list: list[tuple[str, float]] = []
+        if isinstance(feature_imp_raw, Iterable):
+            for item in feature_imp_raw:
+                if isinstance(item, (list, tuple)) and len(item) >= 2:
+                    feature_importance_list.append((str(item[0]), float(item[1])))
+
+        comparisons_map: Dict[str, Dict[str, float]] = {}
+        if isinstance(comparisons_raw, Mapping):
+            for name, payload_map in comparisons_raw.items():
+                if isinstance(payload_map, Mapping):
+                    comparisons_map[str(name)] = {
+                        str(k): float(v) for k, v in payload_map.items()
+                    }
+
+        return cls(
+            rigidity=_get("rigidez", "rigidity", 0.0),
+            tightness=_get("estanqueidad", "tightness", 0.0),
+            mass_final_kg=_get("mass_final_kg", default=0.0),
+            energy_kwh=_get("energy_kwh", default=0.0),
+            water_l=_get("water_l", default=0.0),
+            crew_min=_get("crew_min", default=0.0),
+            source=str(payload.get("source", "heuristic")),
+            uncertainty=uncertainty_map,
+            confidence_interval=confidence_map,
+            feature_importance=feature_importance_list,
+            comparisons=comparisons_map,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -467,22 +551,21 @@ def _select_process(
     return proc
 
 
-def _score_candidate(props: PredProps, target: dict, picks: pd.DataFrame, total_kg: float, crew_time_low: bool) -> float:
-    score = 0.0
-    score += 1.0 - abs(props.rigidity - float(target.get("rigidity", 0.75)))
-    score += 1.0 - abs(props.tightness - float(target.get("tightness", 0.75)))
-
-    def _pen(value: float, limit: float, eps: float) -> float:
-        return max(0.0, (value - float(limit)) / max(eps, float(limit)))
-
-    crew_eps = 0.5 if crew_time_low else 1.0
-    score -= _pen(props.energy_kwh, float(target.get("max_energy_kwh", 10.0)), 0.1)
-    score -= _pen(props.water_l, float(target.get("max_water_l", 5.0)), 0.1)
-    score -= _pen(props.crew_min, float(target.get("max_crew_min", 60.0)), crew_eps)
-
+def _score_candidate(
+    props: PredProps,
+    target: Mapping[str, Any],
+    picks: pd.DataFrame,
+    total_kg: float,
+    crew_time_low: bool,
+) -> tuple[float, Dict[str, Any], Dict[str, Any]]:
     prob_mass = float((picks["_problematic"].astype(int) * picks["kg"]).sum())
-    score += 0.5 * (prob_mass / max(0.1, total_kg))
-    return float(score)
+    context = {
+        "problematic_mass_ratio": prob_mass / max(0.1, total_kg),
+        "crew_time_low": bool(crew_time_low),
+    }
+    auxiliary = derive_auxiliary_signals(props, target)
+    score, breakdown = score_recipe(props, target, context=context, aux=auxiliary)
+    return float(score), breakdown, auxiliary
 
 
 def _build_candidate(
@@ -652,7 +735,7 @@ def _build_candidate(
             latent = tuple(float(x) for x in emb)
             features["latent_vector"] = latent
 
-    score = _score_candidate(props, target, picks, total_kg, crew_time_low)
+    score, breakdown, auxiliary = _score_candidate(props, target, picks, total_kg, crew_time_low)
 
     return {
         "materials": materials_for_plan,
@@ -675,6 +758,8 @@ def _build_candidate(
         "confidence_interval": props.confidence_interval or {},
         "feature_importance": props.feature_importance or [],
         "model_variants": props.comparisons or {},
+        "score_breakdown": breakdown,
+        "auxiliary": auxiliary,
     }
 
 

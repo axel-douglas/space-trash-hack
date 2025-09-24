@@ -240,6 +240,34 @@ if isinstance(history_df, pd.DataFrame) and not history_df.empty:
         chart_data = valid_hist.set_index("iteration")[["hypervolume", "dominance_ratio"]]
         st.line_chart(chart_data)
 
+# ----------------------------- Resumen de ranking -----------------------------
+summary_rows: list[dict[str, object]] = []
+for idx, cand in enumerate(cands, start=1):
+    props = cand.get("props")
+    if props is None:
+        continue
+    aux = cand.get("auxiliary") or {}
+    summary_rows.append(
+        {
+            "Rank": idx,
+            "Score": cand.get("score"),
+            "Proceso": f"{cand.get('process_id', '')} · {cand.get('process_name', '')}",
+            "Rigidez": getattr(props, "rigidity", float("nan")),
+            "Estanqueidad": getattr(props, "tightness", float("nan")),
+            "Energía (kWh)": getattr(props, "energy_kwh", float("nan")),
+            "Agua (L)": getattr(props, "water_l", float("nan")),
+            "Crew (min)": getattr(props, "crew_min", float("nan")),
+            "Seal": "✅" if aux.get("passes_seal", True) else "⚠️",
+            "Riesgo": aux.get("process_risk_label", "—"),
+        }
+    )
+
+if summary_rows:
+    st.subheader("Ranking multiobjetivo")
+    st.caption("Ordenado por score total, con sellado y riesgo resumidos.")
+    summary_df = pd.DataFrame(summary_rows)
+    st.dataframe(summary_df, hide_index=True, use_container_width=True)
+
 # ----------------------------- Render de candidatos -----------------------------
 st.subheader("Resultados del generador")
 st.caption(
@@ -264,6 +292,15 @@ for i, c in enumerate(cands):
         ])
         if problem_present:
             badges.append("♻️ Valorización de problemáticos")
+        aux = c.get("auxiliary") or {}
+        if aux:
+            if aux.get("passes_seal") is False:
+                badges.append("⚠️ Revisar estanqueidad")
+            elif aux.get("passes_seal"):
+                badges.append("✅ Sellado OK")
+            risk_label = aux.get("process_risk_label")
+            if risk_label:
+                badges.append(f"🏷️ Riesgo {risk_label}")
         if badges:
             st.markdown(" ".join([f'<span class="badge">{b}</span>' for b in badges]), unsafe_allow_html=True)
 
@@ -389,6 +426,23 @@ for i, c in enumerate(cands):
             st.dataframe(feat_df, hide_index=True, use_container_width=True)
             if feat.get("latent_vector"):
                 st.caption("Latente Rex-AI incluido para análisis generativo.")
+
+        breakdown = c.get("score_breakdown") or {}
+        contribs = breakdown.get("contributions") or {}
+        penalties = breakdown.get("penalties") or {}
+        if contribs or penalties:
+            st.markdown("**⚖️ Desglose del score**")
+            col_sc1, col_sc2 = st.columns(2)
+            if contribs:
+                contrib_df = pd.DataFrame([
+                    {"Factor": k, "+": float(v)} for k, v in contribs.items()
+                ]).sort_values("+", ascending=False)
+                col_sc1.dataframe(contrib_df, hide_index=True, use_container_width=True)
+            if penalties:
+                pen_df = pd.DataFrame([
+                    {"Penalización": k, "-": float(v)} for k, v in penalties.items()
+                ]).sort_values("-", ascending=False)
+                col_sc2.dataframe(pen_df, hide_index=True, use_container_width=True)
 
         # Seguridad
         flags = check_safety(c["materials"], c["process_name"], c["process_id"])
