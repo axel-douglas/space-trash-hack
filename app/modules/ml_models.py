@@ -18,7 +18,7 @@ import zipfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Mapping, Dict, List, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
 
 import joblib
 import numpy as np
@@ -188,6 +188,8 @@ class ModelRegistry:
         self.feature_stds: Dict[str, float] = {}
         self.residual_std: np.ndarray | None = None
         self.feature_importance_avg: List[Tuple[str, float]] = []
+        self.label_summary: Dict[str, Dict[str, Any]] = {}
+        self.label_columns: Dict[str, str] = {}
         self.xgb_models: Dict[str, Any] = {}   # comparador opcional
         self.autoencoder = None
         self.autoencoder_meta: Dict[str, Any] = {}
@@ -278,6 +280,45 @@ class ModelRegistry:
                 self.metadata = {}
         else:
             self.metadata = {}
+
+        labeling = self.metadata.get("labeling") or {}
+        if isinstance(labeling, dict):
+            columns = labeling.get("columns", {})
+            if isinstance(columns, dict):
+                self.label_columns = {str(k): str(v) for k, v in columns.items()}
+
+            summary_raw = labeling.get("summary", {})
+            parsed_summary: Dict[str, Dict[str, Any]] = {}
+            if isinstance(summary_raw, dict):
+                for source, payload in summary_raw.items():
+                    if not isinstance(payload, dict):
+                        continue
+                    try:
+                        count_val = int(payload.get("count") or payload.get("n") or 0)
+                    except (TypeError, ValueError):
+                        count_val = 0
+                    try:
+                        mean_weight = float(payload.get("mean_weight") or payload.get("mean") or 0.0)
+                    except (TypeError, ValueError):
+                        mean_weight = 0.0
+                    try:
+                        min_weight = float(payload.get("min_weight") or payload.get("min") or 0.0)
+                    except (TypeError, ValueError):
+                        min_weight = 0.0
+                    try:
+                        max_weight = float(payload.get("max_weight") or payload.get("max") or 0.0)
+                    except (TypeError, ValueError):
+                        max_weight = 0.0
+
+                    parsed_summary[str(source)] = {
+                        "count": count_val,
+                        "mean_weight": mean_weight,
+                        "min_weight": min_weight,
+                        "max_weight": max_weight,
+                    }
+
+            if parsed_summary:
+                self.label_summary = parsed_summary
 
         # Fallbacks robustos
         feats = (
@@ -370,6 +411,8 @@ class ModelRegistry:
                 "n_samples": self.metadata.get("n_samples"),
                 "features": self.feature_names,
                 "targets": TARGET_COLUMNS,
+                "label_summary": self.label_summary,
+                "label_columns": self.label_columns,
             },
             uncertainty={t: float(combined_std[i]) for i, t in enumerate(TARGET_COLUMNS)},
             confidence_interval=ci,
@@ -378,6 +421,40 @@ class ModelRegistry:
             latent_vector=(),  # sin PyTorch mantemos vacío
         )
         return result.as_dict()
+
+    def label_distribution_label(self) -> str:
+        if not self.label_summary:
+            return "—"
+
+        def _sort_key(item: Tuple[str, Dict[str, Any]]) -> Tuple[int, str]:
+            count = item[1].get("count")
+            try:
+                sortable = -int(count) if count is not None else 0
+            except (TypeError, ValueError):
+                sortable = 0
+            return sortable, str(item[0])
+
+        parts: List[str] = []
+        for source, stats in sorted(self.label_summary.items(), key=_sort_key):
+            label = str(source)
+            count = stats.get("count")
+            mean_weight = stats.get("mean_weight")
+            fragment = label
+            try:
+                if count is not None:
+                    fragment = f"{label}×{int(count)}"
+            except (TypeError, ValueError):
+                fragment = label
+
+            try:
+                if mean_weight is not None:
+                    fragment = f"{fragment} (w≈{float(mean_weight):.2f})"
+            except (TypeError, ValueError):
+                pass
+
+            parts.append(fragment)
+
+        return " · ".join(parts)
 
     # ---------------------- helpers internos --------------------------
     def _prepare_frame(self, features: Mapping[str, Any]) -> tuple[pd.DataFrame, np.ndarray]:
@@ -390,6 +467,99 @@ class ModelRegistry:
         if hasattr(matrix, "toarray"):
             matrix = matrix.toarray()
         return frame, np.asarray(matrix, dtype=float)
+
+    def transform_features(self, frame: pd.DataFrame) -> np.ndarray:
+        """Transforma un *DataFrame* usando el preprocesador entrenado."""
+
+        if frame.empty:
+            return np.zeros((0, max(1, len(self.feature_names))), dtype=float)
+
+        if self.preprocessor is None:
+            return np.zeros((len(frame), max(1, len(self.feature_names))), dtype=float)
+
+        matrix = self.preprocessor.transform(frame)
+        if hasattr(matrix, "toarray"):
+            matrix = matrix.toarray()
+        return np.asarray(matrix, dtype=float)
+
+    def has_autoencoder(self) -> bool:
+        return bool(HAS_TORCH and self.autoencoder is not None and self.preprocessor is not None)
+
+    def encode_matrix(self, matrix: np.ndarray) -> np.ndarray:
+        if matrix.size == 0:
+            return np.zeros((matrix.shape[0], 0), dtype=float)
+
+        if not self.has_autoencoder():
+            return np.zeros((matrix.shape[0], 0), dtype=float)
+
+        tensor = torch.tensor(matrix, dtype=torch.float32)
+        with torch.no_grad():
+            latent = self.autoencoder.encode(tensor).cpu().numpy()
+        return np.asarray(latent, dtype=float)
+
+    def decode_latent(self, latent: Sequence[float]) -> Dict[str, Any]:
+        if not latent:
+            return {}
+
+        if not self.has_autoencoder():
+            return {}
+
+        vector = np.asarray(latent, dtype=float).reshape(1, -1)
+        tensor = torch.tensor(vector, dtype=torch.float32)
+        try:
+            with torch.no_grad():
+                decoded = self.autoencoder.decode(tensor).cpu().numpy()
+        except Exception as exc:  # pragma: no cover - fallos raros de torch
+            LOGGER.warning("Fallo decodificando vector latente: %s", exc)
+            return {}
+
+        try:
+            original = self.preprocessor.inverse_transform(decoded)
+        except Exception as exc:  # pragma: no cover - transformadores sin inverse
+            LOGGER.warning("No se pudo invertir el preprocesamiento: %s", exc)
+            return {}
+
+        if isinstance(original, pd.DataFrame):
+            row = original.iloc[0].to_dict()
+        else:
+            arr = np.asarray(original)
+            if arr.ndim == 1:
+                arr = arr.reshape(1, -1)
+
+            names: Iterable[str]
+            names = getattr(self.preprocessor, "feature_names_in_", None) or []
+            if not names:
+                meta_columns = self.metadata.get("feature_columns") or []
+                names = [str(col) for col in meta_columns]
+            names = list(names)
+            if len(names) < arr.shape[1]:
+                names.extend(str(i) for i in range(len(names), arr.shape[1]))
+            row = {str(names[i]): arr[0, i] for i in range(arr.shape[1])}
+
+        feature_columns = self.metadata.get("feature_columns") or list(row.keys())
+        cleaned: Dict[str, Any] = {}
+        for column in feature_columns:
+            value = row.get(column)
+            if column == "process_id":
+                if value is None or value == "":
+                    continue
+                cleaned[column] = str(value).strip().upper()
+                continue
+
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError):
+                continue
+
+            if column.endswith("_frac"):
+                numeric = float(np.clip(numeric, 0.0, 1.0))
+            elif column.endswith("_pct"):
+                numeric = float(np.clip(numeric, 0.0, 100.0))
+            else:
+                numeric = float(max(numeric, 0.0))
+            cleaned[column] = numeric
+
+        return cleaned
 
     def _rf_uncertainty(self, matrix: np.ndarray) -> np.ndarray:
         """Desviación entre árboles del RandomForestRegressor multi-salida."""
@@ -552,15 +722,16 @@ class ModelRegistry:
         return updates
 
     def embed(self, features: Mapping[str, Any]) -> Tuple[float, ...]:
-        if not HAS_TORCH or self.autoencoder is None:
+        if not self.has_autoencoder():
             return ()
 
         try:
-            _, matrix = self._prepare_frame(features)
-            tensor = torch.tensor(matrix, dtype=torch.float32)
-            with torch.no_grad():
-                latent = self.autoencoder.encode(tensor).cpu().numpy().reshape(-1)
-            return tuple(float(x) for x in latent)
+            frame = pd.DataFrame([features])
+            matrix = self.transform_features(frame)
+            latent = self.encode_matrix(matrix)
+            if latent.size == 0:
+                return ()
+            return tuple(float(x) for x in latent.reshape(-1))
         except Exception as exc:
             LOGGER.warning("Fallo generando embedding: %s", exc)
             return ()
@@ -673,6 +844,9 @@ class _Autoencoder(nn.Module if HAS_TORCH else object):
 
     def encode(self, x: torch.Tensor) -> torch.Tensor:
         return self.encoder(x)
+
+    def decode(self, latent: torch.Tensor) -> torch.Tensor:
+        return self.decoder(latent)
 
 
 # Instancia global usada por la app

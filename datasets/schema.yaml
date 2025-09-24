@@ -1,0 +1,240 @@
+version: 0.1
+updated_at: 2025-09-24
+primary_keys:
+  - recipe_id
+  - process_id
+label_sources:
+  enum:
+    - mission
+    - simulated
+    - weak
+    - synthetic
+features:
+  path: datasets/gold/features.parquet
+  description: "Matriz de entrenamiento con un registro por receta candidata (antes de ensayo físico)."
+  columns:
+    recipe_id:
+      dtype: string
+      role: primary_key
+      description: "Identificador estable de la receta generada (hash o UUID)."
+    process_id:
+      dtype: category
+      categories: [P01, P02, P03, P04]
+      description: "Proceso aplicado a la receta (shredder, lamination, sinter, CTB reconfig)."
+    batch_id:
+      dtype: string
+      nullable: true
+      description: "Identificador opcional del lote o corrida de simulación."
+    regolith_pct:
+      dtype: float32
+      range: [0.0, 1.0]
+      description: "Fracción másica de regolito MGS-1 en la mezcla."
+    total_mass_kg:
+      dtype: float32
+      description: "Masa total del batch resultante."
+    mass_input_kg:
+      dtype: float32
+      description: "Masa total de residuos antes de proceso (sin regolito)."
+    num_items:
+      dtype: int32
+      description: "Número de ítems discretos combinados en la receta."
+    density_kg_m3:
+      dtype: float32
+      description: "Densidad aparente estimada de la mezcla, ajustada por humedad."
+    moisture_frac:
+      dtype: float32
+      range: [0.0, 1.0]
+      description: "Contenido de humedad total expresado en fracción (0–1)."
+    difficulty_index:
+      dtype: float32
+      description: "Factor medio ponderado de dificultad de procesado."
+    problematic_mass_frac:
+      dtype: float32
+      description: "Fracción de masa asociada a flags de riesgo (sharp/hazard/volatile)."
+    problematic_item_frac:
+      dtype: float32
+      description: "Fracción de ítems con flags problemáticos."
+    gas_recovery_index:
+      dtype: float32
+      description: "Índice Trash-to-Gas asociado al escenario logístico."
+    logistics_reuse_index:
+      dtype: float32
+      description: "Índice Logistics-to-Living basado en potencial de reutilización."
+    energy_kwh_per_kg:
+      dtype: float32
+      description: "Consumo energético específico esperado por proceso."
+    water_l_per_kg:
+      dtype: float32
+      description: "Consumo de agua específico esperado por proceso."
+    crew_min_per_batch:
+      dtype: float32
+      description: "Tiempo de tripulación estimado para ejecutar el batch."
+    oxide_sio2:
+      dtype: float32
+      description: "Fracción en peso de SiO₂ aportada por regolito."
+    oxide_feot:
+      dtype: float32
+      description: "Fracción en peso de FeOₜ aportada por regolito."
+    oxide_mgo:
+      dtype: float32
+      description: "Fracción en peso de MgO aportada por regolito."
+    oxide_cao:
+      dtype: float32
+      description: "Fracción en peso de CaO aportada por regolito."
+    oxide_so3:
+      dtype: float32
+      description: "Fracción en peso de SO₃ aportada por regolito."
+    oxide_h2o:
+      dtype: float32
+      description: "Contenido estimado de H₂O en el material particulado."
+    foam_frac:
+      dtype: float32
+      description: "Fracción de masa perteneciente a materiales espumados."
+    eva_frac:
+      dtype: float32
+      description: "Fracción de masa etiquetada con flag EVA/CTB."
+    textile_frac:
+      dtype: float32
+      description: "Fracción de masa correspondiente a textiles."
+    multilayer_frac:
+      dtype: float32
+      description: "Fracción de masa con construcciones multilayer."
+    glove_frac:
+      dtype: float32
+      description: "Fracción asociada a guantes u otros elementos de EVA similares."
+    packaging_frac:
+      dtype: float32
+      description: "Fracción de masa que proviene de empaques."
+    polyethylene_frac:
+      dtype: float32
+      description: "Fracción con alto contenido de polietileno."
+    carbon_fiber_frac:
+      dtype: float32
+      description: "Fracción con fibras de carbono."
+    hydrogen_rich_frac:
+      dtype: float32
+      description: "Fracción con materiales ricos en hidrógeno (para shielding)."
+    trash_to_gas_score:
+      dtype: float32
+      nullable: true
+      description: "Puntaje ajustado según potencial de conversión a gas útil."
+    target_rigidity:
+      dtype: float32
+      nullable: true
+      description: "Objetivo de rigidez solicitado por el usuario (0–1)."
+    target_tightness:
+      dtype: float32
+      nullable: true
+      description: "Objetivo de estanqueidad solicitado (0–1)."
+    target_energy_kwh:
+      dtype: float32
+      nullable: true
+      description: "Límite superior de energía establecido por el usuario."
+    target_water_l:
+      dtype: float32
+      nullable: true
+      description: "Límite superior de agua permitido."
+    target_crew_min:
+      dtype: float32
+      nullable: true
+      description: "Límite de tiempo de tripulación permitido."
+    label_source_hint:
+      dtype: category
+      nullable: true
+      categories: [mission, simulated, weak, synthetic]
+      description: "Indicio de la procedencia de la mejor etiqueta disponible (para priorización)."
+labels:
+  path: datasets/gold/labels.parquet
+  description: "Etiquetas reales, simuladas o weak asociadas a cada receta-proceso."
+  columns:
+    recipe_id:
+      dtype: string
+      role: primary_key
+    process_id:
+      dtype: category
+      categories: [P01, P02, P03, P04]
+    label_source:
+      dtype: category
+      categories: [mission, simulated, weak, synthetic]
+      description: "Fuente de la etiqueta: misión real, simulador validado, heurística calibrada o bootstrap sintético."
+    label_weight:
+      dtype: float32
+      description: "Peso relativo usado en el entrenamiento (misión>simulado>weak>synthetic)."
+    rigidez:
+      dtype: float32
+      nullable: true
+      description: "Rigidez medida/estimada (0–1)."
+    estanqueidad:
+      dtype: float32
+      nullable: true
+      description: "Estanqueidad medida/estimada (0–1)."
+    energy_kwh:
+      dtype: float32
+      nullable: true
+      description: "Consumo energético observado para la corrida."
+    water_l:
+      dtype: float32
+      nullable: true
+      description: "Consumo de agua observado."
+    crew_min:
+      dtype: float32
+      nullable: true
+      description: "Minutos de tripulación requeridos."
+    tightness_pass:
+      dtype: bool
+      nullable: true
+      description: "Bandera binaria derivada de estanqueidad (pasa/no pasa)."
+    process_risk:
+      dtype: category
+      nullable: true
+      categories: [low, medium, high]
+      description: "Clasificación del riesgo del proceso asociado."
+    conf_lo_rigidez:
+      dtype: float32
+      nullable: true
+    conf_hi_rigidez:
+      dtype: float32
+      nullable: true
+    conf_lo_estanqueidad:
+      dtype: float32
+      nullable: true
+    conf_hi_estanqueidad:
+      dtype: float32
+      nullable: true
+    conf_lo_energy_kwh:
+      dtype: float32
+      nullable: true
+    conf_hi_energy_kwh:
+      dtype: float32
+      nullable: true
+    conf_lo_water_l:
+      dtype: float32
+      nullable: true
+    conf_hi_water_l:
+      dtype: float32
+      nullable: true
+    conf_lo_crew_min:
+      dtype: float32
+      nullable: true
+    conf_hi_crew_min:
+      dtype: float32
+      nullable: true
+    notes:
+      dtype: string
+      nullable: true
+      description: "Observaciones cualitativas relevantes para contextualizar la etiqueta."
+confidence_interval_policy:
+  method: ensemble_variance
+  residual_std_fields:
+    rigidez: residual_std.rigidez
+    estanqueidad: residual_std.estanqueidad
+    energy_kwh: residual_std.energy_kwh
+    water_l: residual_std.water_l
+    crew_min: residual_std.crew_min
+  fallback:
+    type: percentile
+    window: 0.95
+provenance:
+  gold_builder: scripts/build_gold_dataset.py
+  feedback_ingest: scripts/ingest_feedback.py
+  active_learning: app/modules/active_learning.py

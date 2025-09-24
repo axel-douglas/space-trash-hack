@@ -19,6 +19,8 @@ from .io import (
     load_process_catalog,
 )
 from .generator import generate_candidates, PredProps
+from .ranking import rank_candidates, score_recipe, derive_auxiliary_signals
+from .active_learning import suggest_next_candidates, Acquisition
 
 __all__ = [
     # IO
@@ -29,6 +31,11 @@ __all__ = [
     # Generación
     "generate_candidates",
     "PredProps",
+    "rank_candidates",
+    "score_recipe",
+    "derive_auxiliary_signals",
+    "suggest_next_candidates",
+    "Acquisition",
     # ML
     "MODEL_REGISTRY",
     "ModelRegistry",
