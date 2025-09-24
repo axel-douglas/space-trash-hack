@@ -84,3 +84,61 @@ def test_model_bundle_download_skips_bootstrap(monkeypatch, tmp_path):
     assert isinstance(registry.pipeline, DummyPipeline)
     assert not bootstrap_calls
     responses.assert_call_count(url, 1)
+
+
+def test_model_registry_parses_label_summary(tmp_path, monkeypatch):
+    models_dir = tmp_path / "models"
+    models_dir.mkdir()
+
+    pipeline_path = models_dir / "rexai_regressor.joblib"
+    joblib.dump(DummyPipeline(), pipeline_path)
+
+    metadata_path = models_dir / "metadata_gold.json"
+    metadata_payload = {
+        "trained_at": "2025-01-01T00:00:00Z",
+        "trained_on": "gold_v1",
+        "trained_label": "gold_v1",
+        "n_samples": 10,
+        "feature_means": {},
+        "feature_stds": {},
+        "post_transform_features": [],
+        "targets": ml_models.TARGET_COLUMNS,
+        "random_forest": {"feature_importance": {"average": []}},
+        "labeling": {
+            "columns": {"source": "label_source", "weight": "label_weight"},
+            "summary": {
+                "mission": {
+                    "count": 3,
+                    "mean_weight": 1.0,
+                    "min_weight": 1.0,
+                    "max_weight": 1.0,
+                },
+                "simulated": {
+                    "count": 2,
+                    "mean_weight": 0.6,
+                    "min_weight": 0.5,
+                    "max_weight": 0.7,
+                },
+            },
+        },
+    }
+    metadata_path.write_text(json.dumps(metadata_payload), encoding="utf-8")
+
+    monkeypatch.setattr(ml_models, "MODEL_DIR", models_dir)
+    monkeypatch.setattr(ml_models, "PIPELINE_PATH", pipeline_path)
+    monkeypatch.setattr(ml_models, "METADATA_PATH", metadata_path)
+    monkeypatch.setattr(ml_models, "LEGACY_METADATA_PATH", models_dir / "metadata.json")
+    monkeypatch.setattr(ml_models, "XGBOOST_PATH", models_dir / "rexai_xgboost.joblib")
+    monkeypatch.setattr(ml_models, "AUTOENCODER_PATH", models_dir / "rexai_autoencoder.pt")
+    monkeypatch.setattr(ml_models, "TABTRANSFORMER_PATH", models_dir / "rexai_tabtransformer.pt")
+    monkeypatch.setattr(ml_models, "TIGHTNESS_CLASSIFIER_PATH", models_dir / "rexai_class_tightness.joblib")
+    monkeypatch.setattr(ml_models, "RIGIDITY_CLASSIFIER_PATH", models_dir / "rexai_class_rigidity.joblib")
+
+    registry = ml_models.ModelRegistry(model_dir=models_dir)
+
+    assert registry.label_columns == {"source": "label_source", "weight": "label_weight"}
+    assert registry.label_summary["mission"]["count"] == 3
+    assert registry.label_summary["simulated"]["mean_weight"] == 0.6
+    label_text = registry.label_distribution_label()
+    assert "mission×3" in label_text
+    assert "simulated×2" in label_text

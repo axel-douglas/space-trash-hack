@@ -491,6 +491,7 @@ def _build_candidate(
     rng: random.Random,
     target: dict,
     crew_time_low: bool,
+    use_ml: bool,
     tuning: dict[str, Any] | None,
 ) -> dict | None:
     if picks.empty or proc_df is None or proc_df.empty:
@@ -527,6 +528,7 @@ def _build_candidate(
     recipe_id = derive_recipe_id(picks, proc, features)
     if recipe_id:
         features["recipe_id"] = recipe_id
+    features["prediction_mode"] = "heuristic"
 
     heuristic = heuristic_props(picks, proc, weights, regolith_pct)
     curated_targets, curated_meta = lookup_labels(
@@ -573,9 +575,11 @@ def _build_candidate(
         features["uncertainty"] = {}
         features["feature_importance"] = []
         features["model_variants"] = {}
+        features["prediction_mode"] = "curated"
     else:
         props = heuristic
-        force_heuristic = os.getenv("REXAI_FORCE_HEURISTIC", "").lower() in {"1", "true", "yes"}
+        force_env = os.getenv("REXAI_FORCE_HEURISTIC", "").lower() in {"1", "true", "yes"}
+        force_heuristic = (not use_ml) or force_env
         if not force_heuristic and MODEL_REGISTRY is not None and getattr(MODEL_REGISTRY, "ready", False):
             features_for_inference = dict(features)
             if prediction:
@@ -630,10 +634,13 @@ def _build_candidate(
                         features["confidence_interval"] = props.confidence_interval or {}
                         features["feature_importance"] = props.feature_importance or []
                         features["model_variants"] = props.comparisons or {}
+                        features["prediction_mode"] = "ml"
                     else:
                         prediction = {}
                         prediction_error = "El modelo ML no devolvió resultados."
                         logging.getLogger(__name__).error("MODEL_REGISTRY.predict returned no data")
+        if force_heuristic:
+            features["prediction_mode"] = "heuristic"
 
     latent: Tuple[float, ...] | list[float] = []
     if MODEL_REGISTRY is not None and getattr(MODEL_REGISTRY, "ready", False):
@@ -683,6 +690,7 @@ def generate_candidates(
     n: int = 6,
     crew_time_low: bool = False,
     optimizer_evals: int = 0,
+    use_ml: bool = True,
 ):
     """Generate *n* candidate recycling plans plus optional optimization history."""
 
@@ -697,7 +705,7 @@ def generate_candidates(
         override = override or {}
         bias = float(override.get("problematic_bias", 2.0))
         picks = _pick_materials(df, rng, n=rng.choice([2, 3]), bias=bias)
-        return _build_candidate(picks, proc_df, rng, target, crew_time_low, override)
+        return _build_candidate(picks, proc_df, rng, target, crew_time_low, use_ml, override)
 
     candidates: list[dict] = []
     for _ in range(n):
