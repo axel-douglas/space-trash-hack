@@ -9,8 +9,12 @@ seguros para que la UI nunca crashee.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import os
+import tempfile
+import zipfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -19,6 +23,8 @@ from typing import Any, Mapping, Dict, List, Tuple
 import joblib
 import numpy as np
 import pandas as pd
+import requests
+import streamlit as st
 
 try:  # Optional dependency for embeddings
     import torch
@@ -49,6 +55,76 @@ TARGET_COLUMNS: List[str] = ["rigidez", "estanqueidad", "energy_kwh", "water_l",
 
 DEFAULT_TIGHTNESS_SCORE_MAP = {0: 0.35, 1: 0.85}
 DEFAULT_RIGIDITY_SCORE_MAP = {1: 0.35, 2: 0.65, 3: 0.9}
+
+
+def _get_secret_value(key: str) -> str | None:
+    value = os.environ.get(key)
+    if value:
+        return value
+
+    secrets = getattr(st, "secrets", None)
+    if secrets is None:
+        return None
+
+    try:
+        secret_value = secrets[key]
+    except FileNotFoundError:
+        return None
+    except (KeyError, AttributeError, TypeError):
+        return None
+
+    if secret_value is None:
+        return None
+
+    return str(secret_value)
+
+
+def ensure_model_bundle(model_dir: Path | str = MODEL_DIR) -> None:
+    """Descarga y extrae el bundle de modelos si está configurado."""
+
+    url = _get_secret_value("MODEL_BUNDLE_URL")
+    if not url:
+        return
+
+    target_dir = Path(model_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    expected_pipeline = target_dir / PIPELINE_PATH.name
+    if expected_pipeline.exists():
+        return
+
+    LOGGER.info("Descargando bundle de modelos desde %s", url)
+
+    try:
+        response = requests.get(url, timeout=60)
+        response.raise_for_status()
+    except Exception as exc:
+        LOGGER.warning("No se pudo descargar el bundle de modelos desde %s: %s", url, exc)
+        return
+
+    data = response.content
+    expected_hash = _get_secret_value("MODEL_BUNDLE_SHA256")
+    if expected_hash:
+        digest = hashlib.sha256(data).hexdigest()
+        if digest.lower() != expected_hash.strip().lower():
+            LOGGER.warning(
+                "Hash SHA256 del bundle no coincide (esperado %s, obtenido %s)",
+                expected_hash,
+                digest,
+            )
+            return
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir) / "model_bundle.zip"
+        tmp_path.write_bytes(data)
+        try:
+            with zipfile.ZipFile(tmp_path) as bundle:
+                bundle.extractall(target_dir)
+        except Exception as exc:
+            LOGGER.warning("No se pudo extraer el bundle de modelos desde %s: %s", url, exc)
+            return
+
+    LOGGER.info("Bundle de modelos extraído en %s", target_dir)
 
 
 def _parse_score_map(raw: Any, fallback: Dict[int, float]) -> Dict[int, float]:
@@ -163,6 +239,7 @@ class ModelRegistry:
 
     # -------------------------- Carga ---------------------------------
     def _load(self) -> None:
+        ensure_model_bundle(self.model_dir)
         # Pipeline
         pipeline_path = PIPELINE_PATH
         if not pipeline_path.exists():

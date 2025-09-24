@@ -1,0 +1,86 @@
+"""Tests for model bundle bootstrap in ModelRegistry."""
+
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import zipfile
+from pathlib import Path
+
+import joblib
+import pytest
+import responses
+
+from app.modules import ml_models
+
+
+class DummyPipeline:
+    """Minimal pipeline object for joblib serialization in tests."""
+
+    def __init__(self) -> None:
+        self.named_steps = {"preprocess": None}
+
+    def predict(self, frame):  # pragma: no cover - not exercised in this test
+        return [[0.0 for _ in ml_models.TARGET_COLUMNS]]
+
+
+@pytest.fixture(autouse=True)
+def reset_bundle_env(monkeypatch):
+    monkeypatch.delenv("MODEL_BUNDLE_URL", raising=False)
+    monkeypatch.delenv("MODEL_BUNDLE_SHA256", raising=False)
+
+
+def _prepare_bundle(tmp_path: Path) -> tuple[bytes, str]:
+    bundle_root = tmp_path / "bundle_root"
+    bundle_root.mkdir()
+
+    joblib.dump(DummyPipeline(), bundle_root / "rexai_regressor.joblib")
+    (bundle_root / "metadata_gold.json").write_text(json.dumps({"trained_on": "test"}), encoding="utf-8")
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        for item in bundle_root.iterdir():
+            archive.write(item, item.name)
+    payload = buffer.getvalue()
+    digest = hashlib.sha256(payload).hexdigest()
+    return payload, digest
+
+
+@responses.activate
+def test_model_bundle_download_skips_bootstrap(monkeypatch, tmp_path):
+    models_dir = tmp_path / "models"
+    pipeline_path = models_dir / "rexai_regressor.joblib"
+    metadata_path = models_dir / "metadata_gold.json"
+
+    monkeypatch.setattr(ml_models, "MODEL_DIR", models_dir)
+    monkeypatch.setattr(ml_models, "PIPELINE_PATH", pipeline_path)
+    monkeypatch.setattr(ml_models, "METADATA_PATH", metadata_path)
+    monkeypatch.setattr(ml_models, "LEGACY_METADATA_PATH", models_dir / "metadata.json")
+    monkeypatch.setattr(ml_models, "XGBOOST_PATH", models_dir / "rexai_xgboost.joblib")
+    monkeypatch.setattr(ml_models, "AUTOENCODER_PATH", models_dir / "rexai_autoencoder.pt")
+    monkeypatch.setattr(ml_models, "TABTRANSFORMER_PATH", models_dir / "rexai_tabtransformer.pt")
+    monkeypatch.setattr(ml_models, "TIGHTNESS_CLASSIFIER_PATH", models_dir / "rexai_class_tightness.joblib")
+    monkeypatch.setattr(ml_models, "RIGIDITY_CLASSIFIER_PATH", models_dir / "rexai_class_rigidity.joblib")
+
+    payload, digest = _prepare_bundle(tmp_path)
+    url = "https://example.com/model.zip"
+    responses.add(responses.GET, url, body=payload, status=200, content_type="application/zip")
+
+    monkeypatch.setenv("MODEL_BUNDLE_URL", url)
+    monkeypatch.setenv("MODEL_BUNDLE_SHA256", digest)
+
+    bootstrap_calls: list[bool] = []
+
+    def fake_bootstrap():
+        bootstrap_calls.append(True)
+        return str(pipeline_path)
+
+    monkeypatch.setattr("app.modules.model_training.bootstrap_demo_model", fake_bootstrap)
+
+    registry = ml_models.ModelRegistry(model_dir=models_dir)
+
+    assert registry.ready is True
+    assert isinstance(registry.pipeline, DummyPipeline)
+    assert not bootstrap_calls
+    responses.assert_call_count(url, 1)

@@ -14,3 +14,4 @@ joblib==1.4.2
 xgboost==2.1.1
 # Fijamos rich compatible con Streamlit 1.38 para evitar conflictos en Cloud
 rich>=10.14.0,<14
+responses==0.25.3

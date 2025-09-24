@@ -146,6 +146,36 @@ Antes de lanzar Streamlit ejecutá `python -m scripts.verify_model_ready` para
 confirmar que `ModelRegistry.ready` devuelve `True` y que la app usará el
 ensemble entrenado desde el inicio.
 
+### Descarga automática desde secrets
+
+Para despliegues donde no queremos subir los binarios al repositorio, la app
+puede descargar el ZIP desde un release público/privado antes de levantar el
+registro de modelos. Configurá los siguientes valores como variables de entorno
+o en `st.secrets`:
+
+```toml
+# .streamlit/secrets.toml
+MODEL_BUNDLE_URL = "https://github.com/<org>/<repo>/releases/download/v1.0.0/rexai_model_bundle_gold_v1.zip"
+MODEL_BUNDLE_SHA256 = "<hash calculado con sha256sum>"
+```
+
+Con esas claves presentes, `ModelRegistry` descarga el bundle a un directorio
+temporal, valida opcionalmente el hash y lo extrae automáticamente sobre
+`data/models/` antes de cargar `joblib`. Si los artefactos ya existen en el
+directorio destino, la descarga se omite.
+
+Flujo recomendado para publicar nuevos modelos:
+
+1. Ejecutá `python -m scripts.package_model_bundle --output dist/<bundle>.zip`.
+2. Calculá el hash con `sha256sum dist/<bundle>.zip` (o `shasum -a 256`).
+3. Cargá el ZIP como Release Asset en GitHub y copiá la URL de descarga directa
+   (`https://github.com/<org>/<repo>/releases/download/...`).
+4. Actualizá `MODEL_BUNDLE_URL` y `MODEL_BUNDLE_SHA256` en el entorno/secrets
+   del despliegue (Streamlit Cloud, Hugging Face, etc.).
+
+Así cada reinicio de la app asegura que `data/models/` contenga la versión
+publicada sin ejecutar el bootstrap sintético.
+
 ### Mantener el bundle actualizado
 
 1. Reentrena con los datasets más recientes:
