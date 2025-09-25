@@ -1,0 +1,33 @@
+source,page_hint,category,variable,value,units,notes
+10-2072_A1b.pdf,2,geometry,ctb_small_length,50.2,cm,ISS soft stowage bag basic size
+10-2072_A1b.pdf,2,geometry,ctb_small_width,42.5,cm,ISS soft stowage bag basic size
+10-2072_A1b.pdf,2,geometry,ctb_small_height,24.8,cm,ISS soft stowage bag basic size
+10-2072_A1b.pdf,2,geometry,ctb_small_volume,0.0529,m^3,Computed from 50.2×42.5×24.8 cm
+10-2072_A1b.pdf,9,geometry,l2l2009_ctb_length,42.5,cm,Unfoldable CTB used in L2L2009
+10-2072_A1b.pdf,9,geometry,l2l2009_ctb_width,50.2,cm,Unfoldable CTB used in L2L2009
+10-2072_A1b.pdf,9,geometry,l2l2009_ctb_height,24.8,cm,Unfoldable CTB used in L2L2009
+10-2072_A1b.pdf,9,geometry,l2l2009_ctb_volume,0.0529,m^3,Computed from 16.75×19.75×9.75 in
+10-2072_A1b.pdf,13,geometry,panel_unfolded_length,1.829,m,CTB unfolds to rectangle ~6 ft long
+10-2072_A1b.pdf,13,geometry,panel_unfolded_width,0.66,m,CTB rectangle ~26 in wide
+10-2072_A1b.pdf,6,testbed,microhab_length,3.658,m,Microhab length
+10-2072_A1b.pdf,6,testbed,microhab_diameter,2.438,m,Microhab diameter (approx.)
+10-2072_A1b.pdf,9,testbed,ergonomic_grid_spacing,0.457,m,Hexagonal frame grid spacing
+10-2072_A1b.pdf,3,logistics,crew_goods_mass_28d_4p,510.0,kg,Estimated goods mass
+10-2072_A1b.pdf,3,logistics,packaging_per_goods_ratio,0.1538,kg/kg,2 kg packaging per 13 kg goods
+10-2072_A1b.pdf,3,logistics,packaging_mass_28d_4p,78.5,kg,Computed packaging mass for above mission
+10-2072_A1b.pdf,14,scenario,outpost_ctb_units_min,1300,units,Estimated CTB units delivered (min)
+10-2072_A1b.pdf,14,scenario,outpost_ctb_units_max,1700,units,Estimated CTB units delivered (max)
+10-2072_A1b.pdf,14,scenario,outfitting_mass_baseline_min,1400,kg,Conventional outfitting mass to be supplied (min)
+10-2072_A1b.pdf,14,scenario,outfitting_mass_baseline_max,1800,kg,Conventional outfitting mass to be supplied (max)
+10-2072_A1b.pdf,14,scenario,outfitting_mass_eliminated_min,1200,kg,Outfitting eliminated by L2L (min)
+10-2072_A1b.pdf,14,scenario,outfitting_mass_eliminated_max,1600,kg,Outfitting eliminated by L2L (max)
+10-2072_A1b.pdf,14,scenario,packaging_mass_total_min,2600,kg,Total packaging mass for 1300 CTBs (min est.)
+10-2072_A1b.pdf,14,scenario,packaging_mass_total_max,3400,kg,Total packaging mass for 1700 CTBs (max est.)
+10-2072_A1b.pdf,14,scenario,packaging_mass_remaining_min,400,kg,Discarded packaging after L2L reuse (min est.)
+10-2072_A1b.pdf,14,scenario,packaging_mass_remaining_max,1800,kg,Discarded packaging after L2L reuse (max est.)
+10-2072_A1b.pdf,3,ops,storage_access_mode,random_access_required,,All CTBs must be accessible at any time
+10-2072_A1b.pdf,"1,4,11,13",reuse,reuse_modes,cabinets;partitions;desks;chairs;radiation_shielding;water_walls;regolith_bricks;workstations,,Catalog of dual-use applications
+10-2072_A1b.pdf,13,materials,hydrogen_impregnation_panels,supported,,CTB fabric optionally hydrogen-rich for shielding
+10-2072_A1b.pdf,13,materials,photovoltaic_panels_option,supported,,CTB panels with flexible PV sections possible
+10-2072_A1b.pdf,12,ops,fasteners_reusable,pins;carabiners;bolts,,Preferred reconfigurable fasteners
+10-2072_A1b.pdf,12,ops,fasteners_one_off,plastic_rivets;zip_ties,,Create additional waste; less preferred
