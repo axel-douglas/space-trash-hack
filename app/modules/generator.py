@@ -14,14 +14,17 @@ pipeline can rely on a single source of truth.
 
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 import os
 import random
+import re
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, Tuple
+from typing import Any, Dict, Iterable, Mapping, NamedTuple, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -36,6 +39,31 @@ except Exception:  # pragma: no cover - fallback when models are not available
 
 DATASETS_ROOT = Path(__file__).resolve().parents[2] / "datasets"
 LOGS_ROOT = Path(__file__).resolve().parents[2] / "data" / "logs"
+
+
+def _resolve_dataset_path(name: str) -> Path | None:
+    """Return the first dataset path that exists for *name*.
+
+    The helper checks the canonical ``datasets`` root alongside the ``raw``
+    subdirectory so callers do not need to remember where a file was stored.
+    """
+
+    candidates = (
+        DATASETS_ROOT / name,
+        DATASETS_ROOT / "raw" / name,
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _slugify(value: str) -> str:
+    """Convert *value* into a snake_case identifier safe for feature names."""
+
+    text = re.sub(r"[^0-9a-zA-Z]+", "_", str(value).strip().lower())
+    text = re.sub(r"_+", "_", text).strip("_")
+    return text or "value"
 
 
 def _to_serializable(value: Any) -> Any:
@@ -101,15 +129,46 @@ def _append_inference_log(
 
 
 def _load_regolith_vector() -> Dict[str, float]:
-    path = DATASETS_ROOT / "raw" / "mgs1_oxides.csv"
-    if path.exists():
+    path = _resolve_dataset_path("MGS-1_Martian_Regolith_Simulant_Recipe.csv")
+    if path is None:
+        path = DATASETS_ROOT / "raw" / "mgs1_oxides.csv"
+
+    if path and path.exists():
         table = pd.read_csv(path)
-        return (
-            table.assign(oxide=lambda df: df["oxide"].str.lower())
-            .set_index("oxide")["wt_percent"]
-            .div(100.0)
-            .to_dict()
-        )
+        key_cols = [
+            col
+            for col in table.columns
+            if col.lower() in {"oxide", "component", "phase", "mineral"}
+        ]
+        value_cols = [
+            col
+            for col in table.columns
+            if any(token in col.lower() for token in ("wt", "weight", "percent"))
+        ]
+
+        key_col = key_cols[0] if key_cols else None
+        value_col = value_cols[0] if value_cols else None
+
+        if key_col and value_col:
+            working = table[[key_col, value_col]].dropna()
+
+            def _clean_label(value: Any) -> str:
+                text = str(value or "").lower()
+                text = re.sub(r"[^0-9a-z]+", "_", text)
+                text = re.sub(r"_+", "_", text).strip("_")
+                return text
+
+            working[key_col] = working[key_col].map(_clean_label)
+            weights = pd.to_numeric(working[value_col], errors="coerce")
+            total = float(weights.sum())
+            if total > 0:
+                normalised = weights.div(total)
+                return {
+                    str(key): float(normalised.iloc[idx])
+                    for idx, key in enumerate(working[key_col])
+                    if pd.notna(normalised.iloc[idx])
+                }
+
     return {"sio2": 0.48, "feot": 0.18, "mgo": 0.13, "cao": 0.055, "so3": 0.07, "h2o": 0.032}
 
 
@@ -133,9 +192,701 @@ def _load_mean_reuse() -> float:
     return 0.6
 
 
+@dataclass
+class _L2LParameters:
+    constants: Dict[str, float]
+    category_features: Dict[str, Dict[str, float]]
+    item_features: Dict[str, Dict[str, float]]
+    hints: Dict[str, str]
+
+
+def _parse_l2l_numeric(value: Any) -> Dict[str, float]:
+    """Return numeric representations for Logistics-to-Living values."""
+
+    result: Dict[str, float] = {}
+    if value is None:
+        return result
+
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if np.isfinite(value):
+            result["value"] = float(value)
+        return result
+
+    text = str(value).strip()
+    if not text:
+        return result
+
+    cleaned = text.replace(",", "").replace("—", "-").replace("–", "-").replace("−", "-")
+    numbers = [
+        float(match)
+        for match in re.findall(r"-?\d+(?:\.\d+)?", cleaned)
+        if match not in {"-"}
+    ]
+    if not numbers:
+        return result
+
+    lowered = cleaned.lower()
+    if any(token in lowered for token in (" per ", ":", "/")) and len(numbers) >= 2:
+        denominator = numbers[1]
+        if denominator:
+            result["value"] = numbers[0] / denominator
+            result["numerator"] = numbers[0]
+            result["denominator"] = denominator
+        else:
+            result["value"] = numbers[0]
+        return result
+
+    if "-" in cleaned and len(numbers) >= 2:
+        result["min"] = numbers[0]
+        result["max"] = numbers[1]
+        result["value"] = float(np.mean(numbers[:2]))
+        return result
+
+    result["value"] = numbers[0]
+    if len(numbers) > 1:
+        result["extra"] = numbers[1]
+    return result
+
+
+def _feature_name_from_parts(*parts: str) -> str:
+    return "_".join(part for part in (_slugify(part) for part in parts if part) if part)
+
+
+def _load_l2l_parameters() -> _L2LParameters:
+    path = _resolve_dataset_path("l2l_parameters.csv")
+    if path is None or not path.exists():
+        return _L2LParameters({}, {}, {}, {})
+
+    table = pd.read_csv(path)
+    if table.empty:
+        return _L2LParameters({}, {}, {}, {})
+
+    normalized_cols = {col.lower(): col for col in table.columns}
+    category_col = normalized_cols.get("category")
+    subitem_col = normalized_cols.get("subitem")
+
+    descriptor_cols = [
+        normalized_cols[name]
+        for name in ("parameter", "metric", "key", "feature", "name", "field")
+        if name in normalized_cols
+    ]
+    value_candidates = [
+        column
+        for column in table.columns
+        if column not in {category_col, subitem_col}
+        and column not in descriptor_cols
+        and column.lower() not in {"page_hint", "units", "unit", "notes"}
+    ]
+
+    constants: Dict[str, float] = {}
+    category_features: Dict[str, Dict[str, float]] = {}
+    item_features: Dict[str, Dict[str, float]] = {}
+    hints: Dict[str, str] = {}
+
+    global_categories = {
+        "geometry",
+        "logistics",
+        "scenario",
+        "scenarios",
+        "testbed",
+        "ops",
+        "operations",
+        "materials",
+        "material",
+        "global",
+        "constants",
+    }
+
+    for _, row in table.iterrows():
+        category_value = row.get(category_col, "") if category_col else ""
+        category_norm = _normalize_category(category_value)
+        subitem_value = row.get(subitem_col, "") if subitem_col else ""
+        subitem_norm = _normalize_item(subitem_value) if subitem_value else ""
+
+        descriptor = ""
+        for candidate in descriptor_cols:
+            value = str(row.get(candidate, "")).strip()
+            if value:
+                descriptor = value
+                break
+
+        hint = str(row.get(normalized_cols.get("page_hint", "page_hint"), "")).strip()
+
+        target_map: Dict[str, Dict[str, float]] | None
+        key: str | None
+
+        if category_norm in global_categories or not category_norm:
+            target_map = None
+            key = None
+        elif subitem_norm:
+            key = f"{category_norm}|{subitem_norm}"
+            target_map = item_features
+        else:
+            key = category_norm
+            target_map = category_features
+
+        base_parts = ["l2l", category_norm]
+        if subitem_norm:
+            base_parts.append(subitem_norm)
+        if descriptor:
+            base_parts.append(descriptor)
+
+        for column in value_candidates:
+            payload = _parse_l2l_numeric(row.get(column))
+            if not payload:
+                continue
+
+            for suffix, numeric_value in payload.items():
+                if not np.isfinite(numeric_value):
+                    continue
+                name_parts = list(base_parts)
+                if column:
+                    name_parts.append(column)
+                if suffix not in {"value"}:
+                    name_parts.append(suffix)
+                feature_name = _feature_name_from_parts(*name_parts)
+                if not feature_name:
+                    continue
+
+                if category_norm in global_categories or not category_norm:
+                    constants[feature_name] = float(numeric_value)
+                elif target_map is not None and key is not None:
+                    entry = target_map.setdefault(key, {})
+                    entry[feature_name] = float(numeric_value)
+                else:
+                    constants[feature_name] = float(numeric_value)
+
+                if hint:
+                    hints[feature_name] = hint
+
+    return _L2LParameters(constants, category_features, item_features, hints)
+
+
 _REGOLITH_VECTOR = _load_regolith_vector()
 _GAS_MEAN_YIELD = _load_gas_mean_yield()
 _MEAN_REUSE = _load_mean_reuse()
+
+_OFFICIAL_FEATURES_PATH = DATASETS_ROOT / "rexai_nasa_waste_features.csv"
+_L2L_PARAMETERS = _load_l2l_parameters()
+
+_CATEGORY_SYNONYMS = {
+    "foam": "foam packaging",
+    "foam packaging": "foam packaging",
+    "packaging": "other packaging glove",
+    "other packaging": "other packaging glove",
+    "glove": "other packaging glove",
+    "other packaging glove": "other packaging glove",
+    "food packaging": "food packaging",
+    "structural elements": "structural element",
+    "structural element": "structural element",
+    "eva": "eva waste",
+    "eva waste": "eva waste",
+    "gloves": "other packaging glove",
+}
+
+_COMPOSITION_DENSITY_MAP = {
+    "Aluminum_pct": 2700.0,
+    "Carbon_Fiber_pct": 1700.0,
+    "Polyethylene_pct": 950.0,
+    "PVDF_pct": 1780.0,
+    "Nomex_pct": 1350.0,
+    "Nylon_pct": 1140.0,
+    "Polyester_pct": 1380.0,
+    "Cotton_Cellulose_pct": 1550.0,
+    "EVOH_pct": 1250.0,
+    "PET_pct": 1370.0,
+    "Nitrile_pct": 1030.0,
+}
+
+_CATEGORY_DENSITY_DEFAULTS = {
+    "foam packaging": 100.0,
+    "food packaging": 650.0,
+    "structural element": 1800.0,
+    "other packaging glove": 420.0,
+    "eva waste": 240.0,
+    "fabric": 350.0,
+}
+
+
+def _merge_reference_dataset(base: pd.DataFrame, filename: str, prefix: str) -> pd.DataFrame:
+    path = _resolve_dataset_path(filename)
+    if path is None:
+        return base
+
+    extra = pd.read_csv(path)
+    if extra.empty:
+        return base
+
+    join_cols = [col for col in ("category", "subitem") if col in extra.columns and col in base.columns]
+    if not join_cols:
+        return base
+
+    existing = set(base.columns)
+    rename_map: Dict[str, str] = {}
+    drop_cols: list[str] = []
+    for column in extra.columns:
+        if column in join_cols:
+            continue
+        if column in existing:
+            drop_cols.append(column)
+            continue
+        rename_map[column] = f"{prefix}_{_slugify(column)}"
+
+    if drop_cols:
+        extra = extra.drop(columns=drop_cols)
+    if rename_map:
+        extra = extra.rename(columns=rename_map)
+
+    merged = base.merge(extra, on=join_cols, how="left")
+    return merged.loc[:, ~merged.columns.duplicated()]
+
+
+def _mission_slug(column: str) -> str:
+    cleaned = column.lower()
+    cleaned = cleaned.replace("summary_", "")
+    cleaned = cleaned.replace("mass", "")
+    cleaned = cleaned.replace("kg", "")
+    cleaned = cleaned.replace("total", "")
+    cleaned = cleaned.replace("__", "_")
+    return _slugify(cleaned)
+
+
+class _WasteSummary(NamedTuple):
+    mass_by_key: Dict[str, Dict[str, float]]
+    mission_totals: Dict[str, float]
+
+
+def _load_waste_summary_data() -> _WasteSummary:
+    path = _resolve_dataset_path("nasa_waste_summary.csv")
+    if path is None:
+        return _WasteSummary({}, {})
+
+    table = pd.read_csv(path)
+    if table.empty or "category" not in table.columns:
+        return _WasteSummary({}, {})
+
+    mass_columns = [
+        column
+        for column in table.columns
+        if column.lower().endswith("mass_kg") and not column.lower().startswith("subitem_")
+    ]
+    if not mass_columns:
+        return _WasteSummary({}, {})
+
+    mission_totals: Dict[str, float] = {}
+    mass_by_key: Dict[str, Dict[str, float]] = {}
+    category_totals: Dict[str, Dict[str, float]] = {}
+
+    for _, row in table.iterrows():
+        category = row.get("category")
+        if not category or (isinstance(category, float) and np.isnan(category)):
+            continue
+        subitem = row.get("subitem") if "subitem" in table.columns else None
+        subitem = subitem if isinstance(subitem, str) and subitem else None
+
+        key = _build_match_key(category, subitem)
+        category_key = _build_match_key(category)
+
+        for column in mass_columns:
+            try:
+                value = float(row.get(column, 0.0))
+            except (TypeError, ValueError):
+                value = float("nan")
+            if not value or np.isnan(value):
+                continue
+            mission = _mission_slug(column)
+            mission_totals[mission] = mission_totals.get(mission, 0.0) + value
+
+            if key != category_key:
+                entry = mass_by_key.setdefault(key, {})
+                entry[mission] = entry.get(mission, 0.0) + value
+
+            cat_entry = category_totals.setdefault(category_key, {})
+            cat_entry[mission] = cat_entry.get(mission, 0.0) + value
+
+    for category_key, payload in category_totals.items():
+        entry = mass_by_key.setdefault(category_key, {})
+        for mission, value in payload.items():
+            entry[mission] = entry.get(mission, 0.0) + value
+
+    return _WasteSummary(mass_by_key, mission_totals)
+
+
+def _extract_grouped_metrics(filename: str, prefix: str) -> Dict[str, Dict[str, float]]:
+    path = _resolve_dataset_path(filename)
+    if path is None:
+        return {}
+
+    table = pd.read_csv(path)
+    if table.empty:
+        return {}
+
+    numeric_cols = [
+        column
+        for column in table.columns
+        if pd.api.types.is_numeric_dtype(table[column])
+    ]
+    if not numeric_cols:
+        return {}
+
+    group_columns = [
+        column
+        for column in table.columns
+        if column.lower()
+        in {"mission", "scenario", "approach", "vehicle", "propulsion", "architecture"}
+    ]
+
+    aggregated: Dict[str, Dict[str, float]] = {}
+
+    if not group_columns:
+        metrics = {}
+        for column in numeric_cols:
+            series = pd.to_numeric(table[column], errors="coerce")
+            if series.notna().any():
+                metrics[f"{prefix}_{_slugify(column)}"] = float(series.mean())
+        if metrics:
+            aggregated[prefix] = metrics
+        return aggregated
+
+    combinations: list[tuple[str, ...]] = []
+    for length in range(1, len(group_columns) + 1):
+        combinations.extend(itertools.combinations(group_columns, length))
+
+    for combo in combinations:
+        grouped = table.groupby(list(combo), dropna=True)
+        for keys, group in grouped:
+            if isinstance(keys, tuple):
+                slug_parts = [
+                    _slugify(value)
+                    for value in keys
+                    if isinstance(value, str) and value.strip()
+                ]
+            else:
+                slug_parts = [
+                    _slugify(keys)
+                    if isinstance(keys, str) and str(keys).strip()
+                    else _slugify(str(keys))
+                ]
+            slug = "_".join(part for part in slug_parts if part)
+            if not slug:
+                continue
+
+            metrics: Dict[str, float] = {}
+            for column in numeric_cols:
+                series = pd.to_numeric(group[column], errors="coerce")
+                if series.notna().any():
+                    metrics[f"{prefix}_{_slugify(column)}"] = float(series.mean())
+
+            if metrics:
+                aggregated[slug] = metrics
+
+    return aggregated
+
+
+def _normalize_text(value: Any) -> str:
+    text = str(value or "").lower()
+    text = text.replace("—", " ").replace("/", " ")
+    text = re.sub(r"\(.*?\)", " ", text)
+    text = re.sub(r"[^a-z0-9 ]+", " ", text)
+    tokens = []
+    for token in text.split():
+        if len(token) > 3 and token.endswith("s"):
+            token = token[:-1]
+        tokens.append(token)
+    return " ".join(tokens).strip()
+
+
+def _normalize_category(value: Any) -> str:
+    normalized = _normalize_text(value)
+    return _CATEGORY_SYNONYMS.get(normalized, normalized)
+
+
+def _build_match_key(category: Any, subitem: Any | None = None) -> str:
+    """Return the canonical key used to match NASA reference tables."""
+
+    if subitem:
+        return f"{_normalize_category(category)}|{_normalize_item(subitem)}"
+    return _normalize_category(category)
+
+
+def _estimate_density_from_row(row: pd.Series) -> float | None:
+    category = _normalize_category(row.get("category", ""))
+
+    try:
+        cat_mass = float(row.get("category_total_mass_kg"))
+        cat_volume = float(row.get("category_total_volume_m3"))
+    except (TypeError, ValueError):
+        cat_mass = cat_volume = float("nan")
+
+    if pd.notna(cat_mass) and pd.notna(cat_volume) and cat_volume > 0:
+        return float(np.clip(cat_mass / cat_volume, 20.0, 4000.0))
+
+    composition_weights: list[tuple[float, float]] = []
+    total = 0.0
+    for column, density in _COMPOSITION_DENSITY_MAP.items():
+        try:
+            pct = float(row.get(column, 0.0))
+        except (TypeError, ValueError):
+            pct = 0.0
+        if pct and not np.isnan(pct):
+            frac = pct / 100.0
+            if frac > 0:
+                composition_weights.append((frac, density))
+                total += frac
+
+    if total > 0 and composition_weights:
+        weighted = sum(frac * density for frac, density in composition_weights) / total
+        if category == "foam packaging":
+            return float(min(weighted, _CATEGORY_DENSITY_DEFAULTS.get(category, weighted)))
+        return float(np.clip(weighted, 20.0, 4000.0))
+
+    if category in _CATEGORY_DENSITY_DEFAULTS:
+        return float(_CATEGORY_DENSITY_DEFAULTS[category])
+
+    return None
+
+
+def _normalize_item(value: Any) -> str:
+    return _normalize_text(value)
+
+
+def _token_set(value: Any) -> frozenset[str]:
+    normalized = _normalize_item(value)
+    if not normalized:
+        return frozenset()
+    return frozenset(normalized.split())
+
+
+class _OfficialFeaturesBundle(NamedTuple):
+    value_columns: tuple[str, ...]
+    composition_columns: tuple[str, ...]
+    direct_map: Dict[str, Dict[str, float]]
+    category_tokens: Dict[str, list[tuple[frozenset[str], Dict[str, float], str]]]
+    mission_mass: Dict[str, Dict[str, float]]
+    mission_totals: Dict[str, float]
+    processing_metrics: Dict[str, Dict[str, float]]
+    leo_mass_savings: Dict[str, Dict[str, float]]
+    propellant_benefits: Dict[str, Dict[str, float]]
+    l2l_constants: Dict[str, float]
+    l2l_category_features: Dict[str, Dict[str, float]]
+    l2l_item_features: Dict[str, Dict[str, float]]
+    l2l_hints: Dict[str, str]
+
+
+@lru_cache(maxsize=1)
+def _official_features_bundle() -> _OfficialFeaturesBundle:
+    l2l = _L2L_PARAMETERS
+    if not _OFFICIAL_FEATURES_PATH.exists():
+        return _OfficialFeaturesBundle(
+            (),
+            (),
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            l2l.constants,
+            l2l.category_features,
+            l2l.item_features,
+            l2l.hints,
+        )
+
+    table = pd.read_csv(_OFFICIAL_FEATURES_PATH)
+    duplicate_suffixes = [column for column in table.columns if column.endswith(".1")]
+    if duplicate_suffixes:
+        table = table.drop(columns=duplicate_suffixes)
+    table = table.loc[:, ~table.columns.duplicated()].copy()
+    table = _merge_reference_dataset(table, "nasa_waste_summary.csv", "summary")
+    table = _merge_reference_dataset(table, "nasa_waste_processing_products.csv", "processing")
+    table = _merge_reference_dataset(table, "nasa_leo_mass_savings.csv", "leo")
+    table = _merge_reference_dataset(table, "nasa_propellant_benefits.csv", "propellant")
+    table["category_norm"] = table["category"].map(_normalize_category)
+    table["subitem_norm"] = table["subitem"].map(_normalize_item)
+    table["token_set"] = table["subitem_norm"].map(_token_set)
+    table["key"] = table["category_norm"] + "|" + table["subitem_norm"]
+
+    excluded = {"category", "subitem", "category_norm", "subitem_norm", "token_set", "key"}
+    value_columns = tuple(col for col in table.columns if col not in excluded)
+    composition_columns = tuple(
+        col
+        for col in value_columns
+        if col.endswith("_pct") and not col.startswith("subitem_")
+    )
+
+    direct_map: Dict[str, Dict[str, float]] = {}
+    category_tokens: Dict[str, list[tuple[frozenset[str], Dict[str, float], str]]] = {}
+
+    for _, row in table.iterrows():
+        payload: Dict[str, float] = {}
+        for column in value_columns:
+            value = row[column]
+            payload[column] = float(value) if pd.notna(value) else float("nan")
+
+        key = str(row["key"])
+        direct_map[key] = payload
+
+        category = str(row["category_norm"])
+        tokens = row["token_set"]
+        category_tokens.setdefault(category, []).append((tokens, payload, key))
+
+    waste_summary = _load_waste_summary_data()
+    processing_metrics = _extract_grouped_metrics("nasa_waste_processing_products.csv", "processing")
+    leo_savings = _extract_grouped_metrics("nasa_leo_mass_savings.csv", "leo")
+    propellant_metrics = _extract_grouped_metrics("nasa_propellant_benefits.csv", "propellant")
+
+    return _OfficialFeaturesBundle(
+        value_columns,
+        composition_columns,
+        direct_map,
+        category_tokens,
+        waste_summary.mass_by_key,
+        waste_summary.mission_totals,
+        processing_metrics,
+        leo_savings,
+        propellant_metrics,
+        l2l.constants,
+        l2l.category_features,
+        l2l.item_features,
+        l2l.hints,
+    )
+
+
+def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], str]:
+    bundle = _official_features_bundle()
+    if not bundle.value_columns:
+        return {}, ""
+
+    category = _normalize_category(row.get("category", ""))
+    if not category:
+        return {}, ""
+
+    candidates = (
+        row.get("material"),
+        row.get("material_family"),
+        row.get("key_materials"),
+    )
+
+    for candidate in candidates:
+        normalized = _normalize_item(candidate)
+        if not normalized:
+            continue
+        key = f"{category}|{normalized}"
+        payload = bundle.direct_map.get(key)
+        if payload:
+            return payload, key
+
+    token_candidates = [value for value in candidates if value]
+    if not token_candidates:
+        return {}, ""
+
+    matches = bundle.category_tokens.get(category)
+    if not matches:
+        return {}, ""
+
+    for candidate in token_candidates:
+        tokens = _token_set(candidate)
+        if not tokens:
+            continue
+        for reference_tokens, payload, match_key in matches:
+            if tokens.issubset(reference_tokens):
+                return payload, match_key
+
+    return {}, ""
+
+
+def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
+    bundle = _official_features_bundle()
+    if frame.empty:
+        return frame
+
+    records: list[Dict[str, float]] = []
+    match_keys: list[str] = []
+    if bundle.value_columns:
+        for _, row in frame.iterrows():
+            payload, match_key = _lookup_official_feature_values(row)
+            records.append(payload)
+            match_keys.append(match_key)
+    else:
+        match_keys = [""] * len(frame)
+
+    official_df = (
+        pd.DataFrame.from_records(records, index=frame.index)
+        if records and any(records)
+        else pd.DataFrame(index=frame.index)
+    )
+
+    if not official_df.empty:
+        for column in official_df.columns:
+            if column not in frame.columns:
+                frame[column] = official_df[column]
+            else:
+                mask = official_df[column].notna()
+                if mask.any():
+                    frame.loc[mask, column] = official_df.loc[mask, column]
+
+    frame["_official_match_key"] = match_keys
+
+    if bundle.l2l_category_features or bundle.l2l_item_features:
+        index_labels = list(frame.index)
+        hint_payload: list[str] = []
+        any_hints = False
+
+        for idx, index in enumerate(index_labels):
+            aggregated: Dict[str, float] = {}
+            hints: set[str] = set()
+            match_key = match_keys[idx] if idx < len(match_keys) else ""
+            if match_key:
+                entry = bundle.l2l_item_features.get(match_key)
+                if entry:
+                    aggregated.update(entry)
+                    for name in entry:
+                        hint = bundle.l2l_hints.get(name)
+                        if hint:
+                            hints.add(hint)
+
+            row = frame.loc[index]
+            category_key = _normalize_category(row.get("category", ""))
+            if category_key:
+                entry = bundle.l2l_category_features.get(category_key)
+                if entry:
+                    for name, value in entry.items():
+                        aggregated.setdefault(name, value)
+                        hint = bundle.l2l_hints.get(name)
+                        if hint:
+                            hints.add(hint)
+
+            for name, value in aggregated.items():
+                if name not in frame.columns or pd.isna(frame.at[index, name]):
+                    frame.at[index, name] = value
+
+            hint_text = "; ".join(sorted(hints)) if hints else ""
+            any_hints = any_hints or bool(hint_text)
+            hint_payload.append(hint_text)
+
+        if any_hints:
+            frame["_l2l_page_hints"] = hint_payload
+
+    if not official_df.empty:
+        numeric_candidates = [
+            column
+            for column in official_df.columns
+            if column.endswith(("_kg", "_pct"))
+            or column.startswith("category_total")
+            or column in {"difficulty_factor", "approx_moisture_pct"}
+        ]
+
+        for column in numeric_candidates:
+            if column in frame.columns:
+                frame[column] = pd.to_numeric(frame[column], errors="coerce")
+
+    if "approx_moisture_pct" in frame.columns:
+        mask = frame["approx_moisture_pct"].notna()
+        if mask.any():
+            frame.loc[mask, "moisture_pct"] = frame.loc[mask, "approx_moisture_pct"]
+
+    return frame
 
 
 @dataclass(slots=True)
@@ -330,15 +1081,32 @@ def prepare_waste_frame(waste_df: pd.DataFrame) -> pd.DataFrame:
         + out["key_materials"].astype(str).str.lower()
     )
 
-    volume_m3 = (out["volume_l"].replace(0, np.nan) / 1000.0).fillna(0.001)
-    out["density_kg_m3"] = out["kg"].astype(float) / volume_m3
-
     if "_problematic" not in out.columns:
         out["_problematic"] = out.apply(_is_problematic, axis=1)
 
     out["_source_id"] = out["id"].astype(str)
     out["_source_category"] = out["category"].astype(str)
     out["_source_flags"] = out["flags"].astype(str)
+
+    out = _inject_official_features(out)
+
+    mass = pd.to_numeric(out["kg"], errors="coerce").fillna(0.0)
+    volume_l = pd.to_numeric(out.get("volume_l"), errors="coerce")
+    volume_m3 = volume_l / 1000.0
+    density = pd.Series(np.nan, index=out.index, dtype=float)
+    with_volume = volume_m3.notna() & (volume_m3 > 0)
+    density.loc[with_volume] = mass.loc[with_volume] / volume_m3.loc[with_volume]
+
+    missing_density = density.isna() | ~np.isfinite(density)
+    if missing_density.any():
+        for idx, row in out.loc[missing_density].iterrows():
+            estimate = _estimate_density_from_row(row)
+            if estimate is not None:
+                density.at[idx] = estimate
+
+    default_density = float(_CATEGORY_DENSITY_DEFAULTS.get("other packaging glove", 500.0))
+    density = density.fillna(default_density)
+    out["density_kg_m3"] = density.clip(lower=20.0, upper=4000.0)
 
     return out
 
@@ -407,18 +1175,6 @@ def compute_feature_vector(
     difficulty = picks.get("difficulty_factor", 1).to_numpy(dtype=float) / 3.0
     densities = picks.get("density_kg_m3", 0).to_numpy(dtype=float)
 
-    keyword_map: Dict[str, Tuple[str, ...]] = {
-        "aluminum_frac": ("aluminum", " alloy", " al "),
-        "foam_frac": ("foam", "zotek", "closed cell"),
-        "eva_frac": ("eva", "ctb", "nomex"),
-        "textile_frac": ("textile", "cloth", "fabric", "wipe"),
-        "multilayer_frac": ("multilayer", "pe-pet-al", "pouch"),
-        "glove_frac": ("glove", "nitrile"),
-        "polyethylene_frac": ("polyethylene", "pvdf", "ldpe"),
-        "carbon_fiber_frac": ("carbon fiber", "composite"),
-        "hydrogen_rich_frac": ("polyethylene", "cotton", "pvdf"),
-    }
-
     features: Dict[str, Any] = {
         "process_id": str(process["process_id"]),
         "total_mass_kg": total_kg,
@@ -433,8 +1189,162 @@ def compute_feature_vector(
         "packaging_frac": _category_fraction(tuple(categories), base_weights, ("packaging", "food packaging")),
     }
 
+    keyword_map: Dict[str, Tuple[str, ...]] = {
+        "aluminum_frac": ("aluminum", " alloy", " al "),
+        "foam_frac": ("foam", "zotek", "closed cell"),
+        "eva_frac": ("eva", "ctb", "nomex"),
+        "textile_frac": ("textile", "cloth", "fabric", "wipe"),
+        "multilayer_frac": ("multilayer", "pe-pet-al", "pouch"),
+        "glove_frac": ("glove", "nitrile"),
+        "polyethylene_frac": ("polyethylene", "pvdf", "ldpe"),
+        "carbon_fiber_frac": ("carbon fiber", "composite"),
+        "hydrogen_rich_frac": ("polyethylene", "cotton", "pvdf"),
+    }
+
     for name, keywords in keyword_map.items():
         features[name] = _keyword_fraction(tuple(tokens), base_weights, keywords)
+
+    bundle = _official_features_bundle()
+    official_comp: Dict[str, float] = {}
+    if bundle.composition_columns:
+        for column in bundle.composition_columns:
+            if column not in picks.columns:
+                continue
+            values = pd.to_numeric(picks[column], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+            if not len(values):
+                continue
+            frac = float(np.dot(base_weights, values / 100.0))
+            official_comp[column] = frac
+
+    if official_comp:
+        clipped = {key: max(0.0, float(value)) for key, value in official_comp.items()}
+        total = sum(clipped.values())
+        if total > 1.0 + 1e-6:
+            official_comp = {key: value / total for key, value in clipped.items() if total > 0}
+        else:
+            official_comp = clipped
+
+    def _set_official_fraction(name: str, *columns: str) -> None:
+        total = 0.0
+        found = False
+        for column in columns:
+            if column in official_comp:
+                total += official_comp[column]
+                found = True
+        if not found:
+            return
+        features[name] = float(np.clip(total, 0.0, 1.0))
+
+    if official_comp:
+        _set_official_fraction("aluminum_frac", "Aluminum_pct")
+        _set_official_fraction("carbon_fiber_frac", "Carbon_Fiber_pct")
+        _set_official_fraction("polyethylene_frac", "Polyethylene_pct")
+        _set_official_fraction("glove_frac", "Nitrile_pct")
+        _set_official_fraction("eva_frac", "Nomex_pct")
+        _set_official_fraction("foam_frac", "PVDF_pct")
+        _set_official_fraction("multilayer_frac", "EVOH_pct", "PET_pct")
+
+        textile_total = sum(
+            official_comp.get(column, 0.0)
+            for column in ("Cotton_Cellulose_pct", "Polyester_pct", "Nylon_pct")
+        )
+        if textile_total > 0:
+            features["textile_frac"] = float(np.clip(textile_total, 0.0, 1.0))
+
+        hydrogen_total = sum(
+            official_comp.get(column, 0.0)
+            for column in ("Polyethylene_pct", "Cotton_Cellulose_pct", "PVDF_pct")
+        )
+        if hydrogen_total > 0:
+            features["hydrogen_rich_frac"] = float(np.clip(hydrogen_total, 0.0, 1.0))
+
+    mission_similarity: Dict[str, float] = {}
+    mission_scaled_mass: Dict[str, float] = {}
+    mission_official_mass: Dict[str, float] = {}
+    mission_similarity_clipped: Dict[str, float] = {}
+
+    l2l_constants = bundle.l2l_constants if bundle.l2l_constants else {}
+    for name, value in l2l_constants.items():
+        if isinstance(value, (int, float)) and np.isfinite(value):
+            features[name] = float(value)
+
+    if bundle.mission_mass and bundle.mission_totals:
+        match_keys_col = picks.get("_official_match_key")
+        if match_keys_col is not None:
+            match_keys_list = match_keys_col.fillna("").astype(str).tolist()
+        else:
+            match_keys_list = [""] * len(picks)
+
+        for idx, (_, row) in enumerate(picks.iterrows()):
+            weight = float(base_weights[idx]) if idx < len(base_weights) else 0.0
+            if weight <= 0:
+                continue
+
+            keys_to_check: list[str] = []
+            match_key = match_keys_list[idx] if idx < len(match_keys_list) else ""
+            if match_key:
+                keys_to_check.append(match_key)
+
+            if not match_key:
+                category_key = _normalize_category(row.get("category", ""))
+                if category_key:
+                    keys_to_check.append(category_key)
+
+            seen_keys: set[str] = set()
+            for key in keys_to_check:
+                if not key or key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                missions = bundle.mission_mass.get(key)
+                if not missions:
+                    continue
+
+                for mission, reference_mass in missions.items():
+                    total_reference = bundle.mission_totals.get(mission)
+                    if not total_reference or total_reference <= 0:
+                        continue
+                    share = (reference_mass / total_reference) * weight
+                    mission_similarity[mission] = mission_similarity.get(mission, 0.0) + share
+                    mission_official_mass[mission] = mission_official_mass.get(mission, 0.0) + weight * reference_mass
+                    mission_scaled_mass[mission] = mission_scaled_mass.get(mission, 0.0) + share * total_kg
+
+        if mission_similarity:
+            for mission, share in mission_similarity.items():
+                clipped = float(np.clip(share, 0.0, 1.0))
+                mission_similarity_clipped[mission] = clipped
+                features[f"mission_similarity_{mission}"] = clipped
+                total_reference = float(bundle.mission_totals.get(mission, 0.0))
+                features[f"mission_reference_mass_{mission}"] = float(max(0.0, clipped * total_reference))
+                features[f"mission_scaled_mass_{mission}"] = float(max(0.0, mission_scaled_mass.get(mission, 0.0)))
+                features[f"mission_official_mass_{mission}"] = float(max(0.0, mission_official_mass.get(mission, 0.0)))
+
+            features["mission_similarity_total"] = float(
+                np.clip(sum(mission_similarity_clipped.values()), 0.0, 1.0)
+            )
+
+            def _apply_weighted_metrics(source: Dict[str, Dict[str, float]]) -> None:
+                if not source:
+                    return
+                weighted: Dict[str, float] = {}
+                for mission, share in mission_similarity_clipped.items():
+                    metrics = source.get(mission)
+                    if not metrics:
+                        continue
+                    for metric_name, value in metrics.items():
+                        expected_name = (
+                            metric_name
+                            if metric_name.endswith("_expected")
+                            else f"{metric_name}_expected"
+                        )
+                        weighted[expected_name] = weighted.get(expected_name, 0.0) + share * float(value)
+                        features[f"{metric_name}_{mission}"] = float(value)
+
+                for metric_name, value in weighted.items():
+                    features[metric_name] = float(value)
+
+            _apply_weighted_metrics(bundle.processing_metrics)
+            _apply_weighted_metrics(bundle.leo_mass_savings)
+            _apply_weighted_metrics(bundle.propellant_benefits)
 
     gas_index = _GAS_MEAN_YIELD * (
         0.7 * features.get("polyethylene_frac", 0.0)
@@ -444,9 +1354,12 @@ def compute_feature_vector(
     )
     features["gas_recovery_index"] = float(np.clip(gas_index / 10.0, 0.0, 1.0))
 
-    logistics_index = _MEAN_REUSE * (
-        features.get("packaging_frac", 0.0) + 0.5 * features.get("eva_frac", 0.0)
-    )
+    packaging_term = features.get("packaging_frac", 0.0) + 0.5 * features.get("eva_frac", 0.0)
+    packaging_ratio = l2l_constants.get("l2l_logistics_packaging_per_goods_ratio")
+    if packaging_ratio and np.isfinite(packaging_ratio) and packaging_ratio > 0:
+        logistics_index = packaging_term / float(packaging_ratio)
+    else:
+        logistics_index = _MEAN_REUSE * packaging_term
     features["logistics_reuse_index"] = float(np.clip(logistics_index, 0.0, 2.0))
 
     for oxide, value in _REGOLITH_VECTOR.items():
