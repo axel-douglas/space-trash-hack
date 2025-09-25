@@ -177,6 +177,11 @@ _CATEGORY_DENSITY_DEFAULTS = {
     "other packaging glove": 420.0,
     "eva waste": 240.0,
     "fabric": 350.0,
+    "packaging": "other packaging glove",
+    "foam": "other packaging glove",
+    "glove": "other packaging glove",
+    "other packaging": "other packaging glove",
+    "other packaging glove": "other packaging glove",
 }
 
 
@@ -233,7 +238,6 @@ def _estimate_density_from_row(row: pd.Series) -> float | None:
         return float(_CATEGORY_DENSITY_DEFAULTS[category])
 
     return None
-
 
 def _normalize_item(value: Any) -> str:
     return _normalize_text(value)
@@ -594,7 +598,6 @@ def prepare_waste_frame(waste_df: pd.DataFrame) -> pd.DataFrame:
     default_density = float(_CATEGORY_DENSITY_DEFAULTS.get("other packaging glove", 500.0))
     density = density.fillna(default_density)
     out["density_kg_m3"] = density.clip(lower=20.0, upper=4000.0)
-
     return out
 
 
@@ -710,6 +713,7 @@ def compute_feature_vector(
             official_comp = {key: value / total for key, value in clipped.items() if total > 0}
         else:
             official_comp = clipped
+            official_comp[column] = float(np.clip(frac, 0.0, 1.0))
 
     def _set_official_fraction(name: str, *columns: str) -> None:
         total = 0.0
