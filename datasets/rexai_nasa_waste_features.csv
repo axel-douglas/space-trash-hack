@@ -1,0 +1,17 @@
+category,subitem,difficulty_factor,category_total_mass_kg,category_total_volume_m3,subitem_mass_share_pct,subitem_volume_share_pct,subitem_estimated_mass_kg,approx_moisture_pct,Aluminum_pct,Carbon_Fiber_pct,Cotton_Cellulose_pct,EVOH_pct,Nitrile_pct,Nomex_pct,Nylon_pct,Other_pct,PET_pct,PVDF_pct,Plastic_Resin_pct,Polyester_pct,Polyethylene_pct,subitem_mass_share_pct,subitem_volume_share_pct
+Foam Packaging,Zotek F30 (PVDF foam),3,1000.0,10.0,100.0,100.0,1000.0,0.0,,,,,,,,,,100.0,,,,100.0,100.0
+EVA Waste,Cargo Transfer Bags (CTB),2,100.0,1.0,100.0,100.0,100.0,0.0,,,,,,92.0,3.0,3.0,,,,2.0,,100.0,100.0
+Fabrics,Clothing,2,1000.0,10.0,77.0,59.0,770.0,4.0,,,56.0,,,,6.0,,,,,38.0,,77.0,59.0
+Fabrics,Towels/Wash Cloths,2,1000.0,10.0,21.0,39.0,210.0,5.0,,,100.0,,,,,,,,,,,21.0,39.0
+Fabrics,Cleaning Wipes,2,1000.0,10.0,2.0,2.0,20.0,69.0,,,100.0,,,,,,,,,,,2.0,2.0
+Food Packaging,Overwrap,2,1000.0,10.0,29.0,29.0,290.0,0.0,30.0,,,,,,,,,,,13.0,15.0,29.0,29.0
+Food Packaging,Rehydratable Pouch,2,1000.0,10.0,39.0,40.0,390.0,4.0,,,,11.0,,,41.0,,,,,,33.0,39.0,40.0
+Food Packaging,Drink Pouch,2,1000.0,10.0,8.0,8.0,80.0,3.0,24.0,,,,,,,,11.0,,,,65.0,8.0,8.0
+Structural Elements,Aluminum Structure/Struts,2,1000.0,10.0,90.0,90.0,900.0,0.0,90.0,,,,,,,,,,,,,90.0,90.0
+Structural Elements,Polymer Matrix Composites,2,1000.0,10.0,10.0,10.0,100.0,0.0,,60.0,,,,,,,,,40.0,,,10.0,10.0
+Other Packaging/Gloves (A),Air cushion,1,100.0,1.0,4.0,2.0,4.0,0.0,,,,,,,,,,,,,100.0,4.0,2.0
+Other Packaging/Gloves (A),Bubble wrap filler,1,100.0,1.0,1.0,2.0,1.0,0.0,,,,,,,,,,,,,100.0,1.0,2.0
+Other Packaging/Gloves (A),Reclosable bags,1,100.0,1.0,9.0,2.0,9.0,0.0,,,,,,,,,,,,,100.0,9.0,2.0
+Other Packaging/Gloves (B),Anti-Static Bubble Wrap Bags,1,100.0,1.0,9.0,2.0,9.0,0.0,,,,,,,,,,,,,100.0,9.0,2.0
+Other Packaging/Gloves (B),Plastazote LD45 FR,1,100.0,1.0,36.0,68.0,36.0,0.0,,,,,,,,,,,,,100.0,36.0,68.0
+Other Packaging/Gloves (B),Nitrile gloves,1,100.0,1.0,41.0,22.0,41.0,2.0,,,,,100.0,,,,,,,,,41.0,22.0
