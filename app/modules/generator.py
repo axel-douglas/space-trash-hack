@@ -193,11 +193,182 @@ def _load_mean_reuse() -> float:
     return 0.6
 
 
+@dataclass
+class _L2LParameters:
+    constants: Dict[str, float]
+    category_features: Dict[str, Dict[str, float]]
+    item_features: Dict[str, Dict[str, float]]
+    hints: Dict[str, str]
+
+
+def _parse_l2l_numeric(value: Any) -> Dict[str, float]:
+    """Return numeric representations for Logistics-to-Living values."""
+
+    result: Dict[str, float] = {}
+    if value is None:
+        return result
+
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if np.isfinite(value):
+            result["value"] = float(value)
+        return result
+
+    text = str(value).strip()
+    if not text:
+        return result
+
+    cleaned = text.replace(",", "").replace("—", "-").replace("–", "-").replace("−", "-")
+    numbers = [
+        float(match)
+        for match in re.findall(r"-?\d+(?:\.\d+)?", cleaned)
+        if match not in {"-"}
+    ]
+    if not numbers:
+        return result
+
+    lowered = cleaned.lower()
+    if any(token in lowered for token in (" per ", ":", "/")) and len(numbers) >= 2:
+        denominator = numbers[1]
+        if denominator:
+            result["value"] = numbers[0] / denominator
+            result["numerator"] = numbers[0]
+            result["denominator"] = denominator
+        else:
+            result["value"] = numbers[0]
+        return result
+
+    if "-" in cleaned and len(numbers) >= 2:
+        result["min"] = numbers[0]
+        result["max"] = numbers[1]
+        result["value"] = float(np.mean(numbers[:2]))
+        return result
+
+    result["value"] = numbers[0]
+    if len(numbers) > 1:
+        result["extra"] = numbers[1]
+    return result
+
+
+def _feature_name_from_parts(*parts: str) -> str:
+    return "_".join(part for part in (_slugify(part) for part in parts if part) if part)
+
+
+def _load_l2l_parameters() -> _L2LParameters:
+    path = _resolve_dataset_path("l2l_parameters.csv")
+    if path is None or not path.exists():
+        return _L2LParameters({}, {}, {}, {})
+
+    table = pd.read_csv(path)
+    if table.empty:
+        return _L2LParameters({}, {}, {}, {})
+
+    normalized_cols = {col.lower(): col for col in table.columns}
+    category_col = normalized_cols.get("category")
+    subitem_col = normalized_cols.get("subitem")
+
+    descriptor_cols = [
+        normalized_cols[name]
+        for name in ("parameter", "metric", "key", "feature", "name", "field")
+        if name in normalized_cols
+    ]
+    value_candidates = [
+        column
+        for column in table.columns
+        if column not in {category_col, subitem_col}
+        and column not in descriptor_cols
+        and column.lower() not in {"page_hint", "units", "unit", "notes"}
+    ]
+
+    constants: Dict[str, float] = {}
+    category_features: Dict[str, Dict[str, float]] = {}
+    item_features: Dict[str, Dict[str, float]] = {}
+    hints: Dict[str, str] = {}
+
+    global_categories = {
+        "geometry",
+        "logistics",
+        "scenario",
+        "scenarios",
+        "testbed",
+        "ops",
+        "operations",
+        "materials",
+        "material",
+        "global",
+        "constants",
+    }
+
+    for _, row in table.iterrows():
+        category_value = row.get(category_col, "") if category_col else ""
+        category_norm = _normalize_category(category_value)
+        subitem_value = row.get(subitem_col, "") if subitem_col else ""
+        subitem_norm = _normalize_item(subitem_value) if subitem_value else ""
+
+        descriptor = ""
+        for candidate in descriptor_cols:
+            value = str(row.get(candidate, "")).strip()
+            if value:
+                descriptor = value
+                break
+
+        hint = str(row.get(normalized_cols.get("page_hint", "page_hint"), "")).strip()
+
+        target_map: Dict[str, Dict[str, float]] | None
+        key: str | None
+
+        if category_norm in global_categories or not category_norm:
+            target_map = None
+            key = None
+        elif subitem_norm:
+            key = f"{category_norm}|{subitem_norm}"
+            target_map = item_features
+        else:
+            key = category_norm
+            target_map = category_features
+
+        base_parts = ["l2l", category_norm]
+        if subitem_norm:
+            base_parts.append(subitem_norm)
+        if descriptor:
+            base_parts.append(descriptor)
+
+        for column in value_candidates:
+            payload = _parse_l2l_numeric(row.get(column))
+            if not payload:
+                continue
+
+            for suffix, numeric_value in payload.items():
+                if not np.isfinite(numeric_value):
+                    continue
+                name_parts = list(base_parts)
+                if column:
+                    name_parts.append(column)
+                if suffix not in {"value"}:
+                    name_parts.append(suffix)
+                feature_name = _feature_name_from_parts(*name_parts)
+                if not feature_name:
+                    continue
+
+                if category_norm in global_categories or not category_norm:
+                    constants[feature_name] = float(numeric_value)
+                elif target_map is not None and key is not None:
+                    entry = target_map.setdefault(key, {})
+                    entry[feature_name] = float(numeric_value)
+                else:
+                    constants[feature_name] = float(numeric_value)
+
+                if hint:
+                    hints[feature_name] = hint
+
+    return _L2LParameters(constants, category_features, item_features, hints)
+
+
 _REGOLITH_VECTOR = _load_regolith_vector()
 _GAS_MEAN_YIELD = _load_gas_mean_yield()
 _MEAN_REUSE = _load_mean_reuse()
 
 _OFFICIAL_FEATURES_PATH = DATASETS_ROOT / "rexai_nasa_waste_features.csv"
+_L2L_PARAMETERS = _load_l2l_parameters()
 
 _CATEGORY_SYNONYMS = {
     "foam": "foam packaging",
@@ -435,7 +606,6 @@ def _normalize_text(value: Any) -> str:
 def _normalize_category(value: Any) -> str:
     normalized = _normalize_text(value)
     return _CATEGORY_SYNONYMS.get(normalized, normalized)
-
 def _build_match_key(category: Any, subitem: Any | None = None) -> str:
     """Return the canonical key used to match NASA reference tables."""
 
@@ -477,7 +647,6 @@ def _estimate_density_from_row(row: pd.Series) -> float | None:
         return float(_CATEGORY_DENSITY_DEFAULTS[category])
 
     return None
-
 def _normalize_item(value: Any) -> str:
     return _normalize_text(value)
 
@@ -499,11 +668,32 @@ class _OfficialFeaturesBundle(NamedTuple):
     processing_metrics: Dict[str, Dict[str, float]]
     leo_mass_savings: Dict[str, Dict[str, float]]
     propellant_benefits: Dict[str, Dict[str, float]]
+    l2l_constants: Dict[str, float]
+    l2l_category_features: Dict[str, Dict[str, float]]
+    l2l_item_features: Dict[str, Dict[str, float]]
+    l2l_hints: Dict[str, str]
     category_tokens: Dict[str, list[tuple[frozenset[str], Dict[str, float]]]]
 
 
 @lru_cache(maxsize=1)
 def _official_features_bundle() -> _OfficialFeaturesBundle:
+    l2l = _L2L_PARAMETERS
+    if not _OFFICIAL_FEATURES_PATH.exists():
+        return _OfficialFeaturesBundle(
+            (),
+            (),
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            {},
+            l2l.constants,
+            l2l.category_features,
+            l2l.item_features,
+            l2l.hints,
+        )
     if not _OFFICIAL_FEATURES_PATH.exists():
         return _OfficialFeaturesBundle((), (), {}, {}, {}, {}, {}, {}, {})
         return _OfficialFeaturesBundle((), (), {}, {})
@@ -562,6 +752,10 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
         processing_metrics,
         leo_savings,
         propellant_metrics,
+        l2l.constants,
+        l2l.category_features,
+        l2l.item_features,
+        l2l.hints,
     )
 
 
@@ -637,11 +831,89 @@ def _lookup_official_feature_values(row: pd.Series) -> Dict[str, float]:
 
 def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
     bundle = _official_features_bundle()
+    if frame.empty:
     if not bundle.value_columns or frame.empty:
         return frame
 
     records: list[Dict[str, float]] = []
     match_keys: list[str] = []
+    if bundle.value_columns:
+        for _, row in frame.iterrows():
+            payload, match_key = _lookup_official_feature_values(row)
+            records.append(payload)
+            match_keys.append(match_key)
+    else:
+        match_keys = [""] * len(frame)
+
+    official_df = (
+        pd.DataFrame.from_records(records, index=frame.index)
+        if records and any(records)
+        else pd.DataFrame(index=frame.index)
+    )
+
+    if not official_df.empty:
+        for column in official_df.columns:
+            if column not in frame.columns:
+                frame[column] = official_df[column]
+            else:
+                mask = official_df[column].notna()
+                if mask.any():
+                    frame.loc[mask, column] = official_df.loc[mask, column]
+
+    frame["_official_match_key"] = match_keys
+
+    if bundle.l2l_category_features or bundle.l2l_item_features:
+        index_labels = list(frame.index)
+        hint_payload: list[str] = []
+        any_hints = False
+
+        for idx, index in enumerate(index_labels):
+            aggregated: Dict[str, float] = {}
+            hints: set[str] = set()
+            match_key = match_keys[idx] if idx < len(match_keys) else ""
+            if match_key:
+                entry = bundle.l2l_item_features.get(match_key)
+                if entry:
+                    aggregated.update(entry)
+                    for name in entry:
+                        hint = bundle.l2l_hints.get(name)
+                        if hint:
+                            hints.add(hint)
+
+            row = frame.loc[index]
+            category_key = _normalize_category(row.get("category", ""))
+            if category_key:
+                entry = bundle.l2l_category_features.get(category_key)
+                if entry:
+                    for name, value in entry.items():
+                        aggregated.setdefault(name, value)
+                        hint = bundle.l2l_hints.get(name)
+                        if hint:
+                            hints.add(hint)
+
+            for name, value in aggregated.items():
+                if name not in frame.columns or pd.isna(frame.at[index, name]):
+                    frame.at[index, name] = value
+
+            hint_text = "; ".join(sorted(hints)) if hints else ""
+            any_hints = any_hints or bool(hint_text)
+            hint_payload.append(hint_text)
+
+        if any_hints:
+            frame["_l2l_page_hints"] = hint_payload
+
+    if not official_df.empty:
+        numeric_candidates = [
+            column
+            for column in official_df.columns
+            if column.endswith(("_kg", "_pct"))
+            or column.startswith("category_total")
+            or column in {"difficulty_factor", "approx_moisture_pct"}
+        ]
+
+        for column in numeric_candidates:
+            if column in frame.columns:
+                frame[column] = pd.to_numeric(frame[column], errors="coerce")
     for _, row in frame.iterrows():
         payload, match_key = _lookup_official_feature_values(row)
         records.append(payload)
@@ -1058,6 +1330,11 @@ def compute_feature_vector(
     mission_official_mass: Dict[str, float] = {}
     mission_similarity_clipped: Dict[str, float] = {}
 
+    l2l_constants = bundle.l2l_constants if bundle.l2l_constants else {}
+    for name, value in l2l_constants.items():
+        if isinstance(value, (int, float)) and np.isfinite(value):
+            features[name] = float(value)
+
     if bundle.mission_mass and bundle.mission_totals:
         match_keys_col = picks.get("_official_match_key")
         if match_keys_col is not None:
@@ -1135,6 +1412,7 @@ def compute_feature_vector(
             _apply_weighted_metrics(bundle.processing_metrics)
             _apply_weighted_metrics(bundle.leo_mass_savings)
             _apply_weighted_metrics(bundle.propellant_benefits)
+
     gas_index = _GAS_MEAN_YIELD * (
         0.7 * features.get("polyethylene_frac", 0.0)
         + 0.4 * features.get("foam_frac", 0.0)
@@ -1143,9 +1421,12 @@ def compute_feature_vector(
     )
     features["gas_recovery_index"] = float(np.clip(gas_index / 10.0, 0.0, 1.0))
 
-    logistics_index = _MEAN_REUSE * (
-        features.get("packaging_frac", 0.0) + 0.5 * features.get("eva_frac", 0.0)
-    )
+    packaging_term = features.get("packaging_frac", 0.0) + 0.5 * features.get("eva_frac", 0.0)
+    packaging_ratio = l2l_constants.get("l2l_logistics_packaging_per_goods_ratio")
+    if packaging_ratio and np.isfinite(packaging_ratio) and packaging_ratio > 0:
+        logistics_index = packaging_term / float(packaging_ratio)
+    else:
+        logistics_index = _MEAN_REUSE * packaging_term
     features["logistics_reuse_index"] = float(np.clip(logistics_index, 0.0, 2.0))
 
     for oxide, value in _REGOLITH_VECTOR.items():

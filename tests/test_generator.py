@@ -316,6 +316,10 @@ def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
         processing_metrics={"gateway_i": {"processing_o2_ch4_yield_kg": 5.0}},
         leo_mass_savings={"gateway_i": {"leo_mass_savings_kg": 120.0}},
         propellant_benefits={"gateway_i": {"propellant_delta_v_m_s": 35.0}},
+        l2l_constants={},
+        l2l_category_features={},
+        l2l_item_features={},
+        l2l_hints={},
     )
 
     def fake_bundle():
@@ -349,3 +353,102 @@ def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
     assert features["processing_o2_ch4_yield_kg_expected"] == pytest.approx(1.0, rel=1e-6)
     assert features["leo_mass_savings_kg_expected"] == pytest.approx(24.0, rel=1e-6)
     assert features["propellant_delta_v_m_s_expected"] == pytest.approx(7.0, rel=1e-6)
+
+
+def test_prepare_waste_frame_injects_l2l_features(monkeypatch):
+    generator._official_features_bundle.cache_clear()
+
+    match_key = "food packaging|rehydratable pouch"
+    dummy_bundle = generator._OfficialFeaturesBundle(
+        value_columns=("dummy_col",),
+        composition_columns=(),
+        direct_map={match_key: {"dummy_col": 1.0}},
+        category_tokens={
+            "food packaging": [
+                (frozenset({"rehydratable", "pouch"}), {"dummy_col": 1.0}, match_key)
+            ]
+        },
+        mission_mass={},
+        mission_totals={},
+        processing_metrics={},
+        leo_mass_savings={},
+        propellant_benefits={},
+        l2l_constants={},
+        l2l_category_features={"food packaging": {"l2l_geometry_panel_area_m2": 5.0}},
+        l2l_item_features={match_key: {"l2l_ops_random_access_required": 1.0}},
+        l2l_hints={
+            "l2l_geometry_panel_area_m2": "p.42",
+            "l2l_ops_random_access_required": "p.15",
+        },
+    )
+
+    def fake_bundle():
+        return dummy_bundle
+
+    fake_bundle.cache_clear = lambda: None  # type: ignore[attr-defined]
+    monkeypatch.setattr(generator, "_official_features_bundle", fake_bundle)
+
+    waste_df = pd.DataFrame(
+        {
+            "id": ["M2"],
+            "category": ["Food Packaging"],
+            "material": ["Rehydratable Pouch"],
+            "kg": [12.0],
+            "volume_l": [6.0],
+        }
+    )
+
+    prepared = generator.prepare_waste_frame(waste_df)
+    row = prepared.iloc[0]
+
+    assert pytest.approx(row["l2l_geometry_panel_area_m2"], rel=1e-6) == 5.0
+    assert pytest.approx(row["l2l_ops_random_access_required"], rel=1e-6) == 1.0
+    assert "_l2l_page_hints" in row.index
+    assert "p.42" in row["_l2l_page_hints"]
+    assert "p.15" in row["_l2l_page_hints"]
+
+
+def test_compute_feature_vector_uses_l2l_packaging_ratio(monkeypatch):
+    generator._official_features_bundle.cache_clear()
+
+    dummy_bundle = generator._OfficialFeaturesBundle(
+        value_columns=("dummy_col",),
+        composition_columns=(),
+        direct_map={},
+        category_tokens={},
+        mission_mass={},
+        mission_totals={},
+        processing_metrics={},
+        leo_mass_savings={},
+        propellant_benefits={},
+        l2l_constants={"l2l_logistics_packaging_per_goods_ratio": 0.2},
+        l2l_category_features={},
+        l2l_item_features={},
+        l2l_hints={},
+    )
+
+    def fake_bundle():
+        return dummy_bundle
+
+    fake_bundle.cache_clear = lambda: None  # type: ignore[attr-defined]
+    monkeypatch.setattr(generator, "_official_features_bundle", fake_bundle)
+
+    waste_df = pd.DataFrame(
+        {
+            "id": ["P1"],
+            "category": ["Packaging"],
+            "material": ["Polyethylene wrap"],
+            "kg": [5.0],
+            "volume_l": [8.0],
+            "flags": [""],
+        }
+    )
+
+    prepared = generator.prepare_waste_frame(waste_df)
+    process = _dummy_process_series()
+    features = generator.compute_feature_vector(prepared, [1.0], process, regolith_pct=0.0)
+
+    assert features["l2l_logistics_packaging_per_goods_ratio"] == pytest.approx(0.2, rel=1e-6)
+    packaging_term = features.get("packaging_frac", 0.0) + 0.5 * features.get("eva_frac", 0.0)
+    expected = min(2.0, packaging_term / 0.2 if 0.2 else 0.0)
+    assert features["logistics_reuse_index"] == pytest.approx(expected, rel=1e-6)
