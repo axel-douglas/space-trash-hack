@@ -25,6 +25,7 @@ from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, NamedTuple, Sequence, Tuple
+from typing import Any, Dict, Iterable, Mapping, NamedTuple, Tuple
 
 import numpy as np
 import pandas as pd
@@ -411,6 +412,12 @@ def _extract_grouped_metrics(filename: str, prefix: str) -> Dict[str, Dict[str, 
 
     return aggregated
 
+    "packaging": "other packaging glove",
+    "foam": "other packaging glove",
+    "glove": "other packaging glove",
+    "other packaging": "other packaging glove",
+    "other packaging glove": "other packaging glove",
+}
 
 def _normalize_text(value: Any) -> str:
     text = str(value or "").lower()
@@ -429,15 +436,12 @@ def _normalize_category(value: Any) -> str:
     normalized = _normalize_text(value)
     return _CATEGORY_SYNONYMS.get(normalized, normalized)
 
-
 def _build_match_key(category: Any, subitem: Any | None = None) -> str:
     """Return the canonical key used to match NASA reference tables."""
 
     if subitem:
         return f"{_normalize_category(category)}|{_normalize_item(subitem)}"
     return _normalize_category(category)
-
-
 def _estimate_density_from_row(row: pd.Series) -> float | None:
     category = _normalize_category(row.get("category", ""))
 
@@ -474,7 +478,6 @@ def _estimate_density_from_row(row: pd.Series) -> float | None:
 
     return None
 
-
 def _normalize_item(value: Any) -> str:
     return _normalize_text(value)
 
@@ -496,12 +499,14 @@ class _OfficialFeaturesBundle(NamedTuple):
     processing_metrics: Dict[str, Dict[str, float]]
     leo_mass_savings: Dict[str, Dict[str, float]]
     propellant_benefits: Dict[str, Dict[str, float]]
+    category_tokens: Dict[str, list[tuple[frozenset[str], Dict[str, float]]]]
 
 
 @lru_cache(maxsize=1)
 def _official_features_bundle() -> _OfficialFeaturesBundle:
     if not _OFFICIAL_FEATURES_PATH.exists():
         return _OfficialFeaturesBundle((), (), {}, {}, {}, {}, {}, {}, {})
+        return _OfficialFeaturesBundle((), (), {}, {})
 
     table = pd.read_csv(_OFFICIAL_FEATURES_PATH)
     duplicate_suffixes = [column for column in table.columns if column.endswith(".1")]
@@ -527,6 +532,7 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
 
     direct_map: Dict[str, Dict[str, float]] = {}
     category_tokens: Dict[str, list[tuple[frozenset[str], Dict[str, float], str]]] = {}
+    category_tokens: Dict[str, list[tuple[frozenset[str], Dict[str, float]]]] = {}
 
     for _, row in table.iterrows():
         payload: Dict[str, float] = {}
@@ -567,6 +573,19 @@ def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], s
     category = _normalize_category(row.get("category", ""))
     if not category:
         return {}, ""
+        category_tokens.setdefault(category, []).append((tokens, payload))
+
+    return _OfficialFeaturesBundle(value_columns, composition_columns, direct_map, category_tokens)
+
+
+def _lookup_official_feature_values(row: pd.Series) -> Dict[str, float]:
+    bundle = _official_features_bundle()
+    if not bundle.value_columns:
+        return {}
+
+    category = _normalize_category(row.get("category", ""))
+    if not category:
+        return {}
 
     candidates = (
         row.get("material"),
@@ -590,6 +609,15 @@ def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], s
     matches = bundle.category_tokens.get(category)
     if not matches:
         return {}, ""
+            return payload
+
+    token_candidates = [value for value in candidates if value]
+    if not token_candidates:
+        return {}
+
+    matches = bundle.category_tokens.get(category)
+    if not matches:
+        return {}
 
     for candidate in token_candidates:
         tokens = _token_set(candidate)
@@ -600,6 +628,11 @@ def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], s
                 return payload, match_key
 
     return {}, ""
+        for reference_tokens, payload in matches:
+            if tokens.issubset(reference_tokens):
+                return payload
+
+    return {}
 
 
 def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
@@ -616,6 +649,8 @@ def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
 
     if not any(records):
         frame["_official_match_key"] = match_keys
+    records = [_lookup_official_feature_values(row) for _, row in frame.iterrows()]
+    if not any(records):
         return frame
 
     official_df = pd.DataFrame.from_records(records, index=frame.index)
@@ -628,7 +663,6 @@ def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
                 frame.loc[mask, column] = official_df.loc[mask, column]
 
     frame["_official_match_key"] = match_keys
-
     numeric_candidates = [
         column
         for column in official_df.columns
@@ -983,6 +1017,7 @@ def compute_feature_vector(
             official_comp = {key: value / total for key, value in clipped.items() if total > 0}
         else:
             official_comp = clipped
+            official_comp[column] = float(np.clip(frac, 0.0, 1.0))
 
     def _set_official_fraction(name: str, *columns: str) -> None:
         total = 0.0
@@ -1100,7 +1135,6 @@ def compute_feature_vector(
             _apply_weighted_metrics(bundle.processing_metrics)
             _apply_weighted_metrics(bundle.leo_mass_savings)
             _apply_weighted_metrics(bundle.propellant_benefits)
-
     gas_index = _GAS_MEAN_YIELD * (
         0.7 * features.get("polyethylene_frac", 0.0)
         + 0.4 * features.get("foam_frac", 0.0)

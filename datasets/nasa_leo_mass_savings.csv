@@ -1,0 +1,3 @@
+delivery_method,isp_sec,gear_ratio,max_phase_I_propellant_kg,max_phase_II_propellant_kg,leo_mass_savings_kg
+Chemical,425,3.34,490,990,1635-3300
+SEP,1500,1.35,490,990,660-1340
