@@ -18,10 +18,12 @@ import json
 import logging
 import os
 import random
+import re
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, Tuple
+from typing import Any, Dict, Iterable, Mapping, NamedTuple, Tuple
 
 import numpy as np
 import pandas as pd
@@ -136,6 +138,242 @@ def _load_mean_reuse() -> float:
 _REGOLITH_VECTOR = _load_regolith_vector()
 _GAS_MEAN_YIELD = _load_gas_mean_yield()
 _MEAN_REUSE = _load_mean_reuse()
+
+_OFFICIAL_FEATURES_PATH = DATASETS_ROOT / "rexai_nasa_waste_features.csv"
+
+_CATEGORY_SYNONYMS = {
+    "foam": "foam packaging",
+    "foam packaging": "foam packaging",
+    "packaging": "other packaging glove",
+    "other packaging": "other packaging glove",
+    "glove": "other packaging glove",
+    "other packaging glove": "other packaging glove",
+    "food packaging": "food packaging",
+    "structural elements": "structural element",
+    "structural element": "structural element",
+    "eva": "eva waste",
+    "eva waste": "eva waste",
+    "gloves": "other packaging glove",
+}
+
+_COMPOSITION_DENSITY_MAP = {
+    "Aluminum_pct": 2700.0,
+    "Carbon_Fiber_pct": 1700.0,
+    "Polyethylene_pct": 950.0,
+    "PVDF_pct": 1780.0,
+    "Nomex_pct": 1350.0,
+    "Nylon_pct": 1140.0,
+    "Polyester_pct": 1380.0,
+    "Cotton_Cellulose_pct": 1550.0,
+    "EVOH_pct": 1250.0,
+    "PET_pct": 1370.0,
+    "Nitrile_pct": 1030.0,
+}
+
+_CATEGORY_DENSITY_DEFAULTS = {
+    "foam packaging": 100.0,
+    "food packaging": 650.0,
+    "structural element": 1800.0,
+    "other packaging glove": 420.0,
+    "eva waste": 240.0,
+    "fabric": 350.0,
+}
+
+
+def _normalize_text(value: Any) -> str:
+    text = str(value or "").lower()
+    text = text.replace("—", " ").replace("/", " ")
+    text = re.sub(r"\(.*?\)", " ", text)
+    text = re.sub(r"[^a-z0-9 ]+", " ", text)
+    tokens = []
+    for token in text.split():
+        if len(token) > 3 and token.endswith("s"):
+            token = token[:-1]
+        tokens.append(token)
+    return " ".join(tokens).strip()
+
+
+def _normalize_category(value: Any) -> str:
+    normalized = _normalize_text(value)
+    return _CATEGORY_SYNONYMS.get(normalized, normalized)
+
+
+def _estimate_density_from_row(row: pd.Series) -> float | None:
+    category = _normalize_category(row.get("category", ""))
+
+    try:
+        cat_mass = float(row.get("category_total_mass_kg"))
+        cat_volume = float(row.get("category_total_volume_m3"))
+    except (TypeError, ValueError):
+        cat_mass = cat_volume = float("nan")
+
+    if pd.notna(cat_mass) and pd.notna(cat_volume) and cat_volume > 0:
+        return float(np.clip(cat_mass / cat_volume, 20.0, 4000.0))
+
+    composition_weights: list[tuple[float, float]] = []
+    total = 0.0
+    for column, density in _COMPOSITION_DENSITY_MAP.items():
+        try:
+            pct = float(row.get(column, 0.0))
+        except (TypeError, ValueError):
+            pct = 0.0
+        if pct and not np.isnan(pct):
+            frac = pct / 100.0
+            if frac > 0:
+                composition_weights.append((frac, density))
+                total += frac
+
+    if total > 0 and composition_weights:
+        weighted = sum(frac * density for frac, density in composition_weights) / total
+        if category == "foam packaging":
+            return float(min(weighted, _CATEGORY_DENSITY_DEFAULTS.get(category, weighted)))
+        return float(np.clip(weighted, 20.0, 4000.0))
+
+    if category in _CATEGORY_DENSITY_DEFAULTS:
+        return float(_CATEGORY_DENSITY_DEFAULTS[category])
+
+    return None
+
+
+def _normalize_item(value: Any) -> str:
+    return _normalize_text(value)
+
+
+def _token_set(value: Any) -> frozenset[str]:
+    normalized = _normalize_item(value)
+    if not normalized:
+        return frozenset()
+    return frozenset(normalized.split())
+
+
+class _OfficialFeaturesBundle(NamedTuple):
+    value_columns: tuple[str, ...]
+    composition_columns: tuple[str, ...]
+    direct_map: Dict[str, Dict[str, float]]
+    category_tokens: Dict[str, list[tuple[frozenset[str], Dict[str, float]]]]
+
+
+@lru_cache(maxsize=1)
+def _official_features_bundle() -> _OfficialFeaturesBundle:
+    if not _OFFICIAL_FEATURES_PATH.exists():
+        return _OfficialFeaturesBundle((), (), {}, {})
+
+    table = pd.read_csv(_OFFICIAL_FEATURES_PATH)
+    duplicate_suffixes = [column for column in table.columns if column.endswith(".1")]
+    if duplicate_suffixes:
+        table = table.drop(columns=duplicate_suffixes)
+    table = table.loc[:, ~table.columns.duplicated()].copy()
+    table["category_norm"] = table["category"].map(_normalize_category)
+    table["subitem_norm"] = table["subitem"].map(_normalize_item)
+    table["token_set"] = table["subitem_norm"].map(_token_set)
+    table["key"] = table["category_norm"] + "|" + table["subitem_norm"]
+
+    excluded = {"category", "subitem", "category_norm", "subitem_norm", "token_set", "key"}
+    value_columns = tuple(col for col in table.columns if col not in excluded)
+    composition_columns = tuple(
+        col
+        for col in value_columns
+        if col.endswith("_pct") and not col.startswith("subitem_")
+    )
+
+    direct_map: Dict[str, Dict[str, float]] = {}
+    category_tokens: Dict[str, list[tuple[frozenset[str], Dict[str, float]]]] = {}
+
+    for _, row in table.iterrows():
+        payload: Dict[str, float] = {}
+        for column in value_columns:
+            value = row[column]
+            payload[column] = float(value) if pd.notna(value) else float("nan")
+
+        key = str(row["key"])
+        direct_map[key] = payload
+
+        category = str(row["category_norm"])
+        tokens = row["token_set"]
+        category_tokens.setdefault(category, []).append((tokens, payload))
+
+    return _OfficialFeaturesBundle(value_columns, composition_columns, direct_map, category_tokens)
+
+
+def _lookup_official_feature_values(row: pd.Series) -> Dict[str, float]:
+    bundle = _official_features_bundle()
+    if not bundle.value_columns:
+        return {}
+
+    category = _normalize_category(row.get("category", ""))
+    if not category:
+        return {}
+
+    candidates = (
+        row.get("material"),
+        row.get("material_family"),
+        row.get("key_materials"),
+    )
+
+    for candidate in candidates:
+        normalized = _normalize_item(candidate)
+        if not normalized:
+            continue
+        key = f"{category}|{normalized}"
+        payload = bundle.direct_map.get(key)
+        if payload:
+            return payload
+
+    token_candidates = [value for value in candidates if value]
+    if not token_candidates:
+        return {}
+
+    matches = bundle.category_tokens.get(category)
+    if not matches:
+        return {}
+
+    for candidate in token_candidates:
+        tokens = _token_set(candidate)
+        if not tokens:
+            continue
+        for reference_tokens, payload in matches:
+            if tokens.issubset(reference_tokens):
+                return payload
+
+    return {}
+
+
+def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
+    bundle = _official_features_bundle()
+    if not bundle.value_columns or frame.empty:
+        return frame
+
+    records = [_lookup_official_feature_values(row) for _, row in frame.iterrows()]
+    if not any(records):
+        return frame
+
+    official_df = pd.DataFrame.from_records(records, index=frame.index)
+    for column in official_df.columns:
+        if column not in frame.columns:
+            frame[column] = official_df[column]
+        else:
+            mask = official_df[column].notna()
+            if mask.any():
+                frame.loc[mask, column] = official_df.loc[mask, column]
+
+    numeric_candidates = [
+        column
+        for column in official_df.columns
+        if column.endswith(("_kg", "_pct"))
+        or column.startswith("category_total")
+        or column in {"difficulty_factor", "approx_moisture_pct"}
+    ]
+
+    for column in numeric_candidates:
+        if column in frame.columns:
+            frame[column] = pd.to_numeric(frame[column], errors="coerce")
+
+    if "approx_moisture_pct" in frame.columns:
+        mask = frame["approx_moisture_pct"].notna()
+        if mask.any():
+            frame.loc[mask, "moisture_pct"] = frame.loc[mask, "approx_moisture_pct"]
+
+    return frame
 
 
 @dataclass(slots=True)
@@ -330,15 +568,32 @@ def prepare_waste_frame(waste_df: pd.DataFrame) -> pd.DataFrame:
         + out["key_materials"].astype(str).str.lower()
     )
 
-    volume_m3 = (out["volume_l"].replace(0, np.nan) / 1000.0).fillna(0.001)
-    out["density_kg_m3"] = out["kg"].astype(float) / volume_m3
-
     if "_problematic" not in out.columns:
         out["_problematic"] = out.apply(_is_problematic, axis=1)
 
     out["_source_id"] = out["id"].astype(str)
     out["_source_category"] = out["category"].astype(str)
     out["_source_flags"] = out["flags"].astype(str)
+
+    out = _inject_official_features(out)
+
+    mass = pd.to_numeric(out["kg"], errors="coerce").fillna(0.0)
+    volume_l = pd.to_numeric(out.get("volume_l"), errors="coerce")
+    volume_m3 = volume_l / 1000.0
+    density = pd.Series(np.nan, index=out.index, dtype=float)
+    with_volume = volume_m3.notna() & (volume_m3 > 0)
+    density.loc[with_volume] = mass.loc[with_volume] / volume_m3.loc[with_volume]
+
+    missing_density = density.isna() | ~np.isfinite(density)
+    if missing_density.any():
+        for idx, row in out.loc[missing_density].iterrows():
+            estimate = _estimate_density_from_row(row)
+            if estimate is not None:
+                density.at[idx] = estimate
+
+    default_density = float(_CATEGORY_DENSITY_DEFAULTS.get("other packaging glove", 500.0))
+    density = density.fillna(default_density)
+    out["density_kg_m3"] = density.clip(lower=20.0, upper=4000.0)
 
     return out
 
@@ -407,18 +662,6 @@ def compute_feature_vector(
     difficulty = picks.get("difficulty_factor", 1).to_numpy(dtype=float) / 3.0
     densities = picks.get("density_kg_m3", 0).to_numpy(dtype=float)
 
-    keyword_map: Dict[str, Tuple[str, ...]] = {
-        "aluminum_frac": ("aluminum", " alloy", " al "),
-        "foam_frac": ("foam", "zotek", "closed cell"),
-        "eva_frac": ("eva", "ctb", "nomex"),
-        "textile_frac": ("textile", "cloth", "fabric", "wipe"),
-        "multilayer_frac": ("multilayer", "pe-pet-al", "pouch"),
-        "glove_frac": ("glove", "nitrile"),
-        "polyethylene_frac": ("polyethylene", "pvdf", "ldpe"),
-        "carbon_fiber_frac": ("carbon fiber", "composite"),
-        "hydrogen_rich_frac": ("polyethylene", "cotton", "pvdf"),
-    }
-
     features: Dict[str, Any] = {
         "process_id": str(process["process_id"]),
         "total_mass_kg": total_kg,
@@ -433,8 +676,74 @@ def compute_feature_vector(
         "packaging_frac": _category_fraction(tuple(categories), base_weights, ("packaging", "food packaging")),
     }
 
+    keyword_map: Dict[str, Tuple[str, ...]] = {
+        "aluminum_frac": ("aluminum", " alloy", " al "),
+        "foam_frac": ("foam", "zotek", "closed cell"),
+        "eva_frac": ("eva", "ctb", "nomex"),
+        "textile_frac": ("textile", "cloth", "fabric", "wipe"),
+        "multilayer_frac": ("multilayer", "pe-pet-al", "pouch"),
+        "glove_frac": ("glove", "nitrile"),
+        "polyethylene_frac": ("polyethylene", "pvdf", "ldpe"),
+        "carbon_fiber_frac": ("carbon fiber", "composite"),
+        "hydrogen_rich_frac": ("polyethylene", "cotton", "pvdf"),
+    }
+
     for name, keywords in keyword_map.items():
         features[name] = _keyword_fraction(tuple(tokens), base_weights, keywords)
+
+    bundle = _official_features_bundle()
+    official_comp: Dict[str, float] = {}
+    if bundle.composition_columns:
+        for column in bundle.composition_columns:
+            if column not in picks.columns:
+                continue
+            values = pd.to_numeric(picks[column], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+            if not len(values):
+                continue
+            frac = float(np.dot(base_weights, values / 100.0))
+            official_comp[column] = frac
+
+    if official_comp:
+        clipped = {key: max(0.0, float(value)) for key, value in official_comp.items()}
+        total = sum(clipped.values())
+        if total > 1.0 + 1e-6:
+            official_comp = {key: value / total for key, value in clipped.items() if total > 0}
+        else:
+            official_comp = clipped
+
+    def _set_official_fraction(name: str, *columns: str) -> None:
+        total = 0.0
+        found = False
+        for column in columns:
+            if column in official_comp:
+                total += official_comp[column]
+                found = True
+        if not found:
+            return
+        features[name] = float(np.clip(total, 0.0, 1.0))
+
+    if official_comp:
+        _set_official_fraction("aluminum_frac", "Aluminum_pct")
+        _set_official_fraction("carbon_fiber_frac", "Carbon_Fiber_pct")
+        _set_official_fraction("polyethylene_frac", "Polyethylene_pct")
+        _set_official_fraction("glove_frac", "Nitrile_pct")
+        _set_official_fraction("eva_frac", "Nomex_pct")
+        _set_official_fraction("foam_frac", "PVDF_pct")
+        _set_official_fraction("multilayer_frac", "EVOH_pct", "PET_pct")
+
+        textile_total = sum(
+            official_comp.get(column, 0.0)
+            for column in ("Cotton_Cellulose_pct", "Polyester_pct", "Nylon_pct")
+        )
+        if textile_total > 0:
+            features["textile_frac"] = float(np.clip(textile_total, 0.0, 1.0))
+
+        hydrogen_total = sum(
+            official_comp.get(column, 0.0)
+            for column in ("Polyethylene_pct", "Cotton_Cellulose_pct", "PVDF_pct")
+        )
+        if hydrogen_total > 0:
+            features["hydrogen_rich_frac"] = float(np.clip(hydrogen_total, 0.0, 1.0))
 
     gas_index = _GAS_MEAN_YIELD * (
         0.7 * features.get("polyethylene_frac", 0.0)
