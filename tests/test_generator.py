@@ -27,6 +27,17 @@ class DummyRegistry:
         return [0.1, 0.2, 0.3]
 
 
+def _dummy_process_series() -> pd.Series:
+    return pd.Series(
+        {
+            "process_id": "P01",
+            "energy_kwh_per_kg": 1.0,
+            "water_l_per_kg": 0.5,
+            "crew_min_per_batch": 30.0,
+        }
+    )
+
+
 def test_generate_candidates_appends_inference_log(monkeypatch):
     monkeypatch.setattr(generator, "MODEL_REGISTRY", DummyRegistry())
 
@@ -187,3 +198,97 @@ def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch):
     cand = candidates[0]
     assert "score_breakdown" in cand
     assert "auxiliary" in cand
+
+
+def test_prepare_waste_frame_direct_match_overrides_official_fields():
+    waste_df = pd.DataFrame(
+        {
+            "id": ["W1"],
+            "category": ["Foam Packaging"],
+            "material": ["Zotek F30 (PVDF foam)"],
+            "kg": [10.0],
+            "volume_l": [0.0],
+            "flags": [""],
+        }
+    )
+
+    prepared = generator.prepare_waste_frame(waste_df)
+    row = prepared.iloc[0]
+
+    assert pytest.approx(row["difficulty_factor"], rel=1e-6) == 3.0
+    assert pytest.approx(row["PVDF_pct"], rel=1e-6) == 100.0
+    assert pytest.approx(row["moisture_pct"], rel=1e-6) == 0.0
+    assert pytest.approx(row["density_kg_m3"], rel=1e-2) == 100.0
+
+
+def test_prepare_waste_frame_token_match_applies_composition():
+    waste_df = pd.DataFrame(
+        {
+            "id": ["W2"],
+            "category": ["Food Packaging"],
+            "material": ["Rehydratable Pouch"],
+            "kg": [5.0],
+            "volume_l": [0.0],
+            "flags": [""],
+        }
+    )
+
+    prepared = generator.prepare_waste_frame(waste_df)
+    row = prepared.iloc[0]
+
+    assert pytest.approx(row["Nylon_pct"], rel=1e-6) == 41.0
+    assert pytest.approx(row["EVOH_pct"], rel=1e-6) == 11.0
+    assert pytest.approx(row["Polyethylene_pct"], rel=1e-6) == 33.0
+    assert pytest.approx(row["moisture_pct"], rel=1e-6) == 4.0
+    assert pytest.approx(row["density_kg_m3"], rel=1e-2) == 100.0
+
+
+def test_compute_feature_vector_blends_official_and_keyword_sources():
+    waste_df = pd.DataFrame(
+        {
+            "id": ["A", "B"],
+            "category": ["Food Packaging", "Unknown"],
+            "material": ["Rehydratable Pouch", "High density polyethylene liner"],
+            "kg": [7.0, 3.0],
+            "volume_l": [0.0, 4.0],
+            "flags": ["", ""],
+        }
+    )
+
+    prepared = generator.prepare_waste_frame(waste_df)
+    process = _dummy_process_series()
+    features = generator.compute_feature_vector(
+        prepared,
+        [0.7, 0.3],
+        process,
+        regolith_pct=0.0,
+    )
+
+    assert features["polyethylene_frac"] > 0.2
+    assert features["gas_recovery_index"] > 0.0
+    assert features["moisture_frac"] == pytest.approx(0.028, rel=1e-6)
+
+
+def test_compute_feature_vector_keyword_fallback_triggers_polyethylene():
+    waste_df = pd.DataFrame(
+        {
+            "id": ["C"],
+            "category": ["Unknown"],
+            "material": ["High density polyethylene film"],
+            "kg": [5.0],
+            "volume_l": [5.0],
+            "flags": [""],
+        }
+    )
+
+    prepared = generator.prepare_waste_frame(waste_df)
+    process = _dummy_process_series()
+    features = generator.compute_feature_vector(
+        prepared,
+        [1.0],
+        process,
+        regolith_pct=0.0,
+    )
+
+    assert features["polyethylene_frac"] > 0.5
+    assert features["gas_recovery_index"] > 0.0
