@@ -292,3 +292,60 @@ def test_compute_feature_vector_keyword_fallback_triggers_polyethylene():
 
     assert features["polyethylene_frac"] > 0.5
     assert features["gas_recovery_index"] > 0.0
+
+
+def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
+    # Ensure cached bundles from other tests do not leak.
+    generator._official_features_bundle.cache_clear()
+
+    match_key = "food packaging|rehydratable pouch"
+    dummy_bundle = generator._OfficialFeaturesBundle(
+        value_columns=("dummy_col",),
+        composition_columns=(),
+        direct_map={match_key: {"dummy_col": 1.0}},
+        category_tokens={
+            "food packaging": [
+                (frozenset({"rehydratable", "pouch"}), {"dummy_col": 1.0}, match_key)
+            ]
+        },
+        mission_mass={
+            match_key: {"gateway_i": 200.0},
+            "food packaging": {"gateway_i": 300.0},
+        },
+        mission_totals={"gateway_i": 1000.0},
+        processing_metrics={"gateway_i": {"processing_o2_ch4_yield_kg": 5.0}},
+        leo_mass_savings={"gateway_i": {"leo_mass_savings_kg": 120.0}},
+        propellant_benefits={"gateway_i": {"propellant_delta_v_m_s": 35.0}},
+    )
+
+    def fake_bundle():
+        return dummy_bundle
+
+    fake_bundle.cache_clear = lambda: None  # type: ignore[attr-defined]
+    monkeypatch.setattr(generator, "_official_features_bundle", fake_bundle)
+
+    waste_df = pd.DataFrame(
+        {
+            "id": ["M1"],
+            "category": ["Food Packaging"],
+            "material": ["Rehydratable Pouch"],
+            "kg": [10.0],
+            "volume_l": [5.0],
+        }
+    )
+
+    prepared = generator.prepare_waste_frame(waste_df)
+    process = _dummy_process_series()
+    features = generator.compute_feature_vector(prepared, [1.0], process, regolith_pct=0.0)
+
+    assert features["mission_similarity_gateway_i"] == pytest.approx(0.2, rel=1e-6)
+    assert features["mission_reference_mass_gateway_i"] == pytest.approx(200.0, rel=1e-6)
+    assert features["mission_scaled_mass_gateway_i"] == pytest.approx(2.0, rel=1e-6)
+    assert features["mission_official_mass_gateway_i"] == pytest.approx(200.0, rel=1e-6)
+    assert features["mission_similarity_total"] == pytest.approx(0.2, rel=1e-6)
+
+    # Aggregated NASA references should appear as weighted expectations.
+    assert features["processing_o2_ch4_yield_kg_gateway_i"] == pytest.approx(5.0, rel=1e-6)
+    assert features["processing_o2_ch4_yield_kg_expected"] == pytest.approx(1.0, rel=1e-6)
+    assert features["leo_mass_savings_kg_expected"] == pytest.approx(24.0, rel=1e-6)
+    assert features["propellant_delta_v_m_s_expected"] == pytest.approx(7.0, rel=1e-6)
