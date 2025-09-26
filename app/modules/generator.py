@@ -14,6 +14,7 @@ candidate assembly.
 
 from __future__ import annotations
 
+import atexit
 import itertools
 import logging
 import math
@@ -42,6 +43,11 @@ try:
 except Exception:  # pragma: no cover - scipy is optional during inference
     sparse = None  # type: ignore[assignment]
 
+if sparse is not None:
+    empty_reference = sparse.csr_matrix((0, 0), dtype=np.float64)
+else:
+    empty_reference = np.zeros((0, 0), dtype=np.float64)
+
 try:  # Torch tensors may appear when the caller works in PyTorch land.
     import torch
 except Exception:  # pragma: no cover - torch is optional
@@ -59,7 +65,7 @@ from app.modules.data_sources import (
     normalize_item,
     official_features_bundle as _load_official_features_bundle,
 )
-from app.modules.logging_utils import append_inference_log
+from app.modules.logging_utils import append_inference_log, pq
 
 # The demo previously collapsed multiple NASA inventory families (Packaging,
 # Other Packaging, Gloves, Foam Packaging, Food Packaging, Structural Elements
@@ -822,24 +828,15 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
     value_columns = tuple(raw_bundle.value_columns)
     composition_columns = tuple(raw_bundle.composition_columns)
 
+    mission_reference_dense = (
+        mission_reference_matrix.toarray()
+        if sparse is not None and sparse.issparse(mission_reference_matrix)
+        else np.asarray(mission_reference_matrix, dtype=np.float64)
+    )
+
     default = _OfficialFeaturesBundle(
         value_columns,
         composition_columns,
-        (),
-        (),
-        {},
-        pl.DataFrame(),
-        np.empty((0, 0), dtype=np.float64),
-        {},
-        {},
-        (),
-        {},
-        empty_reference,
-        np.zeros((0, 0), dtype=np.float64),
-        (),
-        np.zeros(0, dtype=np.float64),
-        {},
-        {},
         {},
         {},
         table_df,
@@ -849,6 +846,7 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
         mission_reference_keys,
         mission_reference_index,
         mission_reference_matrix,
+        mission_reference_dense,
         mission_names,
         mission_totals_vector,
         raw_bundle.processing_metrics,
