@@ -831,6 +831,7 @@ class _OfficialFeaturesBundle(NamedTuple):
     composition_columns: tuple[str, ...]
     direct_map: Dict[str, Dict[str, float]]
     category_tokens: Dict[str, list[tuple[frozenset[str], Dict[str, float], str]]]
+    table: pl.DataFrame
     mission_mass: Dict[str, Dict[str, float]]
     mission_totals: Dict[str, float]
     processing_metrics: Dict[str, Dict[str, float]]
@@ -849,6 +850,7 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
         (),
         (),
         {},
+        pl.DataFrame(),
         {},
         {},
         {},
@@ -873,6 +875,24 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
     table_lazy = _merge_reference_dataset(table_lazy, "nasa_waste_processing_products.csv", "processing")
     table_lazy = _merge_reference_dataset(table_lazy, "nasa_leo_mass_savings.csv", "leo")
     table_lazy = _merge_reference_dataset(table_lazy, "nasa_propellant_benefits.csv", "propellant")
+
+    table_lazy = table_lazy.with_columns(
+        [
+            pl.col("category")
+            .map_elements(_normalize_category)
+            .alias("category_norm"),
+            pl.col("subitem")
+            .map_elements(_normalize_item)
+            .alias("subitem_norm"),
+        ]
+    )
+
+    table_lazy = table_lazy.with_columns(
+        pl.when(pl.col("subitem_norm").str.len_bytes() > 0)
+        .then(pl.col("category_norm") + pl.lit("|") + pl.col("subitem_norm"))
+        .otherwise(pl.col("category_norm"))
+        .alias("key")
+    )
 
     if isinstance(table_lazy, pd.DataFrame):  # pragma: no cover - defensive
         table_df = pl.from_pandas(table_lazy)
@@ -927,11 +947,16 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
     leo_savings = _extract_grouped_metrics("nasa_leo_mass_savings.csv", "leo")
     propellant_metrics = _extract_grouped_metrics("nasa_propellant_benefits.csv", "propellant")
 
+    table_join = table_df.select(
+        ["category_norm", "subitem_norm", *value_columns]
+    ).unique(subset=["category_norm", "subitem_norm"], maintain_order=True)
+
     return _OfficialFeaturesBundle(
         value_columns,
         composition_columns,
         direct_map,
         category_tokens,
+        table_join,
         waste_summary.mass_by_key,
         waste_summary.mission_totals,
         processing_metrics,
@@ -992,90 +1017,182 @@ def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
     if not bundle.value_columns or frame.empty:
         return frame
 
-    records: list[Dict[str, float]] = []
-    match_keys: list[str] = []
-    for _, row in frame.iterrows():
-        payload, match_key = _lookup_official_feature_values(row)
-        records.append(payload)
-        match_keys.append(match_key)
+    working = frame.copy()
+    working["__row_id__"] = np.arange(len(working))
 
-    has_payload = any(payload for payload in records)
-    official_df = (
-        pd.DataFrame.from_records(records, index=frame.index)
-        if has_payload
-        else pd.DataFrame(index=frame.index)
+    inventory_pl = pl.from_pandas(working)
+    existing_columns = set(inventory_pl.columns)
+
+    norm_exprs: list[pl.Expr] = []
+    if "category" in existing_columns:
+        norm_exprs.append(
+            pl.col("category").map_elements(_normalize_category).alias("category_norm")
+        )
+    else:
+        norm_exprs.append(pl.lit("").alias("category_norm"))
+
+    for source, alias in (
+        ("material", "material_norm"),
+        ("material_family", "material_family_norm"),
+        ("key_materials", "key_materials_norm"),
+    ):
+        if source in existing_columns:
+            norm_exprs.append(
+                pl.col(source).map_elements(_normalize_item).alias(alias)
+            )
+        else:
+            norm_exprs.append(pl.lit("").alias(alias))
+
+    inventory_lazy = inventory_pl.lazy().with_columns(norm_exprs)
+
+    inventory_lazy = inventory_lazy.with_columns(
+        pl.when(pl.col("material_norm").str.len_bytes() > 0)
+        .then(pl.col("material_norm"))
+        .when(pl.col("material_family_norm").str.len_bytes() > 0)
+        .then(pl.col("material_family_norm"))
+        .when(pl.col("key_materials_norm").str.len_bytes() > 0)
+        .then(pl.col("key_materials_norm"))
+        .otherwise(pl.lit(""))
+        .alias("subitem_norm")
     )
 
-    if not official_df.empty:
-        for column in official_df.columns:
-            if column not in frame.columns:
-                frame[column] = official_df[column]
-            else:
-                mask = official_df[column].notna()
-                if mask.any():
-                    frame.loc[mask, column] = official_df.loc[mask, column]
+    inventory_lazy = inventory_lazy.with_columns(
+        pl.when(pl.col("subitem_norm").str.len_bytes() > 0)
+        .then(pl.col("category_norm") + pl.lit("|") + pl.col("subitem_norm"))
+        .otherwise(pl.col("category_norm"))
+        .alias("_official_match_key")
+    )
 
-    frame["_official_match_key"] = match_keys
+    official_lazy = bundle.table.lazy()
+    official_columns = ["category_norm", "subitem_norm", *bundle.value_columns]
+    official_lazy = official_lazy.select(official_columns)
 
-    if bundle.l2l_category_features or bundle.l2l_item_features:
-        index_labels = list(frame.index)
-        hint_payload: list[str] = []
-        any_hints = False
+    joined_lazy = inventory_lazy.join(
+        official_lazy,
+        on=["category_norm", "subitem_norm"],
+        how="left",
+        suffix="_official",
+    )
 
-        for idx, index in enumerate(index_labels):
-            aggregated: Dict[str, float] = {}
-            hints: set[str] = set()
-            match_key = match_keys[idx] if idx < len(match_keys) else ""
-            if match_key:
-                entry = bundle.l2l_item_features.get(match_key)
-                if entry:
-                    aggregated.update(entry)
-                    for name in entry:
-                        hint = bundle.l2l_hints.get(name)
-                        if hint:
-                            hints.add(hint)
+    combine_exprs: list[pl.Expr] = []
+    drop_official: list[str] = []
+    left_columns = set(inventory_pl.columns)
+    for column in bundle.value_columns:
+        official_name = f"{column}_official"
+        if official_name not in joined_lazy.columns:
+            continue
+        if column in left_columns:
+            combine_exprs.append(
+                pl.when(pl.col(official_name).is_not_null())
+                .then(pl.col(official_name))
+                .otherwise(pl.col(column))
+                .alias(column)
+            )
+        else:
+            combine_exprs.append(pl.col(official_name).alias(column))
+        drop_official.append(official_name)
 
-            row = frame.loc[index]
-            category_key = _normalize_category(row.get("category", ""))
-            if category_key:
-                entry = bundle.l2l_category_features.get(category_key)
-                if entry:
-                    for name, value in entry.items():
-                        aggregated.setdefault(name, value)
-                        hint = bundle.l2l_hints.get(name)
-                        if hint:
-                            hints.add(hint)
+    if combine_exprs:
+        joined_lazy = joined_lazy.with_columns(combine_exprs)
+    if drop_official:
+        joined_lazy = joined_lazy.drop(drop_official)
 
-            for name, value in aggregated.items():
-                if name not in frame.columns or pd.isna(frame.at[index, name]):
-                    frame.at[index, name] = value
+    match_checks = [
+        pl.col(column).is_not_null() for column in bundle.value_columns if column in joined_lazy.columns
+    ]
+    if match_checks:
+        joined_lazy = joined_lazy.with_columns(
+            pl.when(pl.any_horizontal(match_checks))
+            .then(pl.col("_official_match_key"))
+            .otherwise(pl.lit(""))
+            .alias("_official_match_key")
+        )
 
-            hint_text = "; ".join(sorted(hints)) if hints else ""
-            any_hints = any_hints or bool(hint_text)
-            hint_payload.append(hint_text)
+    if bundle.l2l_category_features:
+        category_rows = [
+            {"category_norm": key, **{name: float(value) for name, value in values.items()}}
+            for key, values in bundle.l2l_category_features.items()
+        ]
+        if category_rows:
+            category_df = pl.DataFrame(category_rows)
+            joined_lazy = joined_lazy.join(category_df.lazy(), on="category_norm", how="left")
 
-        if any_hints:
-            frame["_l2l_page_hints"] = hint_payload
+    if bundle.l2l_item_features:
+        item_rows = []
+        for key, values in bundle.l2l_item_features.items():
+            row = {"_official_match_key": key}
+            row.update({name: float(value) for name, value in values.items()})
+            item_rows.append(row)
+        if item_rows:
+            item_df = pl.DataFrame(item_rows)
+            joined_lazy = joined_lazy.join(
+                item_df.lazy(), on="_official_match_key", how="left"
+            )
 
-    if not official_df.empty:
+    if bundle.l2l_constants:
+        const_exprs = []
+        for name, value in bundle.l2l_constants.items():
+            if isinstance(value, (int, float)) and np.isfinite(value):
+                const_exprs.append(pl.lit(float(value)).alias(name))
+        if const_exprs:
+            joined_lazy = joined_lazy.with_columns(const_exprs)
+
+    result_pl = joined_lazy.sort("__row_id__").collect()
+    result_df = result_pl.to_pandas()
+
+    helper_columns = {
+        "__row_id__",
+        "category_norm",
+        "subitem_norm",
+        "material_norm",
+        "material_family_norm",
+        "key_materials_norm",
+    }
+    result_df = result_df.drop(columns=[col for col in helper_columns if col in result_df.columns])
+    result_df.index = frame.index
+
+    hint_columns = [
+        column for column in bundle.l2l_hints if column in result_df.columns
+    ]
+    if hint_columns:
+        hint_map: Dict[str, list[str]] = {}
+        for column in hint_columns:
+            hint = bundle.l2l_hints[column]
+            if hint:
+                hint_map.setdefault(hint, []).append(column)
+
+        if hint_map:
+            hints_df = pd.DataFrame(index=result_df.index)
+            for hint, columns in hint_map.items():
+                mask = result_df[columns].notna().any(axis=1)
+                hints_df[hint] = np.where(mask, hint, "")
+
+            if not hints_df.empty:
+                result_df["_l2l_page_hints"] = (
+                    hints_df.apply(
+                        lambda row: "; ".join(sorted(filter(None, row.tolist()))), axis=1
+                    )
+                )
+
+    if bundle.value_columns:
         numeric_candidates = [
             column
-            for column in official_df.columns
+            for column in bundle.value_columns
             if column.endswith(("_kg", "_pct"))
             or column.startswith("category_total")
             or column in {"difficulty_factor", "approx_moisture_pct"}
         ]
 
         for column in numeric_candidates:
-            if column in frame.columns:
-                frame[column] = pd.to_numeric(frame[column], errors="coerce")
+            if column in result_df.columns:
+                result_df[column] = pd.to_numeric(result_df[column], errors="coerce")
 
-    if "approx_moisture_pct" in frame.columns:
-        mask = frame["approx_moisture_pct"].notna()
+    if "approx_moisture_pct" in result_df.columns:
+        mask = result_df["approx_moisture_pct"].notna()
         if mask.any():
-            frame.loc[mask, "moisture_pct"] = frame.loc[mask, "approx_moisture_pct"]
+            result_df.loc[mask, "moisture_pct"] = result_df.loc[mask, "approx_moisture_pct"]
 
-    return frame
+    return result_df
 @dataclass(slots=True)
 class PredProps:
     """Structured container for predicted (or heuristic) properties."""
@@ -1397,7 +1514,10 @@ def compute_feature_vector(
         for column in bundle.composition_columns:
             if column not in picks.columns:
                 continue
-            values = pd.to_numeric(picks[column], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+            series = picks[column]
+            if not series.notna().any():
+                continue
+            values = pd.to_numeric(series, errors="coerce").fillna(0.0).to_numpy(dtype=float)
             if not len(values):
                 continue
             frac = float(np.dot(base_weights, values / 100.0))
