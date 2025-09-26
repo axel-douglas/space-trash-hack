@@ -7,6 +7,7 @@ import shutil
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 from deltalake import DeltaTable
 from typing import Any, Dict
@@ -19,6 +20,35 @@ import pyarrow.parquet as pq
 from app.modules import data_sources, generator, logging_utils
 
 pl = generator.pl
+
+
+@pytest.fixture
+def reference_dataset_tables(monkeypatch):
+    datasets_root = generator.DATASETS_ROOT
+    dataset_map = {
+        "summary": datasets_root / "nasa_waste_summary.csv",
+        "processing": datasets_root / "nasa_waste_processing_products.csv",
+        "leo": datasets_root / "nasa_leo_mass_savings.csv",
+        "propellant": datasets_root / "nasa_propellant_benefits.csv",
+    }
+
+    tables = {prefix: pl.read_csv(path) for prefix, path in dataset_map.items()}
+
+    l2l_params = data_sources.load_l2l_parameters()
+    namespace = SimpleNamespace(
+        constants=getattr(l2l_params, "constants", {}),
+        category_features=getattr(l2l_params, "category_features", {}),
+        item_features=getattr(l2l_params, "item_features", {}),
+        hints=getattr(l2l_params, "hints", {}),
+    )
+
+    generator._official_features_bundle.cache_clear()
+    monkeypatch.setattr(generator, "_L2L_PARAMETERS", namespace)
+
+    try:
+        yield tables
+    finally:
+        generator._official_features_bundle.cache_clear()
 
 
 def test_append_inference_log_reuses_daily_writer(monkeypatch, tmp_path):
@@ -811,6 +841,43 @@ def test_prepare_waste_frame_direct_match_overrides_official_fields():
     assert pytest.approx(row["PVDF_pct"], rel=1e-6) == 100.0
     assert pytest.approx(row["moisture_pct"], rel=1e-6) == 0.0
     assert pytest.approx(row["density_kg_m3"], rel=1e-2) == 100.0
+
+
+def test_prepare_waste_frame_includes_reference_columns(reference_dataset_tables):
+    expected_columns: set[str] = set()
+    for prefix, table in reference_dataset_tables.items():
+        for column in table.columns:
+            if column in {"category", "subitem"}:
+                continue
+            expected_columns.add(f"{prefix}_{generator._slugify(column)}")
+
+    waste_df = pd.DataFrame(
+        {
+            "id": ["W_summary"],
+            "category": ["Fabrics"],
+            "material": ["Clothing"],
+            "kg": [5.0],
+            "volume_l": [2.0],
+            "flags": [""],
+        }
+    )
+
+    prepared = generator.prepare_waste_frame(waste_df)
+    missing = expected_columns - set(prepared.columns)
+
+    assert not missing, f"Missing reference columns: {sorted(missing)}"
+
+    summary_df = reference_dataset_tables["summary"].to_pandas()
+    clothing_row = summary_df[
+        (summary_df["category"] == "Fabrics")
+        & (summary_df["subitem"] == "Clothing")
+    ]
+    assert not clothing_row.empty
+    expected_total = float(clothing_row["total_mass_kg"].iloc[0])
+
+    assert prepared.loc[0, "summary_total_mass_kg"] == pytest.approx(
+        expected_total, rel=1e-6
+    )
 
 
 def test_prepare_waste_frame_token_match_applies_composition():

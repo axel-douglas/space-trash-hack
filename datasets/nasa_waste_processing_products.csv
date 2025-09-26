@@ -1,3 +1,3 @@
-approach,products,kg_propellant_per_cm_day,gateway_phase_I_total_kg,gateway_phase_II_total_kg,mars_outbound_total_kg,makeup_water_kg_cm_day
-TtG (Trash-to-Gas),"10% H2, 22% CO, 68% CO2",1.5,145-540,540-1080,1280-1920,0.28
-TtSG (Trash-to-Supply Gas),"59% O2, 41% CH4",1.37,130-490,490-990,1170-1750,0.15
+category,subitem,approach,propellant_per_cm_day_kg,gateway_phase_i_propellant_kg,gateway_phase_ii_propellant_kg,mars_outbound_propellant_kg,total_propellant_kg,makeup_water_per_cm_day_kg,o2_ch4_yield_kg
+Trash Total,TtG (Trash-to-Gas),TtG (Trash-to-Gas),1.5,342.5,810.0,1600.0,2752.5,0.28,1.5
+Trash Total,TtSG (Trash-to-Supply Gas),TtSG (Trash-to-Supply Gas),1.37,310.0,740.0,1460.0,2510.0,0.15,1.37

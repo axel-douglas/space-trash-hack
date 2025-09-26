@@ -1,5 +1,5 @@
-mission,spacecraft,mass_kg,deltaV_ttg_m_s,deltaV_ttsg_m_s,deltaV_requirement_m_s
-Gateway Phase I,Core,28750,24.5,41.7,~15 (yearly station-keeping)
-Gateway Phase II,Core + MPLM,45573,30.8,52.5,~15 (yearly station-keeping)
-Robotic Lunar Mini-lander,200 kg dry + 265 kg payload,465,,2800.0,2800
-Mars DRA 5,Transit Vehicle,196000,12.8,21.8,25
+category,subitem,mission,vehicle,propellant_mass_kg,delta_v_ttg_m_s,delta_v_ttsg_m_s,delta_v_requirement_m_s
+Trash Total,Gateway Phase I,Gateway Phase I,Core,28750.0,24.5,41.7,15.0
+Trash Total,Gateway Phase II,Gateway Phase II,Core + MPLM,45573.0,30.8,52.5,15.0
+Trash Total,Robotic Lunar Mini-lander,Robotic Lunar Mini-lander,200 kg dry + 265 kg payload,465.0,,2800.0,2800.0
+Trash Total,Mars DRA 5,Mars DRA 5,Transit Vehicle,196000.0,12.8,21.8,25.0
