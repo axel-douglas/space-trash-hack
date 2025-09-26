@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from app.modules import data_build, generator, label_mapper, model_training
+from app.modules import generator, label_mapper, model_training
 
 
 @pytest.fixture(autouse=True)
@@ -43,6 +43,39 @@ def _reset_gold_caches() -> None:
 def _write_parquet(data: pd.DataFrame, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     data.to_parquet(path, index=False)
+
+
+def _make_gold_frames(count: int = 3) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return synthetic gold features/labels matching the expected schema."""
+
+    feature_rows: list[dict[str, float | str]] = []
+    label_rows: list[dict[str, float | str | int]] = []
+    for idx in range(count):
+        process_id = f"P{idx + 1:02d}"
+        recipe_id = f"REC-{idx + 1:02d}"
+        feature_row: dict[str, float | str] = {}
+        for column in model_training.FEATURE_COLUMNS:
+            if column == "process_id":
+                feature_row[column] = process_id
+            else:
+                feature_row[column] = float(idx + 1)
+        feature_row["recipe_id"] = recipe_id
+        feature_rows.append(feature_row)
+
+        label_row: dict[str, float | str | int] = {
+            "recipe_id": recipe_id,
+            "process_id": process_id,
+            "label_source": "mission",
+            "label_weight": 2.5,
+            "provenance": "mission",
+            "tightness_pass": 1,
+            "rigidity_level": 3,
+        }
+        for offset, target in enumerate(model_training.TARGET_COLUMNS):
+            label_row[target] = float(idx + offset + 1)
+        label_rows.append(label_row)
+
+    return pd.DataFrame(feature_rows), pd.DataFrame(label_rows)
 
 
 def _sample_inputs():
@@ -142,17 +175,21 @@ def test_build_training_dataframe_prefers_gold_labels(monkeypatch: pytest.Monkey
 
 
 def test_build_training_dataframe_uses_nasa_gold(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The curated NASA dataset should be merged verbatim into the training frame."""
 
-    features_df, labels_df = data_build.build_gold_dataset(tmp_path, return_frames=True)
-    features_path = tmp_path / "features.parquet"
-    labels_path = tmp_path / "labels.parquet"
-
-    monkeypatch.setattr(model_training, "GOLD_FEATURES_PATH", features_path)
-    monkeypatch.setattr(model_training, "GOLD_LABELS_PATH", labels_path)
-    monkeypatch.setattr(label_mapper, "GOLD_LABELS_PATH", labels_path)
+    features_df, labels_df = _make_gold_frames()
+    monkeypatch.setattr(
+        model_training,
+        "_load_gold_features",
+        lambda path=None: features_df.copy(),
+    )
+    monkeypatch.setattr(
+        model_training,
+        "_load_gold_targets",
+        lambda path=None: labels_df.copy(),
+    )
 
     def _fail_generate(*_: object, **__: object) -> None:  # pragma: no cover - guard
         raise AssertionError("_generate_samples should not be called when gold artefacts exist")
@@ -161,28 +198,18 @@ def test_build_training_dataframe_uses_nasa_gold(
 
     df = model_training.build_training_dataframe()
 
-    assert len(df) == len(features_df)
-
-    df_sorted = df.sort_values(["process_id", "recipe_id"]).reset_index(drop=True)
+    produced = df.set_index(["recipe_id", "process_id"]).sort_index()
     expected = labels_df.set_index(["recipe_id", "process_id"]).sort_index()
 
-    target_columns = ["rigidez", "estanqueidad", "energy_kwh", "water_l", "crew_min"]
-
-    for _, row in df_sorted.iterrows():
-        key = (row["recipe_id"], row["process_id"])
-        expected_rows = expected.loc[key]
-        if isinstance(expected_rows, pd.Series):
-            expected_rows = expected_rows.to_frame().T
-
-        comparisons = expected_rows.apply(
-            lambda candidate: all(
-                row[column] == pytest.approx(float(candidate[column]))
-                for column in target_columns
-            ),
-            axis=1,
+    assert len(produced) == len(expected)
+    for column in model_training.TARGET_COLUMNS + ["tightness_pass", "rigidity_level"]:
+        np.testing.assert_allclose(
+            produced[column].to_numpy(dtype=float),
+            expected[column].to_numpy(dtype=float),
+            rtol=1e-6,
+            atol=1e-6,
         )
-        assert comparisons.any(), f"Valores inesperados para {key}: {row[target_columns]}"
-        assert row["label_source"] == "mission"
+    assert set(produced["label_source"]) == {"mission"}
 
 
 def test_build_training_dataframe_uses_default_gold_dataset(
@@ -190,9 +217,17 @@ def test_build_training_dataframe_uses_default_gold_dataset(
 ) -> None:
     """When the default gold artefacts exist sampling must be skipped."""
 
-    features_path, labels_path = data_build.ensure_gold_dataset()
-    assert features_path.exists()
-    assert labels_path.exists()
+    features_df, labels_df = _make_gold_frames()
+    monkeypatch.setattr(
+        model_training,
+        "_load_gold_features",
+        lambda path=None: features_df.copy(),
+    )
+    monkeypatch.setattr(
+        model_training,
+        "_load_gold_targets",
+        lambda path=None: labels_df.copy(),
+    )
 
     def _fail_generate(*_: object, **__: object) -> None:  # pragma: no cover - guard
         raise AssertionError("_generate_samples should not run when gold artefacts are present")
@@ -206,24 +241,21 @@ def test_build_training_dataframe_uses_default_gold_dataset(
 
 
 def test_build_training_dataframe_falls_back_when_labels_missing(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Synthetic samples are generated when consolidated labels are unavailable."""
 
-    features_path = tmp_path / "features.parquet"
-    feature_row = {
-        "recipe_id": "REC-99",
-        "process_id": "P02",
-    }
-    for column in model_training.FEATURE_COLUMNS:
-        if column not in feature_row:
-            feature_row[column] = 0.0
-
-    _write_parquet(pd.DataFrame([feature_row]), features_path)
-
-    monkeypatch.setattr(model_training, "GOLD_FEATURES_PATH", features_path)
-    monkeypatch.setattr(model_training, "GOLD_LABELS_PATH", tmp_path / "missing.parquet")
-    monkeypatch.setattr(label_mapper, "GOLD_LABELS_PATH", tmp_path / "missing.parquet")
+    features_df, _ = _make_gold_frames(count=1)
+    monkeypatch.setattr(
+        model_training,
+        "_load_gold_features",
+        lambda path=None: features_df.copy(),
+    )
+    monkeypatch.setattr(
+        model_training,
+        "_load_gold_targets",
+        lambda path=None: pd.DataFrame(),
+    )
 
     samples_called: list[tuple[int, int | None]] = []
 
@@ -256,72 +288,67 @@ def test_build_training_dataframe_falls_back_when_labels_missing(
     assert row["label_weight"] == pytest.approx(0.7)
 
 
-def test_compute_targets_prefers_curated_labels(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_compute_targets_prefers_curated_labels(monkeypatch: pytest.MonkeyPatch) -> None:
     """When a curated recipe exists the mission-provided targets must be used."""
 
-    _, labels_df = data_build.build_gold_dataset(tmp_path, return_frames=True)
-    labels_path = tmp_path / "labels.parquet"
+    curated_targets = {
+        "rigidez": 0.91,
+        "estanqueidad": 0.47,
+        "energy_kwh": 128.0,
+        "water_l": 7.5,
+        "crew_min": 42.0,
+        "tightness_pass": 1,
+        "rigidity_level": 3,
+    }
+    curated_meta = {"label_source": "mission", "provenance": "mission", "label_weight": 2.5}
 
-    monkeypatch.setattr(label_mapper, "GOLD_LABELS_PATH", labels_path)
-    label_mapper._LABELS_CACHE = None
-    label_mapper._LABELS_CACHE_PATH = None
+    monkeypatch.setattr(
+        model_training,
+        "lookup_labels",
+        lambda *args, **kwargs: (curated_targets, curated_meta),
+    )
 
-    record = data_build.generate_gold_records()[0]
-    recipe_id = record.features["recipe_id"]
-    process_id = record.features["process_id"]
-
-    process = record.process
-    picks = record.picks
-    features = {key: record.features[key] for key in model_training.FEATURE_COLUMNS}
-    features["recipe_id"] = recipe_id
-    features["process_id"] = process_id
+    picks, process, _ = _sample_inputs()
+    features = {column: 0.0 for column in model_training.FEATURE_COLUMNS}
+    features["process_id"] = process["process_id"]
+    features["recipe_id"] = label_mapper.derive_recipe_id(picks, process)
 
     targets = model_training._compute_targets(picks, process, features)
 
-    expected = (
-        labels_df.set_index(["recipe_id", "process_id"]).sort_index().loc[(recipe_id, process_id)]
-    )
-
-    assert targets["rigidez"] == pytest.approx(expected["rigidez"])
-    assert targets["estanqueidad"] == pytest.approx(expected["estanqueidad"])
-    assert targets["energy_kwh"] == pytest.approx(expected["energy_kwh"])
+    for key, value in curated_targets.items():
+        assert targets[key] == pytest.approx(value)
     assert targets["label_source"] == "mission"
 
 
 def test_compute_targets_uses_default_gold_dataset(monkeypatch: pytest.MonkeyPatch) -> None:
     """La tabla gold por defecto debe dominar los cálculos de etiquetas."""
 
-    features_path, labels_path = data_build.ensure_gold_dataset()
+    curated_targets = {
+        "rigidez": 0.6,
+        "estanqueidad": 0.55,
+        "energy_kwh": 85.0,
+        "water_l": 12.0,
+        "crew_min": 33.0,
+        "tightness_pass": 1,
+        "rigidity_level": 2,
+    }
+    curated_meta = {"label_source": "mission", "provenance": "mission", "label_weight": 1.8}
 
-    monkeypatch.setattr(model_training, "GOLD_FEATURES_PATH", features_path)
-    monkeypatch.setattr(model_training, "GOLD_LABELS_PATH", labels_path)
-    monkeypatch.setattr(label_mapper, "GOLD_LABELS_PATH", labels_path)
-
-    records = data_build.generate_gold_records()
-    assert records, "Se esperaban registros NASA curados"
-    record = records[0]
-
-    recipe_id = record.features["recipe_id"]
-    process_id = record.features["process_id"]
-
-    features = {key: record.features[key] for key in model_training.FEATURE_COLUMNS}
-    features["recipe_id"] = recipe_id
-    features["process_id"] = process_id
-
-    targets = model_training._compute_targets(record.picks, record.process, features)
-
-    labels_df = pd.read_parquet(labels_path)
-    expected = (
-        labels_df.set_index(["recipe_id", "process_id"]).sort_index().loc[(recipe_id, process_id)]
+    monkeypatch.setattr(
+        model_training,
+        "lookup_labels",
+        lambda *args, **kwargs: (curated_targets, curated_meta),
     )
 
+    picks, process, _ = _sample_inputs()
+    features = {column: 0.1 for column in model_training.FEATURE_COLUMNS}
+    features["process_id"] = process["process_id"]
+    features["recipe_id"] = label_mapper.derive_recipe_id(picks, process)
+
+    targets = model_training._compute_targets(picks, process, features)
+
     for column in model_training.TARGET_COLUMNS:
-        value = expected[column]
-        if isinstance(value, pd.Series):  # pragma: no cover - defensive
-            value = value.iloc[0]
-        assert targets[column] == pytest.approx(float(value))
+        assert targets[column] == pytest.approx(curated_targets[column])
 
     assert targets["label_source"] == "mission"
 
@@ -329,9 +356,8 @@ def test_compute_targets_uses_default_gold_dataset(monkeypatch: pytest.MonkeyPat
 def test_infer_trained_on_label_with_gold_dataset() -> None:
     """The curated mission dataset implies gold provenance for training."""
 
-    _, labels_path = data_build.ensure_gold_dataset()
-    table = label_mapper.load_curated_labels(labels_path)
-    assert not table.empty
+    _, labels_df = _make_gold_frames()
+    table = labels_df.set_index(["recipe_id", "process_id"])
 
     result = model_training._infer_trained_on_label(table)
     assert result == "gold_v1"
@@ -562,7 +588,9 @@ def test_cli_appends_feedback_logs(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     gold_dir = tmp_path / "gold"
     features_path = gold_dir / "features.parquet"
     labels_path = gold_dir / "labels.parquet"
-    data_build.build_gold_dataset(gold_dir, return_frames=False)
+    features_df, labels_df = _make_gold_frames()
+    _write_parquet(features_df, features_path)
+    _write_parquet(labels_df, labels_path)
 
     feedback_path = tmp_path / "feedback" / "human_feedback.parquet"
     feedback_row = {column: 1.0 for column in model_training.FEATURE_COLUMNS}

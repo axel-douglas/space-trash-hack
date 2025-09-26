@@ -47,6 +47,11 @@ try:
 except Exception:  # pragma: no cover - scipy is optional during inference
     sparse = None  # type: ignore[assignment]
 
+if sparse is not None:
+    empty_reference = sparse.csr_matrix((0, 0), dtype=np.float64)
+else:
+    empty_reference = np.zeros((0, 0), dtype=np.float64)
+
 try:  # Torch tensors may appear when the caller works in PyTorch land.
     import torch
 except Exception:  # pragma: no cover - torch is optional
@@ -68,6 +73,7 @@ from app.modules.data_sources import (
     slugify,
     to_lazy_frame,
 )
+from app.modules.logging_utils import append_inference_log, pq
 from app.modules import logging_utils
 
 # The demo previously collapsed multiple NASA inventory families (Packaging,
@@ -853,6 +859,11 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
     value_columns = tuple(raw_bundle.value_columns)
     composition_columns = tuple(raw_bundle.composition_columns)
 
+    mission_reference_dense = (
+        mission_reference_matrix.toarray()
+        if sparse is not None and sparse.issparse(mission_reference_matrix)
+        else np.asarray(mission_reference_matrix, dtype=np.float64)
+    )
     if sparse is not None and sparse.issparse(mission_reference_matrix):
         mission_reference_dense = mission_reference_matrix.toarray()
     else:

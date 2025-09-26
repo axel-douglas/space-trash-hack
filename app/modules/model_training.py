@@ -27,6 +27,7 @@ from typing import Any, Dict, Iterable, List, Sequence
 import joblib
 import numpy as np
 import pandas as pd
+import polars as pl
 from pandas import DataFrame
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
@@ -256,81 +257,114 @@ def load_feedback_logs(patterns: Iterable[str | Path] | None) -> DataFrame:
     if not paths:
         return pd.DataFrame()
 
-    frames: list[DataFrame] = []
+    lazy_frames: list[pl.LazyFrame] = []
     for path in sorted(set(paths)):
-        frame = pd.read_parquet(path)
-        frame = frame.copy()
-        frame["_feedback_path"] = str(path)
-        frames.append(frame)
+        lazy = pl.scan_parquet(str(path)).with_columns(
+            pl.lit(str(path)).alias("_feedback_path")
+        )
+        lazy_frames.append(lazy)
 
-    if not frames:
+    if not lazy_frames:
         return pd.DataFrame()
 
-    return pd.concat(frames, ignore_index=True)
+    combined = pl.concat(lazy_frames, how="vertical_relaxed")
+    return combined.collect().to_pandas()
 
 
-def _coerce_bool(value: Any) -> bool | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, np.integer)):
-        return bool(int(value))
-    if isinstance(value, (float, np.floating)):
-        if np.isnan(value):
-            return None
-        return bool(float(value))
-    if isinstance(value, str):
-        token = value.strip().lower()
-        if not token:
-            return None
-        if token in {"1", "true", "t", "yes", "y", "si", "sí", "ok", "pass", "passed"}:
-            return True
-        if token in {"0", "false", "f", "no", "n", "ko", "fail", "failed"}:
-            return False
-    return None
+def _coerce_bool_expr(expr: pl.Expr) -> pl.Expr:
+    true_tokens = {"1", "true", "t", "yes", "y", "si", "sí", "ok", "pass", "passed"}
+    false_tokens = {"0", "false", "f", "no", "n", "ko", "fail", "failed"}
+
+    text = expr.cast(pl.Utf8, strict=False).str.strip_chars()
+    lowered = text.str.to_lowercase()
+    numeric = expr.cast(pl.Float64, strict=False)
+
+    return (
+        pl.when(expr.is_null() | (text == ""))
+        .then(pl.lit(None, dtype=pl.Boolean))
+        .when(lowered.is_in(true_tokens))
+        .then(pl.lit(True))
+        .when(lowered.is_in(false_tokens))
+        .then(pl.lit(False))
+        .when(numeric.is_null() | numeric.is_nan())
+        .then(pl.lit(None, dtype=pl.Boolean))
+        .otherwise(numeric != 0)
+    )
+
+
+def _ensure_lazy_frame(df: DataFrame | pl.DataFrame | pl.LazyFrame) -> pl.LazyFrame:
+    if isinstance(df, pl.LazyFrame):
+        return df
+    if isinstance(df, pl.DataFrame):
+        return df.lazy()
+    if isinstance(df, pd.DataFrame):
+        return pl.from_pandas(df, include_index=False).lazy()
+    raise TypeError(f"Unsupported dataframe type: {type(df)!r}")
 
 
 def _prepare_feedback_rows(df: DataFrame) -> DataFrame:
     if df.empty:
         return df
 
-    data = df.copy()
+    lf = _ensure_lazy_frame(df)
+    columns = set(lf.columns)
 
     for column in TARGET_COLUMNS:
-        if column in data.columns:
-            data[column] = pd.to_numeric(data[column], errors="coerce")
+        if column in columns:
+            lf = lf.with_columns(
+                pl.col(column).cast(pl.Float64, strict=False).alias(column)
+            )
 
-    bool_rigidity = None
-    if "rigidity_ok" in data.columns:
-        bool_rigidity = data["rigidity_ok"].map(_coerce_bool)
-    elif "rigidez_ok" in data.columns:
-        bool_rigidity = data["rigidez_ok"].map(_coerce_bool)
+    if "rigidity_ok" in columns:
+        source = "rigidity_ok"
+    elif "rigidez_ok" in columns:
+        source = "rigidez_ok"
+    else:
+        source = None
 
-    if bool_rigidity is not None:
-        data["rigidez"] = bool_rigidity.map(
-            lambda v: float(RIGIDITY_SCORE_MAP[3])
-            if v is True
-            else (float(RIGIDITY_SCORE_MAP[1]) if v is False else np.nan)
+    temp_columns: list[str] = []
+
+    if source is not None:
+        lf = lf.with_columns(_coerce_bool_expr(pl.col(source)).alias("__rigidity_bool"))
+        temp_columns.append("__rigidity_bool")
+        lf = lf.with_columns(
+            pl.when(pl.col("__rigidity_bool").is_null())
+            .then(pl.lit(None, dtype=pl.Float64))
+            .when(pl.col("__rigidity_bool"))
+            .then(pl.lit(float(RIGIDITY_SCORE_MAP[3])))
+            .otherwise(pl.lit(float(RIGIDITY_SCORE_MAP[1])))
+            .alias("rigidez"),
+            pl.when(pl.col("__rigidity_bool").is_null())
+            .then(pl.lit(None, dtype=pl.Float64))
+            .when(pl.col("__rigidity_bool"))
+            .then(pl.lit(3.0))
+            .otherwise(pl.lit(1.0))
+            .alias("rigidity_level"),
         )
-        data["rigidity_level"] = bool_rigidity.map(
-            lambda v: 3 if v is True else (1 if v is False else np.nan)
-        )
 
-    bool_tightness = None
-    if "tightness_ok" in data.columns:
-        bool_tightness = data["tightness_ok"].map(_coerce_bool)
-    elif "ease_ok" in data.columns:
-        bool_tightness = data["ease_ok"].map(_coerce_bool)
+    if "tightness_ok" in columns:
+        tight_source = "tightness_ok"
+    elif "ease_ok" in columns:
+        tight_source = "ease_ok"
+    else:
+        tight_source = None
 
-    if bool_tightness is not None:
-        data["estanqueidad"] = bool_tightness.map(
-            lambda v: float(TIGHTNESS_SCORE_MAP[1])
-            if v is True
-            else (float(TIGHTNESS_SCORE_MAP[0]) if v is False else np.nan)
-        )
-        data["tightness_pass"] = bool_tightness.map(
-            lambda v: 1 if v is True else (0 if v is False else np.nan)
+    if tight_source is not None:
+        lf = lf.with_columns(_coerce_bool_expr(pl.col(tight_source)).alias("__tightness_bool"))
+        temp_columns.append("__tightness_bool")
+        lf = lf.with_columns(
+            pl.when(pl.col("__tightness_bool").is_null())
+            .then(pl.lit(None, dtype=pl.Float64))
+            .when(pl.col("__tightness_bool"))
+            .then(pl.lit(float(TIGHTNESS_SCORE_MAP[1])))
+            .otherwise(pl.lit(float(TIGHTNESS_SCORE_MAP[0])))
+            .alias("estanqueidad"),
+            pl.when(pl.col("__tightness_bool").is_null())
+            .then(pl.lit(None, dtype=pl.Float64))
+            .when(pl.col("__tightness_bool"))
+            .then(pl.lit(1.0))
+            .otherwise(pl.lit(0.0))
+            .alias("tightness_pass"),
         )
 
     penalty_map = {
@@ -339,36 +373,65 @@ def _prepare_feedback_rows(df: DataFrame) -> DataFrame:
         "crew_min": ["crew_penalty", "crew_delta", "delta_crew_min"],
     }
     for target, extras in penalty_map.items():
-        if target in data.columns or any(col in data.columns for col in extras):
-            base = pd.to_numeric(data.get(target, 0.0), errors="coerce").fillna(0.0)
-            for extra in extras:
-                if extra in data.columns:
-                    base = base + pd.to_numeric(data[extra], errors="coerce").fillna(0.0)
-            data[target] = base
+        available = [column for column in [target, *extras] if column in columns]
+        if available:
+            terms = [
+                pl.col(column).cast(pl.Float64, strict=False).fill_null(0.0).fill_nan(0.0)
+                for column in available
+            ]
+            total_expr = terms[0]
+            for extra_expr in terms[1:]:
+                total_expr = total_expr + extra_expr
+            lf = lf.with_columns(total_expr.alias(target))
 
-    if "label_source" in data.columns:
-        label_source = data["label_source"].astype(str)
+    if "label_source" in columns:
+        normalized_source = (
+            pl.col("label_source").cast(pl.Utf8, strict=False).str.strip_chars()
+        )
+        lf = lf.with_columns(
+            pl.when(normalized_source.is_null() | (normalized_source == ""))
+            .then(pl.lit("feedback"))
+            .otherwise(normalized_source)
+            .alias("label_source"),
+        )
     else:
-        label_source = pd.Series(["feedback"] * len(data), index=data.index)
-    label_source = label_source.replace({"": "feedback"})
-    data["label_source"] = label_source.where(label_source.str.strip() != "", "feedback")
-    data["label_weight"] = pd.to_numeric(
-        data.get("label_weight", 1.0), errors="coerce"
-    ).fillna(1.0)
+        lf = lf.with_columns(pl.lit("feedback").alias("label_source"))
 
-    if "_feedback_path" in data.columns:
-        path_series = data.pop("_feedback_path")
-        provenance = path_series.map(lambda p: f"feedback:{Path(str(p)).name}")
-        if "provenance" in data.columns:
-            current = data["provenance"].astype(str).fillna("")
-            mask = current.str.strip() == ""
-            data.loc[mask, "provenance"] = provenance[mask]
+    if "label_weight" in columns:
+        weight_expr = pl.col("label_weight").cast(pl.Float64, strict=False)
+    else:
+        weight_expr = pl.lit(1.0)
+
+    lf = lf.with_columns(
+        weight_expr.fill_nan(1.0).fill_null(1.0).alias("label_weight")
+    )
+
+    if "_feedback_path" in columns:
+        filename = (
+            pl.col("_feedback_path")
+            .cast(pl.Utf8, strict=False)
+            .str.replace(r"^.*/", "", literal=False)
+        )
+        provenance_expr = pl.concat_str([pl.lit("feedback:"), filename])
+        if "provenance" in columns:
+            normalized_prov = (
+                pl.col("provenance").cast(pl.Utf8, strict=False).str.strip_chars()
+            )
+            lf = lf.with_columns(
+                pl.when(normalized_prov.is_null() | (normalized_prov == ""))
+                .then(provenance_expr)
+                .otherwise(normalized_prov)
+                .alias("provenance"),
+            )
         else:
-            data["provenance"] = provenance
+            lf = lf.with_columns(provenance_expr.alias("provenance"))
+        temp_columns.append("_feedback_path")
 
     for column in TARGET_COLUMNS + ["tightness_pass", "rigidity_level"]:
-        if column in data.columns:
-            data[column] = pd.to_numeric(data[column], errors="coerce")
+        if column in lf.columns:
+            lf = lf.with_columns(
+                pl.col(column).cast(pl.Float64, strict=False).alias(column)
+            )
 
     drop_candidates = [
         "rigidity_ok",
@@ -384,12 +447,14 @@ def _prepare_feedback_rows(df: DataFrame) -> DataFrame:
         "crew_penalty",
         "crew_delta",
         "delta_crew_min",
+        *temp_columns,
     ]
-    existing_drop = [col for col in drop_candidates if col in data.columns]
+    existing_drop = [col for col in drop_candidates if col in lf.columns]
     if existing_drop:
-        data = data.drop(columns=existing_drop)
+        lf = lf.drop(existing_drop)
 
-    return data
+    result = lf.collect()
+    return result.to_pandas()
 
 
 def prepare_feedback_dataframe(df: DataFrame) -> DataFrame:
@@ -423,7 +488,7 @@ def _load_parquet(path: Path) -> DataFrame:
     if not path.exists():
         return pd.DataFrame()
     try:
-        return pd.read_parquet(path)
+        return pl.scan_parquet(str(path)).collect().to_pandas()
     except Exception as exc:  # pragma: no cover - propagated for visibility
         raise RuntimeError(f"No se pudo leer parquet {path}: {exc}") from exc
 
@@ -1418,7 +1483,40 @@ def train_and_save(
                     "Los logs de feedback no contienen la columna objetivo requerida: "
                     + column
                 )
-        df = pd.concat([df, feedback_rows], ignore_index=True, sort=False)
+        base_pl = pl.from_pandas(df, include_index=False)
+        feedback_pl = pl.from_pandas(feedback_rows, include_index=False)
+        ordered_columns: list[str] = list(df.columns)
+        for column in feedback_rows.columns:
+            if column not in ordered_columns:
+                ordered_columns.append(column)
+
+        dtype_map: dict[str, pl.DataType] = {}
+        for name, dtype in zip(base_pl.columns, base_pl.dtypes, strict=False):
+            dtype_map[name] = dtype
+        for name, dtype in zip(feedback_pl.columns, feedback_pl.dtypes, strict=False):
+            dtype_map.setdefault(name, dtype)
+
+        def _align_columns(frame: pl.DataFrame) -> pl.DataFrame:
+            missing = [col for col in ordered_columns if col not in frame.columns]
+            if missing:
+                frame = frame.with_columns(
+                    [
+                        pl.lit(None, dtype=dtype_map.get(col)).alias(col)
+                        for col in missing
+                    ]
+                )
+            for column in ordered_columns:
+                target_dtype = dtype_map.get(column)
+                if target_dtype is not None and frame.schema.get(column) != target_dtype:
+                    frame = frame.with_columns(
+                        pl.col(column).cast(target_dtype, strict=False).alias(column)
+                    )
+            return frame.select(ordered_columns)
+
+        combined = pl.concat(
+            [_align_columns(base_pl), _align_columns(feedback_pl)], how="vertical"
+        )
+        df = combined.to_pandas()
 
     df.to_parquet(DATASET_PATH, index=False)
     df.to_parquet(DATASET_ML_PATH, index=False)
