@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import random
 import shutil
 from datetime import datetime
 from pathlib import Path
+from datetime import datetime
 
 from deltalake import DeltaTable
 
@@ -222,6 +224,89 @@ def _collect_single_log_dir(root: Path) -> Path:
     return day_dirs[0]
 
 
+def test_generate_candidates_uses_parallel_backend(monkeypatch):
+    monkeypatch.setattr(generator, "_PARALLEL_THRESHOLD", 1)
+
+    created: list[object] = []
+
+    class DummyExecutor:
+        def __init__(self, max_workers: int):
+            self.max_workers = max_workers
+            self.map_calls = 0
+            self.shutdown_called = False
+            created.append(self)
+
+        def map(self, func, iterable):
+            self.map_calls += 1
+            return [func(item) for item in iterable]
+
+        def shutdown(self):
+            self.shutdown_called = True
+
+    monkeypatch.setattr(generator, "ThreadPoolExecutor", DummyExecutor)
+    monkeypatch.setattr(generator, "prepare_waste_frame", lambda df: df)
+    monkeypatch.setattr(generator, "_pick_materials", lambda df, rng, n=2, bias=2.0: pd.DataFrame(
+        {
+            "kg": [1.0],
+            "_source_id": ["A"],
+            "_source_category": ["packaging"],
+            "_source_flags": [""],
+            "material": ["foil"],
+        }
+    ))
+
+    draws: list[float] = []
+
+    def fake_build(picks, proc_df, rng, target, crew_time_low, use_ml, tuning):
+        value = rng.random()
+        draws.append(value)
+        return {
+            "score": value,
+            "props": generator.PredProps(
+                rigidity=1.0,
+                tightness=1.0,
+                mass_final_kg=1.0,
+                energy_kwh=0.1,
+                water_l=0.1,
+                crew_min=1.0,
+            ),
+        }
+
+    monkeypatch.setattr(generator, "_build_candidate", fake_build)
+    base_random_cls = random.Random
+    monkeypatch.setattr(generator.random, "Random", lambda *args, **kwargs: base_random_cls(1234))
+
+    waste_df = pd.DataFrame(
+        {
+            "material": ["foil"],
+            "kg": [1.0],
+            "_problematic": [0],
+            "_source_id": ["A"],
+            "_source_category": ["packaging"],
+            "_source_flags": [""],
+        }
+    )
+    proc_df = pd.DataFrame({"process_id": ["P01"], "name": ["Process"]})
+
+    candidates, history = generator.generate_candidates(
+        waste_df,
+        proc_df,
+        target={},
+        n=5,
+        crew_time_low=False,
+        optimizer_evals=0,
+        use_ml=False,
+    )
+
+    assert len(candidates) == 5
+    scores = [cand["score"] for cand in candidates]
+    assert scores == sorted(scores, reverse=True)
+    assert len(draws) == 5
+    assert created and created[0].map_calls >= 1
+    assert created[0].shutdown_called is True
+    assert history.empty
+
+
 def test_append_inference_log_appends_without_reads(monkeypatch, tmp_path):
     monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
 
@@ -345,6 +430,7 @@ def test_generate_candidates_appends_inference_log(monkeypatch, tmp_path):
     assert "lightgbm_gpu" in cand.get("model_variants", {})
 
     shutil.rmtree(log_dir.parent, ignore_errors=True)
+
 
 def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch, tmp_path):
     calls: list[str] = []

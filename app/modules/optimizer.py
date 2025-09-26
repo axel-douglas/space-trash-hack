@@ -7,8 +7,10 @@ conjunto Pareto y métricas de convergencia (hipervolumen y dominancia).
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Callable, Iterable
+import os
 
 import numpy as np
 import pandas as pd
@@ -20,6 +22,16 @@ try:  # pragma: no cover - optional dependency
 except Exception:  # pragma: no cover - optional dependency missing
     AxClient = None  # type: ignore[assignment]
     AX_AVAILABLE = False
+
+
+_PARALLEL_THRESHOLD = 4
+
+
+def _max_workers_for(task_count: int) -> int:
+    if task_count <= 1:
+        return 1
+    cpu = os.cpu_count() or 1
+    return max(1, min(cpu, task_count))
 
 
 @dataclass
@@ -67,67 +79,101 @@ def optimize_candidates(
     evaluated: list[Candidate] = [cand for cand in initial_candidates if cand]
     history: list[OptimizationSummary] = []
 
-    pareto = _pareto_front(evaluated, target)
-    hv = _hypervolume(pareto, evaluated, target)
-    dom_ratio = _dominance_ratio(pareto, evaluated)
-    history.append(
-        OptimizationSummary(
-            iteration=0,
-            score=float("nan"),
-            penalty=float("nan"),
-            hypervolume=hv,
-            dominance_ratio=dom_ratio,
-            pareto_size=len(pareto),
-        )
-    )
+    parallel_tasks = max(len(evaluated), n_evals, 1)
+    use_parallel = parallel_tasks >= _PARALLEL_THRESHOLD
+    worker_count = _max_workers_for(parallel_tasks) if use_parallel else 1
+    executor: ThreadPoolExecutor | None = None
+    if worker_count > 1:
+        executor = ThreadPoolExecutor(max_workers=worker_count)
 
-    if n_evals > 0:
-        if AX_AVAILABLE and AxClient is not None:
-            _run_bayesian_optimization(
-                evaluated,
-                history,
-                sampler,
-                target,
-                n_evals,
-                process_ids or [],
+    try:
+        pareto = _pareto_front(evaluated, target, executor=executor)
+        hv = _hypervolume(pareto, evaluated, target)
+        dom_ratio = _dominance_ratio(pareto, evaluated)
+        history.append(
+            OptimizationSummary(
+                iteration=0,
+                score=float("nan"),
+                penalty=float("nan"),
+                hypervolume=hv,
+                dominance_ratio=dom_ratio,
+                pareto_size=len(pareto),
             )
-        else:
-            for i in range(1, n_evals + 1):
-                candidate = sampler({})
-                if candidate:
-                    evaluated.append(candidate)
-                pareto = _pareto_front(evaluated, target)
-                hv = _hypervolume(pareto, evaluated, target)
-                dom_ratio = _dominance_ratio(pareto, evaluated)
-                score = float(candidate["score"]) if candidate else float("nan")
-                penalty = _penalty(candidate, target) if candidate else float("nan")
-                history.append(
-                    OptimizationSummary(
-                        iteration=i,
-                        score=score,
-                        penalty=penalty,
-                        hypervolume=hv,
-                        dominance_ratio=dom_ratio,
-                        pareto_size=len(pareto),
-                    )
+        )
+
+        if n_evals > 0:
+            iteration = 0
+            if AX_AVAILABLE and AxClient is not None:
+                _run_bayesian_optimization(
+                    evaluated,
+                    history,
+                    sampler,
+                    target,
+                    n_evals,
+                    process_ids or [],
+                    executor=executor,
+                    start_iteration=len(history) - 1,
                 )
+            else:
+                batch_size = worker_count if executor is not None else 1
+                produced = 0
+                while produced < n_evals:
+                    current_batch = min(batch_size, n_evals - produced)
+                    tasks = [None] * current_batch
+                    if executor is not None:
+                        results = list(executor.map(lambda _x: sampler({}), tasks))
+                    else:
+                        results = [sampler({}) for _ in tasks]
+                    for candidate in results:
+                        produced += 1
+                        iteration += 1
+                        if candidate:
+                            evaluated.append(candidate)
+                        pareto = _pareto_front(evaluated, target, executor=executor)
+                        hv = _hypervolume(pareto, evaluated, target)
+                        dom_ratio = _dominance_ratio(pareto, evaluated)
+                        score = float(candidate["score"]) if candidate else float("nan")
+                        penalty = _penalty(candidate, target) if candidate else float("nan")
+                        history.append(
+                            OptimizationSummary(
+                                iteration=iteration,
+                                score=score,
+                                penalty=penalty,
+                                hypervolume=hv,
+                                dominance_ratio=dom_ratio,
+                                pareto_size=len(pareto),
+                            )
+                        )
+            pareto = _pareto_front(evaluated, target, executor=executor)
 
-    pareto_sorted = sorted(pareto, key=lambda c: c.get("score", 0.0), reverse=True)
-    history_df = pd.DataFrame(history)
-    return pareto_sorted, history_df
+        pareto_sorted = sorted(pareto, key=lambda c: c.get("score", 0.0), reverse=True)
+        history_df = pd.DataFrame(history)
+        return pareto_sorted, history_df
+    finally:
+        if executor is not None:
+            executor.shutdown()
 
 
-def _pareto_front(candidates: list[Candidate], target: dict) -> list[Candidate]:
+def _pareto_front(
+    candidates: list[Candidate],
+    target: dict,
+    executor: ThreadPoolExecutor | None = None,
+) -> list[Candidate]:
     if not candidates:
         return []
 
     front: list[Candidate] = []
+    if executor is not None:
+        metrics_iter = executor.map(lambda c: _metrics(c, target), candidates)
+    else:
+        metrics_iter = (_metrics(c, target) for c in candidates)
+    metrics_map = {id(cand): metrics for cand, metrics in zip(candidates, metrics_iter)}
     for cand in candidates:
         dominated = False
-        metrics_c = _metrics(cand, target)
+        metrics_c = metrics_map[id(cand)]
         remove: list[Candidate] = []
         for other in front:
-            metrics_o = _metrics(other, target)
+            metrics_o = metrics_map[id(other)]
             if _dominates(metrics_o, metrics_c):
                 dominated = True
                 break
@@ -235,6 +281,8 @@ def _run_bayesian_optimization(
     target: dict,
     n_evals: int,
     process_ids: list[str],
+    executor: ThreadPoolExecutor | None = None,
+    start_iteration: int = 0,
 ) -> None:
     if AxClient is None:
         return
@@ -254,6 +302,7 @@ def _run_bayesian_optimization(
         minimize=False,
     )
 
+    iteration = start_iteration
     for _ in range(n_evals):
         params, trial_index = ax_client.get_next_trial()
         override = {
@@ -261,9 +310,16 @@ def _run_bayesian_optimization(
             "regolith_pct": float(params.get("regolith_pct", 0.0)),
             "process_choice": params.get("process_choice"),
         }
-        candidate = sampler(override)
+        if executor is not None:
+            future = executor.submit(sampler, override)
+            candidate = future.result()
+        else:
+            candidate = sampler(override)
         if not candidate:
-            candidate = sampler({})
+            if executor is not None:
+                candidate = executor.submit(sampler, {}).result()
+            else:
+                candidate = sampler({})
 
         score = float(candidate["score"]) if candidate else float("nan")
         ax_client.complete_trial(trial_index=trial_index, raw_data=score)
@@ -271,13 +327,14 @@ def _run_bayesian_optimization(
         if candidate:
             evaluated.append(candidate)
 
-        pareto = _pareto_front(evaluated, target)
+        iteration += 1
+        pareto = _pareto_front(evaluated, target, executor=executor)
         hv = _hypervolume(pareto, evaluated, target)
         dom_ratio = _dominance_ratio(pareto, evaluated)
         penalty = _penalty(candidate, target) if candidate else float("nan")
         history.append(
             OptimizationSummary(
-                iteration=len(history),
+                iteration=iteration,
                 score=score,
                 penalty=penalty,
                 hypervolume=hv,
