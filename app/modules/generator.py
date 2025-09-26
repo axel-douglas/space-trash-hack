@@ -14,7 +14,6 @@ candidate assembly.
 
 from __future__ import annotations
 
-import atexit
 import itertools
 import logging
 import math
@@ -22,13 +21,11 @@ import os
 import random
 import re
 import threading
-from datetime import UTC, datetime
-from pathlib import Path
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 from functools import lru_cache
 from typing import Any, Dict, Iterable, Mapping, NamedTuple, Sequence, Tuple
-
-import json
 
 try:
     import jax.numpy as jnp
@@ -73,8 +70,7 @@ from app.modules.data_sources import (
     slugify,
     to_lazy_frame,
 )
-from app.modules.logging_utils import append_inference_log, pq
-from app.modules import logging_utils
+from app.modules.logging_utils import append_inference_log
 
 # The demo previously collapsed multiple NASA inventory families (Packaging,
 # Other Packaging, Gloves, Foam Packaging, Food Packaging, Structural Elements
@@ -107,10 +103,8 @@ _CATEGORY_FAMILY_FALLBACKS: Dict[str, tuple[str, ...]] = {
 }
 try:  # Optional heavy dependencies; used for fast vectorization
     import pyarrow as pa
-    import pyarrow.parquet as pq
 except Exception:  # pragma: no cover - pyarrow is expected in production
     pa = None  # type: ignore[assignment]
-    pq = None  # type: ignore[assignment]
 
 from app.modules.execution import (
     DEFAULT_PARALLEL_THRESHOLD,
@@ -679,6 +673,30 @@ class _OfficialFeaturesBundle(NamedTuple):
     l2l_item_features: Dict[str, Dict[str, float]]
     l2l_hints: Dict[str, str]
     mission_reference_dense: np.ndarray = np.zeros((0, 0), dtype=np.float64)
+
+
+_OfficialFeaturesBundle._field_defaults = {
+    "mission_reference_dense": np.zeros((0, 0), dtype=np.float64)
+}
+
+
+_ORIGINAL_OFFICIAL_BUNDLE_NEW = _OfficialFeaturesBundle.__new__
+
+
+def _official_features_bundle_new(cls, *args, **kwargs):
+    if "mission_reference_dense" not in kwargs:
+        if len(args) == len(_OfficialFeaturesBundle._fields) - 1:
+            args = (
+                *args[:11],
+                np.zeros((0, 0), dtype=np.float64),
+                *args[11:],
+            )
+        elif len(args) < len(_OfficialFeaturesBundle._fields):
+            kwargs["mission_reference_dense"] = np.zeros((0, 0), dtype=np.float64)
+    return _ORIGINAL_OFFICIAL_BUNDLE_NEW(cls, *args, **kwargs)
+
+
+_OfficialFeaturesBundle.__new__ = staticmethod(_official_features_bundle_new)
 
 
 def official_features_bundle() -> _OfficialFeaturesBundle:
