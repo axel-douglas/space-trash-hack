@@ -104,34 +104,54 @@ def ensure_model_bundle(model_dir: Path | str = MODEL_DIR) -> None:
 
     LOGGER.info("Descargando bundle de modelos desde %s", url)
 
-    try:
-        response = requests.get(url, timeout=60)
-        response.raise_for_status()
-    except Exception as exc:
-        LOGGER.warning("No se pudo descargar el bundle de modelos desde %s: %s", url, exc)
-        return
-
-    data = response.content
     expected_hash = _get_secret_value("MODEL_BUNDLE_SHA256")
-    if expected_hash:
-        digest = hashlib.sha256(data).hexdigest()
-        if digest.lower() != expected_hash.strip().lower():
-            LOGGER.warning(
-                "Hash SHA256 del bundle no coincide (esperado %s, obtenido %s)",
-                expected_hash,
-                digest,
-            )
+    hasher = hashlib.sha256() if expected_hash else None
+
+    tmp_path: Path | None = None
+    try:
+        with requests.get(url, stream=True, timeout=60) as response:
+            response.raise_for_status()
+
+            with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+                tmp_path = Path(tmp_file.name)
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if not chunk:
+                        continue
+                    tmp_file.write(chunk)
+                    if hasher is not None:
+                        hasher.update(chunk)
+
+        if hasher is not None:
+            digest = hasher.hexdigest()
+            if digest.lower() != expected_hash.strip().lower():
+                LOGGER.warning(
+                    "Hash SHA256 del bundle no coincide (esperado %s, obtenido %s)",
+                    expected_hash,
+                    digest,
+                )
+                if tmp_path and tmp_path.exists():
+                    tmp_path.unlink(missing_ok=True)
+                return
+
+        if tmp_path is None:
+            LOGGER.warning("Descarga del bundle de modelos desde %s no produjo archivo temporal", url)
             return
 
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        tmp_path = Path(tmp_dir) / "model_bundle.zip"
-        tmp_path.write_bytes(data)
         try:
             with zipfile.ZipFile(tmp_path) as bundle:
                 bundle.extractall(target_dir)
         except Exception as exc:
             LOGGER.warning("No se pudo extraer el bundle de modelos desde %s: %s", url, exc)
             return
+    except Exception as exc:
+        LOGGER.warning("No se pudo descargar el bundle de modelos desde %s: %s", url, exc)
+        return
+    finally:
+        if tmp_path and tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                LOGGER.debug("No se pudo eliminar el archivo temporal %s", tmp_path)
 
     LOGGER.info("Bundle de modelos extraído en %s", target_dir)
 
