@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import numbers
 import random
 import shutil
 from datetime import datetime
@@ -627,6 +628,48 @@ def test_compute_feature_vector_keyword_fallback_triggers_polyethylene():
     for candidate in batched:
         assert candidate["polyethylene_frac"] == pytest.approx(features["polyethylene_frac"], rel=1e-6)
         assert candidate["gas_recovery_index"] == pytest.approx(features["gas_recovery_index"], rel=1e-6)
+
+
+def test_compute_feature_vector_dataframe_matches_tensor_batch():
+    waste_df = pd.DataFrame(
+        {
+            "id": ["X", "Y", "Z"],
+            "category": ["Food Packaging", "Food Packaging", "Logistics"],
+            "material": [
+                "Rehydratable Pouch",
+                "Nomex shipping bag",
+                "Polyethylene foam block",
+            ],
+            "kg": [7.0, 2.0, 4.0],
+            "volume_l": [0.0, 1.0, 8.0],
+            "flags": ["", "multilayer", ""],
+        }
+    )
+
+    prepared = generator.prepare_waste_frame(waste_df)
+    process = _dummy_process_series()
+    weights = [0.5, 0.3, 0.2]
+    regolith_pct = 0.15
+
+    dataframe_features = generator.compute_feature_vector(
+        prepared, weights, process, regolith_pct
+    )
+
+    tensor_batch = generator.build_feature_tensor_batch(
+        [prepared], [weights], [process], [regolith_pct]
+    )
+    tensor_features = generator.compute_feature_vector(tensor_batch)
+
+    assert isinstance(tensor_features, list) and tensor_features, "Tensor batch returned no features"
+    tensor_features = tensor_features[0]
+
+    assert set(tensor_features) == set(dataframe_features)
+    for key, value in dataframe_features.items():
+        lhs = tensor_features[key]
+        if isinstance(value, numbers.Real):
+            assert lhs == pytest.approx(value, rel=1e-6, abs=1e-8)
+        else:
+            assert lhs == value
 
 
 def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
