@@ -9,6 +9,143 @@ import pytest
 from app.modules import generator
 
 
+def test_load_waste_summary_data_polars(tmp_path, monkeypatch):
+    summary_path = tmp_path / "nasa_waste_summary.csv"
+    summary_path.write_text(
+        "\n".join(
+            [
+                "category,subitem,Artemis_mass_kg,Gateway_mass_kg",
+                "Packaging,Foam,10,5",
+                "Packaging,,3,2",
+            ]
+        )
+        + "\n"
+    )
+
+    monkeypatch.setattr(
+        generator,
+        "_resolve_dataset_path",
+        lambda name: summary_path if name == "nasa_waste_summary.csv" else None,
+    )
+
+    summary = generator._load_waste_summary_data()
+
+    assert summary.mission_totals["artemis"] == pytest.approx(13.0)
+    assert summary.mission_totals["gateway"] == pytest.approx(7.0)
+    assert summary.mass_by_key["other packaging glove"]["artemis"] == pytest.approx(13.0)
+    assert summary.mass_by_key["other packaging glove|foam"]["gateway"] == pytest.approx(5.0)
+
+
+def test_extract_grouped_metrics_polars(tmp_path, monkeypatch):
+    metrics_path = tmp_path / "nasa_waste_processing_products.csv"
+    metrics_path.write_text(
+        "\n".join(
+            [
+                "mission,scenario,value_kg",
+                "Lunar,Nominal,10",
+                "Lunar,Contingency,14",
+            ]
+        )
+        + "\n"
+    )
+
+    monkeypatch.setattr(
+        generator,
+        "_resolve_dataset_path",
+        lambda name: metrics_path if name == "nasa_waste_processing_products.csv" else None,
+    )
+
+    aggregated = generator._extract_grouped_metrics(
+        "nasa_waste_processing_products.csv", "processing"
+    )
+
+    assert aggregated["lunar"]["processing_value_kg"] == pytest.approx(12.0)
+    assert aggregated["nominal"]["processing_value_kg"] == pytest.approx(10.0)
+    assert aggregated["lunar_contingency"]["processing_value_kg"] == pytest.approx(14.0)
+
+
+def test_official_features_bundle_polars_pipeline(tmp_path, monkeypatch):
+    official_path = tmp_path / "official.csv"
+    official_path.write_text(
+        "\n".join(
+            [
+                "category,subitem,value_kg",
+                "Packaging,Foam,2.5",
+                "Packaging,,1.0",
+            ]
+        )
+        + "\n"
+    )
+
+    summary_path = tmp_path / "nasa_waste_summary.csv"
+    summary_path.write_text(
+        "\n".join(
+            [
+                "category,subitem,Artemis_mass_kg,Gateway_mass_kg",
+                "Packaging,Foam,10,5",
+                "Packaging,,3,2",
+            ]
+        )
+        + "\n"
+    )
+
+    processing_path = tmp_path / "nasa_waste_processing_products.csv"
+    processing_path.write_text(
+        "\n".join(
+            [
+                "category,subitem,output_kg",
+                "Packaging,Foam,2",
+                "Packaging,Foam,4",
+            ]
+        )
+        + "\n"
+    )
+
+    leo_path = tmp_path / "nasa_leo_mass_savings.csv"
+    leo_path.write_text(
+        "\n".join(
+            [
+                "category,subitem,savings_pct",
+                "Packaging,Foam,12",
+            ]
+        )
+        + "\n"
+    )
+
+    propellant_path = tmp_path / "nasa_propellant_benefits.csv"
+    propellant_path.write_text(
+        "\n".join(
+            [
+                "category,subitem,benefit",
+                "Packaging,Foam,5",
+            ]
+        )
+        + "\n"
+    )
+
+    file_map = {
+        "nasa_waste_summary.csv": summary_path,
+        "nasa_waste_processing_products.csv": processing_path,
+        "nasa_leo_mass_savings.csv": leo_path,
+        "nasa_propellant_benefits.csv": propellant_path,
+    }
+
+    monkeypatch.setattr(generator, "_OFFICIAL_FEATURES_PATH", official_path)
+    monkeypatch.setattr(generator, "_resolve_dataset_path", lambda name: file_map.get(name))
+    generator._official_features_bundle.cache_clear()
+
+    bundle = generator._official_features_bundle()
+
+    assert "value_kg" in bundle.value_columns
+    assert "processing_output_kg" in bundle.value_columns
+    assert "leo_savings_pct" in bundle.value_columns
+    assert "propellant_benefit" in bundle.value_columns
+    assert bundle.direct_map["other packaging glove|foam"]["value_kg"] == pytest.approx(2.5)
+    assert bundle.mission_totals["artemis"] == pytest.approx(13.0)
+    assert bundle.processing_metrics["processing"]["processing_output_kg"] == pytest.approx(3.0)
+
+    generator._official_features_bundle.cache_clear()
+
 class DummyRegistry:
     ready = True
     metadata = {"model_hash": "dummy-hash"}
@@ -40,6 +177,7 @@ def _dummy_process_series() -> pd.Series:
 
 def test_generate_candidates_appends_inference_log(monkeypatch):
     monkeypatch.setattr(generator, "MODEL_REGISTRY", DummyRegistry())
+    monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
 
     log_dir = generator.LOGS_ROOT
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -99,7 +237,6 @@ def test_generate_candidates_appends_inference_log(monkeypatch):
 
     log_path.unlink(missing_ok=True)
 
-
 def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch):
     calls: list[str] = []
 
@@ -115,52 +252,7 @@ def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch):
             return []
 
     monkeypatch.setattr(generator, "MODEL_REGISTRY", NoCallRegistry())
-
-    log_dir = generator.LOGS_ROOT
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"inference_{datetime.utcnow().strftime('%Y%m%d')}.parquet"
-    log_path.unlink(missing_ok=True)
-
-    log_path.unlink(missing_ok=True)
-
-
-def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch):
-    calls: list[str] = []
-
-    class NoCallRegistry:
-        ready = True
-        metadata = {"model_hash": "noop"}
-
-        def predict(self, features):
-            calls.append("predict")
-            return {}
-
-        def embed(self, features):
-            return []
-
-    monkeypatch.setattr(generator, "MODEL_REGISTRY", NoCallRegistry())
-
-    log_dir = generator.LOGS_ROOT
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"inference_{datetime.utcnow().strftime('%Y%m%d')}.parquet"
-    log_path.unlink(missing_ok=True)
-    log_path.unlink(missing_ok=True)
-
-def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch):
-    calls: list[str] = []
-
-    class NoCallRegistry:
-        ready = True
-        metadata = {"model_hash": "noop"}
-
-        def predict(self, features):
-            calls.append("predict")
-            return {}
-
-        def embed(self, features):
-            return []
-
-    monkeypatch.setattr(generator, "MODEL_REGISTRY", NoCallRegistry())
+    monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
 
     log_dir = generator.LOGS_ROOT
     log_dir.mkdir(parents=True, exist_ok=True)
