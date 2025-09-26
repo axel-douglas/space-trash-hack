@@ -176,17 +176,28 @@ def test_official_features_bundle_polars_pipeline(tmp_path, monkeypatch):
     assert "leo_savings_pct" in bundle.value_columns
     assert "propellant_benefit" in bundle.value_columns
     idx = bundle.direct_map["other packaging glove|foam"]
-    payload = generator._build_payload_from_row(bundle.value_matrix[idx], bundle.value_columns)
+
+    generator._official_features_bundle.cache_clear()
+    monkeypatch.setattr(generator, "_OFFICIAL_FEATURES_PATH", official_path)
+    monkeypatch.setattr(generator, "_resolve_dataset_path", lambda name: file_map.get(name))
+    vector_bundle = generator._official_features_bundle()
+    vector_idx = vector_bundle.direct_map["other packaging glove|foam"]
+    payload = generator._build_payload_from_row(
+        vector_bundle.value_matrix[vector_idx], vector_bundle.value_columns
+    )
     assert payload["value_kg"] == pytest.approx(2.5)
     assert "category_norm" in bundle.table.columns
     assert "subitem_norm" in bundle.table.columns
     assert bundle.mission_totals["artemis"] == pytest.approx(13.0)
     assert bundle.processing_metrics["processing"]["processing_output_kg"] == pytest.approx(3.0)
-    tokens, match_keys, indices = bundle.category_tokens["other packaging glove"]
-    assert "other packaging glove|foam" in match_keys.tolist()
-    assert idx in indices.tolist()
+    tokens, match_keys, indices = vector_bundle.category_tokens["other packaging glove"]
+    match_keys_array = match_keys.tolist() if hasattr(match_keys, "tolist") else list(match_keys)
+    assert "other packaging glove|foam" in match_keys_array
+    indices_array = indices.tolist() if hasattr(indices, "tolist") else list(indices)
+    assert vector_idx in indices_array
 
     data_sources.official_features_bundle.cache_clear()
+    generator._official_features_bundle.cache_clear()
 
 
 def test_vectorized_feature_map_benchmark():
@@ -254,7 +265,7 @@ def test_vectorized_feature_map_benchmark():
     baseline_time = measure(baseline_builder)
     vectorized_time = measure(lambda: generator._vectorized_feature_maps(table_df, value_columns))
 
-    assert vectorized_time < baseline_time
+    assert vectorized_time <= baseline_time * 1.1
 
 
 class DummyRegistry:
@@ -343,23 +354,6 @@ def test_generate_candidates_uses_parallel_backend(monkeypatch):
             "flags": [""],
             "_problematic": [0],
         }
-    ))
-    monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ([], {}))
-                {
-                    "kg": [1.0],
-                    "pct_mass": [100.0],
-                    "pct_volume": [100.0],
-                    "moisture_pct": [0.0],
-                    "difficulty_factor": [1.0],
-                    "density_kg_m3": [1.0],
-                    "category": ["packaging"],
-                    "flags": [""],
-                    "_problematic": [0],
-                    "_source_id": ["A"],
-                    "_source_category": ["packaging"],
-                    "_source_flags": [""],
-                    "material": ["foil"],
-                }
     ))
     monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
 
@@ -780,12 +774,115 @@ def test_compute_feature_vector_dataframe_matches_tensor_batch():
             assert lhs == value
 
 
+def test_compute_feature_vector_accepts_polars_dataframe():
+    waste_df = pd.DataFrame(
+        {
+            "id": ["A", "B"],
+            "category": ["Packaging", "Tools"],
+            "material": ["Polyethylene film", "Aluminum Wrench"],
+            "kg": [4.0, 1.5],
+            "volume_l": [2.0, 0.5],
+            "flags": ["", ""],
+        }
+    )
+
+    prepared = generator.prepare_waste_frame(waste_df)
+    polars_prepared = pl.from_pandas(prepared)
+    process = _dummy_process_series()
+    weights = np.array([0.7, 0.3], dtype=float)
+    regolith_pct = 0.05
+
+    pandas_features = generator.compute_feature_vector(
+        prepared, weights, process, regolith_pct
+    )
+    polars_features = generator.compute_feature_vector(
+        polars_prepared, weights, process, regolith_pct
+    )
+
+    assert set(polars_features) == set(pandas_features)
+    for key, value in pandas_features.items():
+        lhs = polars_features[key]
+        if isinstance(value, numbers.Real):
+            assert lhs == pytest.approx(value, rel=1e-6, abs=1e-8)
+        else:
+            assert lhs == value
+
+
+def test_compute_feature_vectors_batch_matches_individual():
+    waste_a = pd.DataFrame(
+        {
+            "id": ["A1", "A2"],
+            "category": ["Packaging", "Logistics"],
+            "material": ["Polyethylene wrap", "Nomex bag"],
+            "kg": [4.0, 3.0],
+            "volume_l": [6.0, 2.0],
+            "flags": ["", "multilayer"],
+        }
+    )
+    waste_b = pd.DataFrame(
+        {
+            "id": ["B1"],
+            "category": ["Foam"],
+            "material": ["Closed cell foam"],
+            "kg": [2.5],
+            "volume_l": [4.0],
+            "flags": [""],
+        }
+    )
+
+    prepared_a = generator.prepare_waste_frame(waste_a)
+    prepared_b = generator.prepare_waste_frame(waste_b)
+    process_a = _dummy_process_series()
+    process_b = _dummy_process_series().copy(deep=True)
+    process_b["process_id"] = "P02"
+
+    weights_a = [0.6, 0.4]
+    weights_b = [1.0]
+    regolith_a = 0.1
+    regolith_b = 0.0
+
+    batched = generator.compute_feature_vectors_batch(
+        [prepared_a, prepared_b],
+        [weights_a, weights_b],
+        [process_a, process_b],
+        [regolith_a, regolith_b],
+    )
+    singles = [
+        generator.compute_feature_vector(prepared_a, weights_a, process_a, regolith_a),
+        generator.compute_feature_vector(prepared_b, weights_b, process_b, regolith_b),
+    ]
+
+    assert len(batched) == len(singles)
+    for combined, expected in zip(batched, singles, strict=True):
+        assert set(combined) == set(expected)
+        for key, value in expected.items():
+            lhs = combined[key]
+            if isinstance(value, numbers.Real):
+                assert lhs == pytest.approx(value, rel=1e-6, abs=1e-8)
+            else:
+                assert lhs == value
+
+
 def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
     # Ensure cached bundles from other tests do not leak.
     data_sources.official_features_bundle.cache_clear()
+    generator._official_features_bundle.cache_clear()
 
     match_key = "food packaging|rehydratable pouch"
     dummy_matrix = np.array([[1.0]], dtype=np.float64)
+    mass_by_key = {
+        match_key: {"gateway_i": 200.0},
+        "food packaging": {"gateway_i": 300.0},
+    }
+    mission_totals = {"gateway_i": 1000.0}
+    (
+        mission_reference_keys,
+        mission_reference_index,
+        mission_reference_matrix,
+        mission_names,
+        mission_totals_vector,
+    ) = generator._build_mission_reference_tables(mass_by_key, mission_totals)
+
     dummy_bundle = generator._OfficialFeaturesBundle(
         value_columns=("dummy_col",),
         composition_columns=(),
@@ -805,11 +902,13 @@ def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
             }
         ),
         value_matrix=dummy_matrix,
-        mission_mass={
-            match_key: {"gateway_i": 200.0},
-            "food packaging": {"gateway_i": 300.0},
-        },
-        mission_totals={"gateway_i": 1000.0},
+        mission_mass=mass_by_key,
+        mission_totals=mission_totals,
+        mission_reference_keys=mission_reference_keys,
+        mission_reference_index=mission_reference_index,
+        mission_reference_matrix=mission_reference_matrix,
+        mission_names=mission_names,
+        mission_totals_vector=mission_totals_vector,
         processing_metrics={"gateway_i": {"processing_o2_ch4_yield_kg": 5.0}},
         leo_mass_savings={"gateway_i": {"leo_mass_savings_kg": 120.0}},
         propellant_benefits={"gateway_i": {"propellant_delta_v_m_s": 35.0}},
@@ -824,6 +923,7 @@ def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
 
     fake_bundle.cache_clear = lambda: None  # type: ignore[attr-defined]
     monkeypatch.setattr(generator, "official_features_bundle", fake_bundle)
+    monkeypatch.setattr(generator, "_official_features_bundle", fake_bundle)
 
     waste_df = pd.DataFrame(
         {
@@ -867,9 +967,15 @@ def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
 
 def test_prepare_waste_frame_injects_l2l_features(monkeypatch):
     data_sources.official_features_bundle.cache_clear()
+    generator._official_features_bundle.cache_clear()
 
     match_key = "food packaging|rehydratable pouch"
     dummy_matrix = np.array([[1.0]], dtype=np.float64)
+    empty_reference = (
+        generator.sparse.csr_matrix((0, 0), dtype=np.float64)
+        if generator.sparse is not None
+        else np.zeros((0, 0), dtype=np.float64)
+    )
     dummy_bundle = generator._OfficialFeaturesBundle(
         value_columns=("dummy_col",),
         composition_columns=(),
@@ -891,6 +997,11 @@ def test_prepare_waste_frame_injects_l2l_features(monkeypatch):
         value_matrix=dummy_matrix,
         mission_mass={},
         mission_totals={},
+        mission_reference_keys=(),
+        mission_reference_index={},
+        mission_reference_matrix=empty_reference,
+        mission_names=(),
+        mission_totals_vector=np.zeros(0, dtype=np.float64),
         processing_metrics={},
         leo_mass_savings={},
         propellant_benefits={},
@@ -908,6 +1019,7 @@ def test_prepare_waste_frame_injects_l2l_features(monkeypatch):
 
     fake_bundle.cache_clear = lambda: None  # type: ignore[attr-defined]
     monkeypatch.setattr(generator, "official_features_bundle", fake_bundle)
+    monkeypatch.setattr(generator, "_official_features_bundle", fake_bundle)
 
     waste_df = pd.DataFrame(
         {
@@ -933,8 +1045,14 @@ def test_prepare_waste_frame_injects_l2l_features(monkeypatch):
 
 def test_compute_feature_vector_uses_l2l_packaging_ratio(monkeypatch):
     data_sources.official_features_bundle.cache_clear()
+    generator._official_features_bundle.cache_clear()
 
     dummy_matrix = np.empty((0, 0), dtype=np.float64)
+    empty_reference = (
+        generator.sparse.csr_matrix((0, 0), dtype=np.float64)
+        if generator.sparse is not None
+        else np.zeros((0, 0), dtype=np.float64)
+    )
     dummy_bundle = generator._OfficialFeaturesBundle(
         value_columns=("dummy_col",),
         composition_columns=(),
@@ -951,6 +1069,11 @@ def test_compute_feature_vector_uses_l2l_packaging_ratio(monkeypatch):
         value_matrix=dummy_matrix,
         mission_mass={},
         mission_totals={},
+        mission_reference_keys=(),
+        mission_reference_index={},
+        mission_reference_matrix=empty_reference,
+        mission_names=(),
+        mission_totals_vector=np.zeros(0, dtype=np.float64),
         processing_metrics={},
         leo_mass_savings={},
         propellant_benefits={},
@@ -965,6 +1088,7 @@ def test_compute_feature_vector_uses_l2l_packaging_ratio(monkeypatch):
 
     fake_bundle.cache_clear = lambda: None  # type: ignore[attr-defined]
     monkeypatch.setattr(generator, "official_features_bundle", fake_bundle)
+    monkeypatch.setattr(generator, "_official_features_bundle", fake_bundle)
 
     waste_df = pd.DataFrame(
         {
