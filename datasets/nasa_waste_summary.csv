@@ -1,11 +1,11 @@
-waste_type,kg_per_cm_day,gateway_phase_I_total_kg,gateway_phase_II_total_kg,mars_transit_total_kg
-Clothing,0.16,15-58,58-115,173
-Paper & Office Supplies,0.007,1-2,2-5,7
-Wipes/Tissues,0.137,13-49,49-99,148
-Towels and Hygiene,0.098,9-35,35-71,106
-Foam Packaging for Launch,0.04,4-14,14-29,43
-Other Crew Supplies,0.037,4-13,13-27,40
-Food & Packaging,0.352,24-127,127-253,380
-EVA Supplies,0.01,1-4,4-7,11
-Human Wastes,0.449,43-162,162-324,485
-Waste Recovery/Mgt System,0.162,16-58,58-116,174
+category,subitem,kg_per_cm_day,gateway_phase_i_mass_kg,gateway_phase_ii_mass_kg,mars_transit_mass_kg,total_mass_kg
+Fabrics,Clothing,0.16,36.5,86.5,173.0,296.0
+Paper & Office Supplies,,0.007,1.5,3.5,7.0,12.0
+Fabrics,Cleaning Wipes,0.137,31.0,74.0,148.0,253.0
+Fabrics,Towels/Wash Cloths,0.098,22.0,53.0,106.0,181.0
+Foam Packaging for Launch,,0.04,9.0,21.5,43.0,73.5
+Other Crew Supplies,,0.037,8.5,20.0,40.0,68.5
+Food & Packaging,,0.352,75.5,190.0,380.0,645.5
+EVA Supplies,,0.01,2.5,5.5,11.0,19.0
+Human Wastes,,0.449,102.5,243.0,485.0,830.5
+Waste Recovery/Mgt System,,0.162,37.0,87.0,174.0,298.0
