@@ -89,6 +89,10 @@ DATASETS_ROOT = Path(__file__).resolve().parents[2] / "datasets"
 LOGS_ROOT = Path(__file__).resolve().parents[2] / "data" / "logs"
 _OFFICIAL_FEATURES_PATH = DATASETS_ROOT / "rexai_nasa_waste_features.csv"
 
+_REGOLITH_OXIDE_ITEMS = tuple(REGOLITH_VECTOR.items())
+_REGOLITH_OXIDE_NAMES = tuple(f"oxide_{name}" for name, _ in _REGOLITH_OXIDE_ITEMS)
+_REGOLITH_OXIDE_VALUES = np.asarray([float(value) for _, value in _REGOLITH_OXIDE_ITEMS], dtype=float)
+
 
 @dataclass(slots=True)
 class _InferenceWriterState:
@@ -1105,6 +1109,12 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
         l2l.item_features,
         l2l.hints,
     )
+
+
+def official_features_bundle() -> _OfficialFeaturesBundle:
+    """Public accessor for tests and external callers."""
+
+    return _official_features_bundle()
 
 
 def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], str]:
@@ -2396,6 +2406,38 @@ def _compute_features_from_batch(batch: FeatureTensorBatch) -> list[Dict[str, An
     regolith = to_numpy(kernel_output["regolith"])
     total_mass = to_numpy(batch.total_mass)
 
+    keyword_pairs = tuple(
+        (name, idx)
+        for name, idx in _KEYWORD_INDEX.items()
+        if keyword_matrix.shape[1] > idx
+    )
+
+    mission_arrays: tuple[
+        tuple[str, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+        ...,
+    ] = tuple(
+        (
+            mission,
+            mission_similarity[:, mission_idx],
+            mission_reference_mass[:, mission_idx],
+            mission_scaled_mass[:, mission_idx],
+            mission_official_mass[:, mission_idx],
+        )
+        for mission_idx, mission in enumerate(batch.mission_names)
+    )
+
+    l2l_items = [
+        (name, float(value))
+        for name, value in batch.l2l_constants.items()
+        if isinstance(value, (int, float)) and np.isfinite(value)
+    ]
+    l2l_names = tuple(name for name, _ in l2l_items)
+    l2l_values = (
+        np.asarray([value for _, value in l2l_items], dtype=float)
+        if l2l_items
+        else np.empty(0, dtype=float)
+    )
+
     features_list: list[Dict[str, Any]] = []
     for idx, process_id in enumerate(batch.process_ids):
         features: Dict[str, Any] = {
@@ -2412,28 +2454,33 @@ def _compute_features_from_batch(batch: FeatureTensorBatch) -> list[Dict[str, An
             "packaging_frac": float(packaging[idx]) if packaging.size else 0.0,
         }
 
-        for name, kw_idx in _KEYWORD_INDEX.items():
-            if keyword_matrix.shape[1] > kw_idx:
-                features[name] = float(keyword_matrix[idx, kw_idx])
+        for name, kw_idx in keyword_pairs:
+            features[name] = float(keyword_matrix[idx, kw_idx])
 
         _apply_official_composition_overrides(features, batch.official_comp[idx])
 
-        for name, value in batch.l2l_constants.items():
-            if isinstance(value, (int, float)) and np.isfinite(value):
-                features[name] = float(value)
+        if l2l_values.size:
+            for name_idx, name in enumerate(l2l_names):
+                features[name] = float(l2l_values[name_idx])
 
         mission_similarity_row = mission_similarity[idx] if mission_similarity.size else np.array([])
         mission_similarity_dict: Dict[str, float] = {}
         if mission_similarity_row.size and np.any(mission_similarity_row > 0):
-            for mission_idx, mission in enumerate(batch.mission_names):
-                share = float(mission_similarity_row[mission_idx])
+            for (
+                mission,
+                share_values,
+                reference_values,
+                scaled_values,
+                official_values,
+            ) in mission_arrays:
+                share = float(share_values[idx])
                 if share <= 0:
                     continue
                 mission_similarity_dict[mission] = share
                 features[f"mission_similarity_{mission}"] = float(np.clip(share, 0.0, 1.0))
-                features[f"mission_reference_mass_{mission}"] = float(mission_reference_mass[idx, mission_idx])
-                features[f"mission_scaled_mass_{mission}"] = float(mission_scaled_mass[idx, mission_idx])
-                features[f"mission_official_mass_{mission}"] = float(mission_official_mass[idx, mission_idx])
+                features[f"mission_reference_mass_{mission}"] = float(reference_values[idx])
+                features[f"mission_scaled_mass_{mission}"] = float(scaled_values[idx])
+                features[f"mission_official_mass_{mission}"] = float(official_values[idx])
 
             features["mission_similarity_total"] = float(mission_similarity_total[idx])
 
@@ -2444,8 +2491,10 @@ def _compute_features_from_batch(batch: FeatureTensorBatch) -> list[Dict[str, An
         features["gas_recovery_index"] = float(gas_recovery[idx]) if gas_recovery.size else 0.0
         features["logistics_reuse_index"] = float(logistics_reuse[idx]) if logistics_reuse.size else 0.0
 
-        for oxide, value in REGOLITH_VECTOR.items():
-            features[f"oxide_{oxide}"] = float(value * features["regolith_pct"])
+        if _REGOLITH_OXIDE_VALUES.size:
+            oxide_values = _REGOLITH_OXIDE_VALUES * features["regolith_pct"]
+            for oxide_name, oxide_value in zip(_REGOLITH_OXIDE_NAMES, oxide_values, strict=False):
+                features[oxide_name] = float(oxide_value)
 
         features_list.append(features)
 
@@ -2465,29 +2514,71 @@ def compute_feature_vectors_batch(
 
 
 def compute_feature_vector(
-    picks: pd.DataFrame | pl.DataFrame | FeatureTensorBatch,
-    weights: Iterable[float] | None = None,
-    process: pd.Series | None = None,
-    regolith_pct: float | None = None,
+    picks: pd.DataFrame | pl.DataFrame | FeatureTensorBatch | Sequence[pd.DataFrame | pl.DataFrame],
+    weights: Iterable[float] | Sequence[Iterable[float]] | None = None,
+    process: pd.Series | Sequence[pd.Series] | None = None,
+    regolith_pct: float | Sequence[float] | None = None,
+    *,
+    backend: str | None = None,
 ) -> Dict[str, Any] | list[Dict[str, Any]]:
     if isinstance(picks, FeatureTensorBatch):
         return _compute_features_from_batch(picks)
 
-    if isinstance(picks, pl.DataFrame):
-        picks_df = picks.to_pandas()
-    elif isinstance(picks, pd.DataFrame):
-        picks_df = picks
-    else:
+    backend = backend or "jax"
+
+    def _to_pandas(frame: pd.DataFrame | pl.DataFrame) -> pd.DataFrame:
+        if isinstance(frame, pd.DataFrame):
+            return frame
+        if isinstance(frame, pl.DataFrame):
+            return frame.to_pandas()
         raise TypeError(
             "picks must be a pandas.DataFrame, a polars.DataFrame or a FeatureTensorBatch"
         )
+
+    is_sequence_input = False
+    if isinstance(picks, (pd.DataFrame, pl.DataFrame)):
+        picks_list = [_to_pandas(picks)]
+    else:
+        if not isinstance(picks, Sequence) or isinstance(picks, (str, bytes)):
+            raise TypeError(
+                "picks must be a pandas.DataFrame, a polars.DataFrame, a FeatureTensorBatch, or a sequence of DataFrames"
+            )
+        picks_list = [_to_pandas(frame) for frame in picks]
+        is_sequence_input = True
+
+    if not picks_list:
+        return [] if is_sequence_input else {}
+
+    candidate_count = len(picks_list)
+
     if weights is None or process is None or regolith_pct is None:
         raise ValueError("weights, process and regolith_pct are required for DataFrame inputs")
 
-    bundle = _official_features_bundle()
-    context = _prepare_feature_context(picks_df, weights, regolith_pct, bundle)
-    batch = _contexts_to_tensor_batch([context], [process], bundle)
+    if is_sequence_input:
+        if not isinstance(weights, Sequence) or len(weights) != candidate_count:
+            raise ValueError("weights must be a sequence matching the number of candidates")
+        if not isinstance(process, Sequence) or len(process) != candidate_count:
+            raise ValueError("process must be a sequence matching the number of candidates")
+        if not isinstance(regolith_pct, Sequence) or len(regolith_pct) != candidate_count:
+            raise ValueError("regolith_pct must be a sequence matching the number of candidates")
+        weights_list = list(weights)
+        process_list = list(process)
+        regolith_list = list(regolith_pct)
+    else:
+        weights_list = [weights]
+        process_list = [process]
+        regolith_list = [regolith_pct]
+
+    batch = build_feature_tensor_batch(
+        picks_list,
+        weights_list,
+        process_list,
+        regolith_list,
+        backend=backend,
+    )
     features = _compute_features_from_batch(batch)
+    if is_sequence_input:
+        return features
     return features[0] if features else {}
 
 
@@ -2975,6 +3066,14 @@ def generate_candidates(
         if components:
             components_batch.append(components)
 
+    if components_batch:
+        _ = compute_feature_vector(
+            [component.picks for component in components_batch],
+            weights=[component.weights for component in components_batch],
+            process=[component.process for component in components_batch],
+            regolith_pct=[component.regolith_pct for component in components_batch],
+        )
+
     attempts = 0
     max_attempts = max(n * 2, 4)
     while len(candidates) < n and attempts < max_attempts:
@@ -3007,6 +3106,7 @@ __all__ = [
     "generate_candidates",
     "PredProps",
     "prepare_waste_frame",
+    "official_features_bundle",
     "compute_feature_vector",
     "compute_feature_vectors_batch",
     "build_feature_tensor_batch",

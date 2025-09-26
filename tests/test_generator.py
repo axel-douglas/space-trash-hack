@@ -1008,6 +1008,64 @@ def test_compute_feature_vector_dataframe_matches_tensor_batch():
             assert lhs == value
 
 
+def test_compute_feature_vector_sequence_matches_batch():
+    waste_a = pd.DataFrame(
+        {
+            "id": ["A1", "A2"],
+            "category": ["Packaging", "Tools"],
+            "material": ["Polyethylene wrap", "Aluminum wrench"],
+            "kg": [4.0, 1.0],
+            "volume_l": [6.0, 0.5],
+            "flags": ["", ""],
+        }
+    )
+    waste_b = pd.DataFrame(
+        {
+            "id": ["B1"],
+            "category": ["Logistics"],
+            "material": ["Nomex bag"],
+            "kg": [2.5],
+            "volume_l": [3.0],
+            "flags": ["multilayer"],
+        }
+    )
+
+    prepared_a = generator.prepare_waste_frame(waste_a)
+    prepared_b = generator.prepare_waste_frame(waste_b)
+    process_a = _dummy_process_series()
+    process_b = _dummy_process_series().copy(deep=True)
+    process_b["process_id"] = "P02"
+
+    weights_a = [0.7, 0.3]
+    weights_b = [1.0]
+    regolith_a = 0.1
+    regolith_b = 0.05
+
+    vectorized = generator.compute_feature_vector(
+        [prepared_a, prepared_b],
+        weights=[weights_a, weights_b],
+        process=[process_a, process_b],
+        regolith_pct=[regolith_a, regolith_b],
+    )
+    assert isinstance(vectorized, list)
+    assert len(vectorized) == 2
+
+    expected = generator.compute_feature_vectors_batch(
+        [prepared_a, prepared_b],
+        [weights_a, weights_b],
+        [process_a, process_b],
+        [regolith_a, regolith_b],
+    )
+
+    for combined, batch_expected in zip(vectorized, expected, strict=True):
+        assert set(combined) == set(batch_expected)
+        for key, value in batch_expected.items():
+            if isinstance(value, numbers.Real):
+                assert combined[key] == pytest.approx(value, rel=1e-6, abs=1e-8)
+            else:
+                assert combined[key] == value
+
+
 def test_compute_feature_vector_accepts_polars_dataframe():
     waste_df = pd.DataFrame(
         {
