@@ -7,10 +7,9 @@ from datetime import datetime
 from pathlib import Path
 from datetime import datetime
 
-from deltalake import DeltaTable
-
 import pandas as pd
 import pytest
+import pyarrow.parquet as pq
 
 from app.modules import generator
 
@@ -224,6 +223,13 @@ def _collect_single_log_dir(root: Path) -> Path:
     return day_dirs[0]
 
 
+def _read_inference_log(day_dir: Path) -> pd.DataFrame:
+    files = sorted(day_dir.glob("*.parquet"))
+    assert files, "Expected at least one Parquet log shard"
+    frames = [pq.read_table(file).to_pandas() for file in files]
+    return pd.concat(frames, ignore_index=True, sort=False)
+
+
 def test_generate_candidates_uses_parallel_backend(monkeypatch):
     monkeypatch.setattr(generator, "_PARALLEL_THRESHOLD", 1)
 
@@ -246,14 +252,23 @@ def test_generate_candidates_uses_parallel_backend(monkeypatch):
     monkeypatch.setattr(generator, "ThreadPoolExecutor", DummyExecutor)
     monkeypatch.setattr(generator, "prepare_waste_frame", lambda df: df)
     monkeypatch.setattr(generator, "_pick_materials", lambda df, rng, n=2, bias=2.0: pd.DataFrame(
-        {
-            "kg": [1.0],
-            "_source_id": ["A"],
-            "_source_category": ["packaging"],
-            "_source_flags": [""],
-            "material": ["foil"],
-        }
+                {
+                    "kg": [1.0],
+                    "pct_mass": [100.0],
+                    "pct_volume": [100.0],
+                    "moisture_pct": [0.0],
+                    "difficulty_factor": [1.0],
+                    "density_kg_m3": [1.0],
+                    "category": ["packaging"],
+                    "flags": [""],
+                    "_problematic": [0],
+                    "_source_id": ["A"],
+                    "_source_category": ["packaging"],
+                    "_source_flags": [""],
+                    "material": ["foil"],
+                }
     ))
+    monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
 
     draws: list[float] = []
 
@@ -286,7 +301,15 @@ def test_generate_candidates_uses_parallel_backend(monkeypatch):
             "_source_flags": [""],
         }
     )
-    proc_df = pd.DataFrame({"process_id": ["P01"], "name": ["Process"]})
+    proc_df = pd.DataFrame(
+        {
+            "process_id": ["P01"],
+            "name": ["Process"],
+            "energy_kwh_per_kg": [1.0],
+            "water_l_per_kg": [0.5],
+            "crew_min_per_batch": [30.0],
+        }
+    )
 
     candidates, history = generator.generate_candidates(
         waste_df,
@@ -309,6 +332,7 @@ def test_generate_candidates_uses_parallel_backend(monkeypatch):
 
 def test_append_inference_log_appends_without_reads(monkeypatch, tmp_path):
     monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
+    generator._close_inference_log_writer()
 
     log_root = tmp_path / "inference"
     if log_root.exists():
@@ -327,13 +351,16 @@ def test_append_inference_log_appends_without_reads(monkeypatch, tmp_path):
             model_registry=None,
         )
 
+    generator._close_inference_log_writer()
+
     log_dir = _collect_single_log_dir(tmp_path)
-    table = DeltaTable(str(log_dir)).to_pyarrow_table()
-    assert table.num_rows == 2
+    table = _read_inference_log(log_dir)
+    assert len(table) == 2
 
 
 def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
     monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
+    generator._close_inference_log_writer()
 
     log_root = tmp_path / "inference"
     if log_root.exists():
@@ -363,8 +390,10 @@ def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
         model_registry=None,
     )
 
+    generator._close_inference_log_writer()
+
     log_dir = _collect_single_log_dir(tmp_path)
-    log_df = DeltaTable(str(log_dir)).to_pandas()
+    log_df = _read_inference_log(log_dir)
     assert "session_id" in log_df.columns
     assert log_df["session_id"].isna().sum() == 1
     assert set(log_df["session_id"].dropna()) == {"alpha"}
@@ -374,6 +403,7 @@ def test_generate_candidates_appends_inference_log(monkeypatch, tmp_path):
     monkeypatch.setattr(generator, "MODEL_REGISTRY", DummyRegistry())
     monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
     monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
+    generator._close_inference_log_writer()
 
     log_root = tmp_path / "inference"
     if log_root.exists():
@@ -404,8 +434,10 @@ def test_generate_candidates_appends_inference_log(monkeypatch, tmp_path):
     assert candidates, "Expected at least one candidate to be generated"
     assert history.empty
 
+    generator._close_inference_log_writer()
+
     log_dir = _collect_single_log_dir(tmp_path)
-    log_df = DeltaTable(str(log_dir)).to_pandas().sort_values("timestamp")
+    log_df = _read_inference_log(log_dir).sort_values("timestamp")
     for column in ["timestamp", "input_features", "prediction", "uncertainty", "model_hash"]:
         assert column in log_df.columns
 
@@ -448,16 +480,12 @@ def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch, tmp_path):
 
     monkeypatch.setattr(generator, "MODEL_REGISTRY", NoCallRegistry())
     monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
+    generator._close_inference_log_writer()
 
     log_root = tmp_path / "inference"
     if log_root.exists():
         shutil.rmtree(log_root)
     monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
-
-    log_dir = generator.LOGS_ROOT
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"inference_{datetime.utcnow().strftime('%Y%m%d')}.parquet"
-    log_path.unlink(missing_ok=True)
     waste_df = pd.DataFrame(
         {
             "id": ["W1", "W2"],
