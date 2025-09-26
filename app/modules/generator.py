@@ -21,7 +21,6 @@ import os
 import random
 import re
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Dict, Iterable, Mapping, NamedTuple, Sequence, Tuple
@@ -96,6 +95,11 @@ try:  # Optional heavy dependencies; used for fast vectorization
 except Exception:  # pragma: no cover - pyarrow is expected in production
     pa = None  # type: ignore[assignment]
 
+from app.modules.execution import (
+    DEFAULT_PARALLEL_THRESHOLD,
+    ExecutionBackend,
+    create_backend,
+)
 from app.modules.label_mapper import derive_recipe_id, lookup_labels
 from app.modules.ranking import derive_auxiliary_signals, score_recipe
 
@@ -108,7 +112,339 @@ _REGOLITH_OXIDE_ITEMS = tuple(REGOLITH_VECTOR.items())
 _REGOLITH_OXIDE_NAMES = tuple(f"oxide_{name}" for name, _ in _REGOLITH_OXIDE_ITEMS)
 _REGOLITH_OXIDE_VALUES = np.asarray([float(value) for _, value in _REGOLITH_OXIDE_ITEMS], dtype=float)
 
+@dataclass(slots=True)
+class _InferenceWriterState:
+    """Book-keeping for an active Parquet writer."""
 
+    date_token: str
+    path: Path
+    schema: "pa.Schema"
+    writer: Any
+
+
+class _InferenceLogWriterManager:
+    """Manage a single append-only Parquet writer with daily rotation."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._state: _InferenceWriterState | None = None
+
+    def close(self) -> None:
+        """Close the active writer, if any."""
+
+        if pq is None:
+            return
+        with self._lock:
+            self._close_locked()
+
+    def _close_locked(self) -> None:
+        state = self._state
+        if state is None:
+            return
+        try:
+            state.writer.close()
+        except Exception:  # pragma: no cover - best effort cleanup
+            pass
+        self._state = None
+
+    def _open_locked(
+        self, timestamp: datetime, field_names: Iterable[str]
+    ) -> _InferenceWriterState | None:
+        if pa is None or pq is None:
+            return None
+
+        desired_fields = sorted(set(str(name) for name in field_names))
+        if not desired_fields:
+            return None
+
+        log_dir = _resolve_inference_log_dir(timestamp)
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            return None
+
+        date_token = timestamp.strftime("%Y%m%d")
+        path = self._resolve_log_path(log_dir, date_token)
+        schema = pa.schema(pa.field(name, pa.string()) for name in desired_fields)
+
+        try:
+            writer = pq.ParquetWriter(str(path), schema=schema)
+        except Exception:
+            return None
+
+        state = _InferenceWriterState(
+            date_token=date_token,
+            path=path,
+            schema=schema,
+            writer=writer,
+        )
+        self._state = state
+        return state
+
+    def _resolve_log_path(self, log_dir: Path, date_token: str) -> Path:
+        """Return a Parquet path for *date_token* avoiding overwriting shards."""
+
+        base = log_dir / f"inference_{date_token}.parquet"
+        if not base.exists():
+            return base
+
+        counter = 1
+        while True:
+            candidate = log_dir / f"inference_{date_token}_{counter:04d}.parquet"
+            if not candidate.exists():
+                return candidate
+            counter += 1
+
+    def _ensure_state_locked(
+        self, timestamp: datetime, field_names: Iterable[str]
+    ) -> _InferenceWriterState | None:
+        state = self._state
+        desired_fields = sorted(set(str(name) for name in field_names))
+        if not desired_fields:
+            return None
+
+        date_token = timestamp.strftime("%Y%m%d")
+        if state is not None:
+            if state.date_token != date_token or set(state.schema.names) != set(
+                desired_fields
+            ):
+                self._close_locked()
+                state = None
+
+        if state is None:
+            state = self._open_locked(timestamp, desired_fields)
+
+        return state
+
+    def write_event(
+        self, timestamp: datetime, payload: Mapping[str, str | None]
+    ) -> None:
+        if pa is None or pq is None:
+            return
+
+        with self._lock:
+            state = self._ensure_state_locked(timestamp, payload.keys())
+            if state is None:
+                return
+
+            arrays = []
+            for field in state.schema:
+                arrays.append(pa.array([payload.get(field.name)], type=field.type))
+
+            table = pa.Table.from_arrays(arrays, schema=state.schema)
+
+            try:
+                state.writer.write_table(table)
+            except Exception:
+                self._close_locked()
+
+
+_INFERENCE_LOG_MANAGER = _InferenceLogWriterManager()
+
+
+def _close_inference_log_writer() -> None:
+    """Expose a test hook to close the shared inference writer."""
+
+    _INFERENCE_LOG_MANAGER.close()
+
+
+def _to_lazy_frame(
+    frame: pd.DataFrame | pl.DataFrame | pl.LazyFrame,
+) -> tuple[pl.LazyFrame, str]:
+    """Return a :class:`polars.LazyFrame` along with the original frame type."""
+
+    if isinstance(frame, pl.LazyFrame):
+        return frame, "lazy"
+    if isinstance(frame, pl.DataFrame):
+        return frame.lazy(), "polars"
+    if isinstance(frame, pd.DataFrame):
+        return pl.from_pandas(frame).lazy(), "pandas"
+    raise TypeError(f"Unsupported frame type: {type(frame)!r}")
+
+
+def _from_lazy_frame(lazy: pl.LazyFrame, frame_kind: str) -> pd.DataFrame | pl.DataFrame | pl.LazyFrame:
+    """Convert *lazy* back to the representation described by *frame_kind*."""
+
+    if frame_kind == "lazy":
+        return lazy
+
+    collected = lazy.collect()
+    if frame_kind == "polars":
+        return collected
+    if frame_kind == "pandas":
+        return collected.to_pandas()
+    raise ValueError(f"Unsupported frame kind: {frame_kind}")
+
+
+def _resolve_dataset_path(name: str) -> Path | None:
+    """Return the first dataset path that exists for *name*.
+
+    The helper checks the canonical ``datasets`` root alongside the ``raw``
+    subdirectory so callers do not need to remember where a file was stored.
+    """
+
+    candidates = (
+        DATASETS_ROOT / name,
+        DATASETS_ROOT / "raw" / name,
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _slugify(value: str) -> str:
+    """Convert *value* into a snake_case identifier safe for feature names."""
+
+    text = re.sub(r"[^0-9a-zA-Z]+", "_", str(value).strip().lower())
+    text = re.sub(r"_+", "_", text).strip("_")
+    return text or "value"
+
+
+def _to_serializable(value: Any) -> Any:
+    """Convert *value* into a JSON-serializable structure."""
+
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, (list, tuple, set)):
+        return [_to_serializable(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _to_serializable(v) for k, v in value.items()}
+    if isinstance(value, np.ndarray):
+        return [_to_serializable(v) for v in value.tolist()]
+    return str(value)
+
+
+def _resolve_inference_log_dir(timestamp: datetime) -> Path:
+    """Return the directory backing inference logs for *timestamp*."""
+
+    return LOGS_ROOT / "inference" / timestamp.strftime("%Y%m%d")
+
+
+if pq is not None:  # pragma: no branch - guard for optional dependency
+    atexit.register(_INFERENCE_LOG_MANAGER.close)
+
+
+def _prepare_inference_event(
+    input_features: Dict[str, Any],
+    prediction: Dict[str, Any] | None,
+    uncertainty: Dict[str, Any] | None,
+    model_registry: Any | None,
+    timestamp: datetime | None = None,
+) -> tuple[datetime, Dict[str, str | None]]:
+    """Build the serializable payload for an inference log event."""
+
+    now = timestamp or datetime.now(UTC)
+
+    model_hash = ""
+    if model_registry is not None:
+        metadata = getattr(model_registry, "metadata", {}) or {}
+        if isinstance(metadata, dict):
+            model_hash = str(metadata.get("model_hash") or metadata.get("checksum") or "")
+        if not model_hash:
+            for attr in ("model_hash", "checksum", "pipeline_checksum", "pipeline_hash"):
+                value = getattr(model_registry, attr, None)
+                if value:
+                    model_hash = str(value)
+                    break
+
+    payload: Dict[str, str | None] = {
+        "timestamp": now.isoformat(timespec="microseconds"),
+        "input_features": json.dumps(_to_serializable(input_features or {}), sort_keys=True),
+        "prediction": json.dumps(_to_serializable(prediction or {}), sort_keys=True),
+        "uncertainty": json.dumps(_to_serializable(uncertainty or {}), sort_keys=True),
+        "model_hash": model_hash or None,
+    }
+
+    return now, payload
+
+
+def append_inference_log(
+    input_features: Dict[str, Any],
+    prediction: Dict[str, Any] | None,
+    uncertainty: Dict[str, Any] | None,
+    model_registry: Any | None,
+) -> None:
+    """Persist an inference event using a streaming Parquet writer."""
+
+    if pa is None or pq is None:  # pragma: no cover - dependencies should exist
+        return
+
+    event_time, event_payload = _prepare_inference_event(
+        input_features=input_features,
+        prediction=prediction,
+        uncertainty=uncertainty,
+        model_registry=model_registry,
+    )
+
+    _INFERENCE_LOG_MANAGER.write_event(event_time, event_payload)
+
+
+def _close_inference_log_writer() -> None:
+    """Close the cached Parquet writer used for inference logs."""
+
+    _INFERENCE_LOG_MANAGER.close()
+
+
+def _load_regolith_vector() -> Dict[str, float]:
+    path = _resolve_dataset_path("MGS-1_Martian_Regolith_Simulant_Recipe.csv")
+    if path is None:
+        path = DATASETS_ROOT / "raw" / "mgs1_oxides.csv"
+
+    if path and path.exists():
+        table_lazy = pl.scan_csv(path)
+        columns = table_lazy.columns
+
+        key_cols = [
+            col
+            for col in columns
+            if col.lower() in {"oxide", "component", "phase", "mineral"}
+        ]
+        value_cols = [
+            col
+            for col in columns
+            if any(token in col.lower() for token in ("wt", "weight", "percent"))
+        ]
+
+        key_col = key_cols[0] if key_cols else None
+        value_col = value_cols[0] if value_cols else None
+
+        if key_col and value_col:
+
+            def _clean_label(value: Any) -> str:
+                text = str(value or "").lower()
+                text = re.sub(r"[^0-9a-z]+", "_", text)
+                text = re.sub(r"_+", "_", text).strip("_")
+                return text
+
+            working_lazy = (
+                table_lazy.select(
+                    pl.col(key_col).alias("key"),
+                    pl.col(value_col).cast(pl.Float64, strict=False).alias("value"),
+                )
+                .drop_nulls()
+                .with_columns(
+                    pl.col("key").map_elements(_clean_label, return_dtype=pl.String)
+                )
+            )
+
+            working = working_lazy.collect()
+            if working.height:
+                values = working.get_column("value")
+                total = float(values.sum())
+                if total > 0:
+                    normalised = working.with_columns(
+                        (pl.col("value") / pl.lit(total)).alias("weight")
+                    )
+                    keys = normalised.get_column("key").to_list()
+                    weights = normalised.get_column("weight").to_numpy()
+                    return {
+                        str(key): float(weight)
+                        for key, weight in zip(keys, weights, strict=False)
+                        if key and weight is not None and np.isfinite(weight)
+                    }
 
 _COMPOSITION_DENSITY_MAP = {
     "Aluminum_pct": 2700.0,
@@ -122,6 +458,9 @@ _COMPOSITION_DENSITY_MAP = {
     "EVOH_pct": 1250.0,
     "PET_pct": 1370.0,
     "Nitrile_pct": 1030.0,
+    "approx_moisture_pct": 1000.0,
+    "Other_pct": 500.0,
+    "Plastic_Resin_pct": 950.0,
 }
 
 _CATEGORY_DENSITY_DEFAULTS = {
@@ -293,6 +632,7 @@ class _OfficialFeaturesBundle(NamedTuple):
     mission_reference_keys: tuple[str, ...]
     mission_reference_index: Dict[str, int]
     mission_reference_matrix: Any
+    mission_reference_dense: np.ndarray
     mission_names: tuple[str, ...]
     mission_totals_vector: np.ndarray
     processing_metrics: Dict[str, Dict[str, float]]
@@ -485,6 +825,21 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
     default = _OfficialFeaturesBundle(
         value_columns,
         composition_columns,
+        (),
+        (),
+        {},
+        pl.DataFrame(),
+        np.empty((0, 0), dtype=np.float64),
+        {},
+        {},
+        (),
+        {},
+        empty_reference,
+        np.zeros((0, 0), dtype=np.float64),
+        (),
+        np.zeros(0, dtype=np.float64),
+        {},
+        {},
         {},
         {},
         table_df,
@@ -570,6 +925,11 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
             direct_map[key] = idx
             break
 
+    if sparse is not None and sparse.issparse(mission_reference_matrix):
+        mission_reference_dense = mission_reference_matrix.toarray()
+    else:
+        mission_reference_dense = np.asarray(mission_reference_matrix, dtype=np.float64)
+
     return _OfficialFeaturesBundle(
         value_columns,
         composition_columns,
@@ -582,6 +942,7 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
         mission_reference_keys,
         mission_reference_index,
         mission_reference_matrix,
+        mission_reference_dense,
         mission_names,
         mission_totals_vector,
         raw_bundle.processing_metrics,
@@ -1142,6 +1503,7 @@ def prepare_waste_frame(waste_df: pd.DataFrame) -> pd.DataFrame:
     out["_source_category"] = out["category"].astype(str)
     out["_source_flags"] = out["flags"].astype(str)
 
+    bundle = _official_features_bundle()
     out = _inject_official_features(out)
 
     mass = pd.to_numeric(out["kg"], errors="coerce").fillna(0.0)
@@ -1159,18 +1521,39 @@ def prepare_waste_frame(waste_df: pd.DataFrame) -> pd.DataFrame:
     cat_density = cat_mass.divide(cat_volume).where((cat_volume > 0) & cat_volume.notna())
     density = density.fillna(cat_density)
 
-    composition_columns: dict[str, pd.Series] = {}
-    for column in _COMPOSITION_DENSITY_MAP:
-        if column in out.columns:
-            composition_columns[column] = pd.to_numeric(out[column], errors="coerce").fillna(0.0)
-        else:
-            composition_columns[column] = pd.Series(0.0, index=out.index, dtype=float)
+    selected_columns: list[str] = []
+    if getattr(bundle, "composition_columns", None):
+        selected_columns.extend(
+            [
+                column
+                for column in bundle.composition_columns
+                if column in out.columns and column in _COMPOSITION_DENSITY_MAP
+            ]
+        )
+    fallback_columns = [
+        column
+        for column in _COMPOSITION_DENSITY_MAP
+        if column in out.columns and column not in selected_columns
+    ]
+    selected_columns.extend(fallback_columns)
 
-    composition_df = pd.DataFrame(composition_columns, index=out.index)
-    composition_frac = composition_df.div(100.0)
-    frac_total = composition_frac.sum(axis=1)
-    density_weights = composition_frac.mul(pd.Series(_COMPOSITION_DENSITY_MAP))
-    weighted_density = density_weights.sum(axis=1).div(frac_total).where(frac_total > 0)
+    if selected_columns:
+        composition_numeric = {
+            column: pd.to_numeric(out[column], errors="coerce").fillna(0.0)
+            for column in selected_columns
+        }
+        composition_frac = pd.DataFrame(composition_numeric, index=out.index).div(100.0)
+        frac_total = composition_frac.sum(axis=1)
+        density_lookup = pd.Series(
+            {column: float(_COMPOSITION_DENSITY_MAP[column]) for column in selected_columns},
+            index=selected_columns,
+            dtype=float,
+        )
+        density_weights = composition_frac.multiply(density_lookup, axis=1)
+        weighted_density = density_weights.sum(axis=1)
+        weighted_density = weighted_density.divide(frac_total).where(frac_total > 0)
+    else:
+        weighted_density = pd.Series(np.nan, index=out.index, dtype=float)
 
     normalized_category = _vectorized_normalize_category(out["category"])
     foam_mask = normalized_category == "foam packaging"
@@ -1182,6 +1565,35 @@ def prepare_waste_frame(waste_df: pd.DataFrame) -> pd.DataFrame:
         )
 
     density = density.fillna(weighted_density)
+
+    logistic_density_map: Dict[str, float] = {}
+    category_features = getattr(bundle, "l2l_category_features", None)
+    if isinstance(category_features, Mapping):
+        for key, features in category_features.items():
+            if not isinstance(features, Mapping):
+                continue
+            density_value: float | None = None
+            for name, value in features.items():
+                if not isinstance(value, (int, float)):
+                    continue
+                if not np.isfinite(value):
+                    continue
+                name_lower = str(name).lower()
+                if "density" not in name_lower:
+                    continue
+                density_value = float(value)
+                break
+            if density_value is None:
+                continue
+            normalized_key = normalize_category(key)
+            if not normalized_key:
+                continue
+            logistic_density_map.setdefault(normalized_key, density_value)
+
+    if logistic_density_map:
+        logistic_density = normalized_category.map(logistic_density_map)
+        logistic_density = pd.to_numeric(logistic_density, errors="coerce")
+        density = density.fillna(logistic_density)
 
     category_defaults = normalized_category.map(_CATEGORY_DENSITY_DEFAULTS).astype(float)
     density = density.fillna(category_defaults)
@@ -1269,10 +1681,9 @@ class CandidateFeatureContext:
     keyword_hits: np.ndarray
     packaging_hits: np.ndarray
     regolith_pct: float
-    mission_share: Dict[str, float]
-    mission_scaled_mass: Dict[str, float]
-    mission_official_mass: Dict[str, float]
-    official_composition: Dict[str, float]
+    mission_indices: np.ndarray
+    composition_matrix: np.ndarray
+    composition_presence: np.ndarray
     num_items: int
 
 
@@ -1286,22 +1697,55 @@ class FeatureTensorBatch:
     pct_volume: Any
     keyword_hits: Any
     packaging_hits: Any
-    mission_share: Any
-    mission_scaled_mass: Any
-    mission_official_mass: Any
+    mission_indices: Any
+    mission_reference: Any
     mission_totals: Any
+    composition_values: Any
     total_mass: Any
     regolith: Any
     keyword_names: Tuple[str, ...]
     mission_names: Tuple[str, ...]
+    composition_names: Tuple[str, ...]
     process_ids: Tuple[str, ...]
     num_items: Tuple[int, ...]
-    official_comp: Tuple[Dict[str, float], ...]
+    composition_presence: np.ndarray
     l2l_constants: Dict[str, float]
     bundle_processing_metrics: Dict[str, Dict[str, float]]
     bundle_leo_mass_savings: Dict[str, Dict[str, float]]
     bundle_propellant_benefits: Dict[str, Dict[str, float]]
     logistics_ratio: float
+
+
+def _coerce_feature_tensor_batch_like(
+    value: FeatureTensorBatch | Mapping[str, Any]
+) -> FeatureTensorBatch:
+    if isinstance(value, FeatureTensorBatch):
+        return value
+    if isinstance(value, Mapping):
+        data = dict(value)
+        tuple_keys = {
+            "keyword_names",
+            "mission_names",
+            "composition_names",
+            "process_ids",
+            "num_items",
+        }
+        for key in tuple_keys:
+            if key in data and not isinstance(data[key], tuple):
+                data[key] = tuple(data[key])
+        if "composition_presence" in data and not isinstance(
+            data["composition_presence"], np.ndarray
+        ):
+            data["composition_presence"] = np.asarray(data["composition_presence"], dtype=bool)
+
+        required = set(FeatureTensorBatch.__annotations__.keys())
+        missing = sorted(required.difference(data.keys()))
+        if missing:
+            raise ValueError(
+                "FeatureTensorBatch mapping is missing required fields: " + ", ".join(missing)
+            )
+        return FeatureTensorBatch(**data)
+    raise TypeError("Unsupported feature tensor batch input")
 
 
 def _coerce_weight_array(values: Iterable[float] | Any) -> np.ndarray:
@@ -1402,24 +1846,30 @@ def _prepare_feature_context(
     difficulty = _series_or_default("difficulty_factor", 1.0).to_numpy(dtype=float) / 3.0
     densities = _series_or_default("density_kg_m3", 0.0).to_numpy(dtype=float)
 
-    official_comp: Dict[str, float] = {}
-    if bundle.composition_columns:
-        for column in bundle.composition_columns:
+    composition_count = len(bundle.composition_columns)
+    if composition_count:
+        composition_matrix = np.zeros((item_count, composition_count), dtype=float)
+        composition_presence = np.zeros(composition_count, dtype=bool)
+    else:
+        composition_matrix = np.zeros((item_count, 0), dtype=float)
+        composition_presence = np.zeros(0, dtype=bool)
+
+    if composition_count:
+        for col_idx, column in enumerate(bundle.composition_columns):
             if column not in picks.columns:
                 continue
             series = picks[column]
-            if not series.notna().any():
+            numeric = pd.to_numeric(series, errors="coerce")
+            if not numeric.notna().any():
                 continue
-            values = pd.to_numeric(series, errors="coerce").fillna(0.0).to_numpy(dtype=float)
+            composition_presence[col_idx] = True
+            values = numeric.fillna(0.0).to_numpy(dtype=float) / 100.0
             if not len(values):
                 continue
-            frac = float(np.dot(raw_weights[: len(values)], values / 100.0))
-            official_comp[column] = frac
+            limit = min(len(values), item_count)
+            composition_matrix[:limit, col_idx] = values[:limit]
 
-    mission_share: Dict[str, float] = {}
-    mission_scaled_mass: Dict[str, float] = {}
-    mission_official_mass: Dict[str, float] = {}
-
+    mission_indices = np.full(item_count, -1, dtype=np.int32)
     if (
         item_count
         and bundle.mission_reference_keys
@@ -1455,40 +1905,7 @@ def _prepare_feature_context(
             )
             valid_mask = key_indices >= 0
             if np.any(valid_mask):
-                weights_valid = weights_arr[valid_mask]
-                if weights_valid.size:
-                    key_indices_valid = key_indices[valid_mask]
-                    weights_by_key = np.bincount(
-                        key_indices_valid,
-                        weights=weights_valid,
-                        minlength=len(bundle.mission_reference_keys),
-                    )
-                    if sparse is not None and sparse.issparse(bundle.mission_reference_matrix):
-                        weighted_mass = weights_by_key @ bundle.mission_reference_matrix
-                    else:
-                        weighted_mass = weights_by_key @ np.asarray(
-                            bundle.mission_reference_matrix, dtype=np.float64
-                        )
-                    weighted_mass = np.asarray(weighted_mass, dtype=float).ravel()
-                    totals_vector = bundle.mission_totals_vector
-                    share_vector = np.divide(
-                        weighted_mass,
-                        totals_vector,
-                        out=np.zeros_like(weighted_mass, dtype=float),
-                        where=totals_vector > 0,
-                    )
-
-                    for mission, share_val, mass_val in zip(
-                        bundle.mission_names,
-                        share_vector,
-                        weighted_mass,
-                        strict=False,
-                    ):
-                        if share_val <= 0 and mass_val <= 0:
-                            continue
-                        mission_share[mission] = float(max(0.0, share_val))
-                        mission_official_mass[mission] = float(max(0.0, mass_val))
-                        mission_scaled_mass[mission] = float(max(0.0, share_val * total_kg))
+                mission_indices = key_indices
 
     return CandidateFeatureContext(
         total_mass=total_kg,
@@ -1501,10 +1918,9 @@ def _prepare_feature_context(
         keyword_hits=keyword_hits,
         packaging_hits=packaging_hits,
         regolith_pct=float(regolith_pct),
-        mission_share=mission_share,
-        mission_scaled_mass=mission_scaled_mass,
-        mission_official_mass=mission_official_mass,
-        official_composition=official_comp,
+        mission_indices=mission_indices,
+        composition_matrix=composition_matrix,
+        composition_presence=composition_presence,
         num_items=int(len(picks)),
     )
 
@@ -1523,6 +1939,7 @@ def _contexts_to_tensor_batch(
     max_items = max((ctx.num_items for ctx in contexts), default=0)
     keyword_names = tuple(_KEYWORD_FEATURES.keys())
     mission_names = bundle.mission_names
+    composition_names = bundle.composition_columns
 
     def _alloc(shape: tuple[int, ...]) -> np.ndarray:
         return np.zeros(shape, dtype=float)
@@ -1535,21 +1952,19 @@ def _contexts_to_tensor_batch(
     pct_volume = _alloc((batch, max_items))
     keyword_hits = _alloc((batch, max_items, len(keyword_names)))
     packaging_hits = _alloc((batch, max_items))
-    mission_share = _alloc((batch, len(mission_names)))
-    mission_scaled_mass = _alloc((batch, len(mission_names)))
-    mission_official_mass = _alloc((batch, len(mission_names)))
+    composition_values = _alloc((batch, max_items, len(composition_names)))
+    mission_indices = np.full((batch, max_items), -1, dtype=np.int32)
 
     total_mass = np.zeros(batch, dtype=float)
     regolith = np.zeros(batch, dtype=float)
     num_items: list[int] = []
-    official_comp: list[Dict[str, float]] = []
+    composition_presence_matrix = np.zeros((batch, len(composition_names)), dtype=bool)
 
     mission_totals = np.asarray(bundle.mission_totals_vector, dtype=float)
 
     for idx, ctx in enumerate(contexts):
         count = ctx.num_items
         num_items.append(count)
-        official_comp.append(dict(ctx.official_composition))
 
         if count:
             weights[idx, :count] = ctx.weights[:count]
@@ -1563,11 +1978,18 @@ def _contexts_to_tensor_batch(
                 keyword_hits[idx, :count, :kw_cols] = ctx.keyword_hits[:count, :kw_cols]
             if ctx.packaging_hits.size:
                 packaging_hits[idx, :count] = ctx.packaging_hits[:count]
+            if ctx.composition_matrix.size:
+                comp_cols = min(ctx.composition_matrix.shape[1], len(composition_names))
+                composition_values[idx, :count, :comp_cols] = ctx.composition_matrix[
+                    :count, :comp_cols
+                ]
+            if ctx.mission_indices.size:
+                mission_count = min(len(ctx.mission_indices), count)
+                mission_indices[idx, :mission_count] = ctx.mission_indices[:mission_count]
 
-        for mission_idx, mission in enumerate(mission_names):
-            mission_share[idx, mission_idx] = ctx.mission_share.get(mission, 0.0)
-            mission_scaled_mass[idx, mission_idx] = ctx.mission_scaled_mass.get(mission, 0.0)
-            mission_official_mass[idx, mission_idx] = ctx.mission_official_mass.get(mission, 0.0)
+        if ctx.composition_presence.size:
+            comp_len = min(len(ctx.composition_presence), len(composition_names))
+            composition_presence_matrix[idx, :comp_len] = ctx.composition_presence[:comp_len]
 
         total_mass[idx] = ctx.total_mass
         regolith[idx] = ctx.regolith_pct
@@ -1590,17 +2012,18 @@ def _contexts_to_tensor_batch(
         pct_volume=_to_backend_array(pct_volume),
         keyword_hits=_to_backend_array(keyword_hits),
         packaging_hits=_to_backend_array(packaging_hits),
-        mission_share=_to_backend_array(mission_share),
-        mission_scaled_mass=_to_backend_array(mission_scaled_mass),
-        mission_official_mass=_to_backend_array(mission_official_mass),
+        mission_indices=_to_backend_array(mission_indices),
+        mission_reference=_to_backend_array(np.asarray(bundle.mission_reference_dense, dtype=float)),
         mission_totals=_to_backend_array(mission_totals),
+        composition_values=_to_backend_array(composition_values),
         total_mass=_to_backend_array(total_mass),
         regolith=_to_backend_array(regolith),
         keyword_names=keyword_names,
         mission_names=mission_names,
+        composition_names=composition_names,
         process_ids=process_ids,
         num_items=tuple(num_items),
-        official_comp=tuple(official_comp),
+        composition_presence=composition_presence_matrix,
         l2l_constants=l2l_constants,
         bundle_processing_metrics=dict(bundle.processing_metrics or {}),
         bundle_leo_mass_savings=dict(bundle.leo_mass_savings or {}),
@@ -1641,10 +2064,11 @@ def _feature_kernel_body(
     pct_volume: Any,
     keyword_hits: Any,
     packaging_hits: Any,
-    mission_share: Any,
-    mission_scaled_mass: Any,
-    mission_official_mass: Any,
+    mission_indices: Any,
+    mission_reference: Any,
     mission_totals: Any,
+    total_mass: Any,
+    composition_values: Any,
     regolith: Any,
     logistics_ratio: float,
 ) -> Dict[str, Any]:
@@ -1656,10 +2080,11 @@ def _feature_kernel_body(
     pct_volume = xp.asarray(pct_volume)
     keyword_hits = xp.asarray(keyword_hits)
     packaging_hits = xp.asarray(packaging_hits)
-    mission_share = xp.asarray(mission_share)
-    mission_scaled_mass = xp.asarray(mission_scaled_mass)
-    mission_official_mass = xp.asarray(mission_official_mass)
     mission_totals = xp.asarray(mission_totals)
+    mission_indices = xp.asarray(mission_indices)
+    mission_reference = xp.asarray(mission_reference)
+    total_mass = xp.asarray(total_mass)
+    composition_values = xp.asarray(composition_values)
     regolith = xp.asarray(regolith)
 
     density = xp.sum(w * densities, axis=1)
@@ -1671,11 +2096,31 @@ def _feature_kernel_body(
     keyword = xp.clip(xp.sum(w[:, :, None] * keyword_hits, axis=1), 0.0, 1.0)
     packaging = xp.clip(xp.sum(w * packaging_hits, axis=1), 0.0, 1.0)
 
+    batch_size = w.shape[0]
+    item_dim = w.shape[1] if w.ndim > 1 else 0
+    mission_dim = mission_totals.shape[0]
+    key_dim = mission_reference.shape[0] if mission_reference.ndim else 0
+
+    valid_indices = mission_indices >= 0
+    if mission_dim == 0 or key_dim == 0:
+        reference_rows = xp.zeros((batch_size, item_dim, mission_dim))
+        weighted_mass = xp.zeros((batch_size, mission_dim))
+    else:
+        safe_indices = xp.where(valid_indices, mission_indices, 0)
+        reference_rows = xp.take(mission_reference, safe_indices, axis=0)
+        reference_rows = xp.where(valid_indices[:, :, None], reference_rows, 0.0)
+        weighted_mass = xp.sum(w[:, :, None] * reference_rows, axis=1)
+
+    totals_positive = mission_totals > 0
+    totals_safe = xp.where(totals_positive, mission_totals, 1.0)
+    mission_share = xp.where(totals_positive, weighted_mass / totals_safe, 0.0)
     mission_share_clipped = xp.clip(mission_share, 0.0, 1.0)
     mission_similarity_total = xp.clip(xp.sum(mission_share_clipped, axis=1), 0.0, 1.0)
     mission_reference_mass = xp.maximum(0.0, mission_share_clipped * mission_totals)
-    mission_scaled_mass = xp.maximum(0.0, mission_scaled_mass)
-    mission_official_mass = xp.maximum(0.0, mission_official_mass)
+    mission_scaled_mass = xp.maximum(0.0, mission_share_clipped * total_mass[:, None])
+    mission_official_mass = xp.maximum(0.0, weighted_mass)
+
+    composition = xp.sum(w[:, :, None] * composition_values, axis=1)
 
     polyethylene = keyword[:, _KEYWORD_INDEX["polyethylene_frac"]] if keyword.shape[1] else xp.zeros(keyword.shape[0])
     foam = keyword[:, _KEYWORD_INDEX["foam_frac"]] if keyword.shape[1] else xp.zeros(keyword.shape[0])
@@ -1717,6 +2162,7 @@ def _feature_kernel_body(
         "gas_recovery_index": gas_recovery_index,
         "logistics_reuse_index": logistics_index,
         "regolith": regolith,
+        "composition": composition,
     }
 
 
@@ -1732,10 +2178,11 @@ if jnp is not None:
         pct_volume: Any,
         keyword_hits: Any,
         packaging_hits: Any,
-        mission_share: Any,
-        mission_scaled_mass: Any,
-        mission_official_mass: Any,
+        mission_indices: Any,
+        mission_reference: Any,
         mission_totals: Any,
+        total_mass: Any,
+        composition_values: Any,
         regolith: Any,
         logistics_ratio: float,
     ) -> Dict[str, Any]:
@@ -1749,10 +2196,11 @@ if jnp is not None:
             pct_volume,
             keyword_hits,
             packaging_hits,
-            mission_share,
-            mission_scaled_mass,
-            mission_official_mass,
+            mission_indices,
+            mission_reference,
             mission_totals,
+            total_mass,
+            composition_values,
             regolith,
             logistics_ratio,
         )
@@ -1768,10 +2216,11 @@ else:
         pct_volume: Any,
         keyword_hits: Any,
         packaging_hits: Any,
-        mission_share: Any,
-        mission_scaled_mass: Any,
-        mission_official_mass: Any,
+        mission_indices: Any,
+        mission_reference: Any,
         mission_totals: Any,
+        total_mass: Any,
+        composition_values: Any,
         regolith: Any,
         logistics_ratio: float,
     ) -> Dict[str, Any]:
@@ -1785,10 +2234,11 @@ else:
             pct_volume,
             keyword_hits,
             packaging_hits,
-            mission_share,
-            mission_scaled_mass,
-            mission_official_mass,
+            mission_indices,
+            mission_reference,
             mission_totals,
+            total_mass,
+            composition_values,
             regolith,
             logistics_ratio,
         )
@@ -1876,10 +2326,11 @@ def _compute_features_from_batch(batch: FeatureTensorBatch) -> list[Dict[str, An
         batch.pct_volume,
         batch.keyword_hits,
         batch.packaging_hits,
-        batch.mission_share,
-        batch.mission_scaled_mass,
-        batch.mission_official_mass,
+        batch.mission_indices,
+        batch.mission_reference,
         batch.mission_totals,
+        batch.total_mass,
+        batch.composition_values,
         batch.regolith,
         batch.logistics_ratio,
     )
@@ -1900,6 +2351,7 @@ def _compute_features_from_batch(batch: FeatureTensorBatch) -> list[Dict[str, An
     gas_recovery = to_numpy(kernel_output["gas_recovery_index"])
     logistics_reuse = to_numpy(kernel_output["logistics_reuse_index"])
     regolith = to_numpy(kernel_output["regolith"])
+    composition_total = to_numpy(kernel_output["composition"])
     total_mass = to_numpy(batch.total_mass)
 
     keyword_pairs = tuple(
@@ -1953,7 +2405,21 @@ def _compute_features_from_batch(batch: FeatureTensorBatch) -> list[Dict[str, An
         for name, kw_idx in keyword_pairs:
             features[name] = float(keyword_matrix[idx, kw_idx])
 
-        _apply_official_composition_overrides(features, batch.official_comp[idx])
+        official_comp: Dict[str, float] = {}
+        if batch.composition_names and composition_total.size:
+            presence_row = (
+                batch.composition_presence[idx]
+                if idx < len(batch.composition_presence)
+                else np.zeros(len(batch.composition_names), dtype=bool)
+            )
+            for name_idx, name in enumerate(batch.composition_names):
+                if presence_row.size > name_idx and not presence_row[name_idx]:
+                    continue
+                if composition_total.ndim >= 2 and composition_total.shape[0] > idx and composition_total.shape[1] > name_idx:
+                    official_comp[name] = float(composition_total[idx, name_idx])
+                elif composition_total.ndim == 1 and composition_total.size > name_idx:
+                    official_comp[name] = float(composition_total[name_idx])
+        _apply_official_composition_overrides(features, official_comp)
 
         if l2l_values.size:
             for name_idx, name in enumerate(l2l_names):
@@ -2017,8 +2483,9 @@ def compute_feature_vector(
     *,
     backend: str | None = None,
 ) -> Dict[str, Any] | list[Dict[str, Any]]:
-    if isinstance(picks, FeatureTensorBatch):
-        return _compute_features_from_batch(picks)
+    if isinstance(picks, (FeatureTensorBatch, Mapping)):
+        batch = _coerce_feature_tensor_batch_like(picks)  # type: ignore[arg-type]
+        return _compute_features_from_batch(batch)
 
     backend = backend or "jax"
 
@@ -2489,14 +2956,7 @@ def _build_candidate(
 # ---------------------------------------------------------------------------
 
 
-_PARALLEL_THRESHOLD = 4
-
-
-def _max_workers_for(task_count: int) -> int:
-    if task_count <= 1:
-        return 1
-    cpu = os.cpu_count() or 1
-    return max(1, min(cpu, task_count))
+_PARALLEL_THRESHOLD = DEFAULT_PARALLEL_THRESHOLD
 
 
 def generate_candidates(
@@ -2507,6 +2967,8 @@ def generate_candidates(
     crew_time_low: bool = False,
     optimizer_evals: int = 0,
     use_ml: bool = True,
+    backend: ExecutionBackend | None = None,
+    backend_kind: str | None = None,
 ):
     """Generate *n* candidate recycling plans plus optional optimization history."""
 
@@ -2540,61 +3002,67 @@ def generate_candidates(
 
     candidates: list[dict] = []
     seeds = [_next_seed() for _ in range(n)]
-    worker_count = _max_workers_for(n) if n >= _PARALLEL_THRESHOLD else 1
-    executor: ThreadPoolExecutor | None = None
-    if worker_count > 1:
-        executor = ThreadPoolExecutor(max_workers=worker_count)
+    local_backend = backend
+    owns_backend = False
+    if local_backend is None:
+        task_count = max(n, 1)
+        local_backend = create_backend(
+            task_count,
+            preferred=backend_kind,
+            threshold=_PARALLEL_THRESHOLD,
+        )
+        owns_backend = True
     try:
-        if executor is not None:
-            results = executor.map(lambda seed: sampler({}, seed=seed), seeds)
-        else:
-            results = (sampler({}, seed=seed) for seed in seeds)
+        results = local_backend.map(lambda seed: sampler({}, seed=seed), seeds)
         for candidate in results:
             if candidate:
                 candidates.append(candidate)
-    finally:
-        if executor is not None:
-            executor.shutdown()
 
-    components_batch: list[CandidateComponents] = []
-    for _ in range(n):
-        bias = 2.0
-        picks = _pick_materials(df, rng, n=rng.choice([2, 3]), bias=bias)
-        components = _create_candidate_components(picks, proc_df, rng, {})
-        if components:
-            components_batch.append(components)
+        components_batch: list[CandidateComponents] = []
+        for _ in range(n):
+            bias = 2.0
+            picks = _pick_materials(df, rng, n=rng.choice([2, 3]), bias=bias)
+            components = _create_candidate_components(picks, proc_df, rng, {})
+            if components:
+                components_batch.append(components)
 
-    if components_batch:
-        _ = compute_feature_vector(
-            [component.picks for component in components_batch],
-            weights=[component.weights for component in components_batch],
-            process=[component.process for component in components_batch],
-            regolith_pct=[component.regolith_pct for component in components_batch],
-        )
-
-    attempts = 0
-    max_attempts = max(n * 2, 4)
-    while len(candidates) < n and attempts < max_attempts:
-        attempts += 1
-        candidate = sampler({})
-        if candidate:
-            candidates.append(candidate)
-
-    history = pd.DataFrame()
-    if optimizer_evals and optimizer_evals > 0:
-        try:
-            from app.modules.optimizer import optimize_candidates
-
-            pareto, history = optimize_candidates(
-                initial_candidates=candidates,
-                sampler=sampler,
-                target=target,
-                n_evals=int(optimizer_evals),
-                process_ids=process_ids,
+        if components_batch:
+            _ = compute_feature_vector(
+                [component.picks for component in components_batch],
+                weights=[component.weights for component in components_batch],
+                process=[component.process for component in components_batch],
+                regolith_pct=[component.regolith_pct for component in components_batch],
             )
-            candidates = pareto
-        except Exception:
-            history = pd.DataFrame()
+
+        attempts = 0
+        max_attempts = max(n * 2, 4)
+        while len(candidates) < n and attempts < max_attempts:
+            attempts += 1
+            candidate = sampler({})
+            if candidate:
+                candidates.append(candidate)
+
+        history = pd.DataFrame()
+        if optimizer_evals and optimizer_evals > 0:
+            try:
+                from app.modules.optimizer import optimize_candidates
+
+                pareto, history = optimize_candidates(
+                    initial_candidates=candidates,
+                    sampler=sampler,
+                    target=target,
+                    n_evals=int(optimizer_evals),
+                    process_ids=process_ids,
+                    backend=local_backend,
+                    backend_kind=backend_kind,
+                )
+                candidates = pareto
+            except Exception:
+                history = pd.DataFrame()
+
+    finally:
+        if owns_backend:
+            local_backend.shutdown()
 
     candidates.sort(key=lambda cand: cand.get("score", 0.0), reverse=True)
     return candidates, history

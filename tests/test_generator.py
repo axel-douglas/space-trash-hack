@@ -18,6 +18,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from app.modules import data_sources, generator, label_mapper, logging_utils
+from app.modules import data_sources, execution, generator, label_mapper
 
 pl = generator.pl
 
@@ -49,6 +50,17 @@ def reference_dataset_tables(monkeypatch):
         yield tables
     finally:
         generator._official_features_bundle.cache_clear()
+
+
+def test_load_regolith_vector_matches_data_sources():
+    polars_vector = generator._load_regolith_vector()
+    pandas_vector = data_sources._load_regolith_vector()
+
+    assert set(polars_vector) == set(pandas_vector)
+    for key, expected in pandas_vector.items():
+        assert polars_vector[key] == pytest.approx(expected, rel=1e-9, abs=1e-9)
+
+    assert sum(polars_vector.values()) == pytest.approx(1.0, rel=1e-9)
 
 
 def test_append_inference_log_reuses_daily_writer(monkeypatch, tmp_path):
@@ -122,6 +134,86 @@ def test_append_inference_log_reuses_daily_writer(monkeypatch, tmp_path):
     )
     assert created_paths[0] == expected_path
     assert [count for _, count in write_calls] == [1, 2]
+
+    manager.close()
+
+
+def test_append_inference_log_skips_parquet_reads(monkeypatch, tmp_path):
+    """Ensure append operations never trigger a Parquet read."""
+
+    generator._INFERENCE_LOG_MANAGER.close()
+    monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
+
+    manager = generator._InferenceLogWriterManager()
+    monkeypatch.setattr(generator, "_INFERENCE_LOG_MANAGER", manager)
+
+    created_paths: list[Path] = []
+    write_counts: list[int] = []
+
+    class WriterSpy:
+        def __init__(self, path: str, schema: Any) -> None:  # pragma: no cover - helper
+            self.path = Path(path)
+            self.schema = schema
+            self.count = 0
+
+        def write_table(self, table: Any) -> None:  # pragma: no cover - helper
+            self.count += 1
+            write_counts.append(self.count)
+
+        def close(self) -> None:  # pragma: no cover - helper
+            pass
+
+    def fake_writer(path: str, schema: Any) -> WriterSpy:
+        writer = WriterSpy(path, schema)
+        created_paths.append(writer.path)
+        return writer
+
+    monkeypatch.setattr(generator.pq, "ParquetWriter", fake_writer)
+
+    def fail_read(*_args: Any, **_kwargs: Any) -> None:
+        pytest.fail("append_inference_log should not read existing shards")
+
+    if hasattr(generator.pq, "read_table"):
+        monkeypatch.setattr(generator.pq, "read_table", fail_read)
+
+    base = datetime(2024, 6, 1, 8, 30, tzinfo=UTC)
+    events = [
+        (
+            base,
+            {
+                "timestamp": base.isoformat(),
+                "input_features": "{}",
+                "prediction": "{}",
+                "uncertainty": "{}",
+                "model_hash": "alpha",
+            },
+        ),
+        (
+            base.replace(hour=21),
+            {
+                "timestamp": base.replace(hour=21).isoformat(),
+                "input_features": "{\"foo\": 1}",
+                "prediction": "{\"bar\": 2}",
+                "uncertainty": "{}",
+                "model_hash": "bravo",
+            },
+        ),
+    ]
+
+    def fake_prepare(*_args: Any, **_kwargs: Any) -> tuple[datetime, Dict[str, str | None]]:
+        ts, payload = events.pop(0)
+        return ts, payload
+
+    monkeypatch.setattr(generator, "_prepare_inference_event", fake_prepare)
+
+    generator.append_inference_log({}, {}, {}, None)
+    generator.append_inference_log({}, {}, {}, None)
+
+    expected_path = (
+        tmp_path / "inference" / "20240601" / "inference_20240601.parquet"
+    )
+    assert created_paths == [expected_path]
+    assert write_counts == [1, 2]
 
     manager.close()
 
@@ -523,23 +615,23 @@ def _read_inference_log(day_dir: Path) -> pd.DataFrame:
 def test_generate_candidates_uses_parallel_backend(monkeypatch):
     monkeypatch.setattr(generator, "_PARALLEL_THRESHOLD", 1)
 
-    created: list[object] = []
-
-    class DummyExecutor:
-        def __init__(self, max_workers: int):
-            self.max_workers = max_workers
+    class DummyBackend(execution.ExecutionBackend):
+        def __init__(self):
+            super().__init__(max_workers=4)
             self.map_calls = 0
             self.shutdown_called = False
-            created.append(self)
 
         def map(self, func, iterable):
             self.map_calls += 1
             return [func(item) for item in iterable]
 
+        def submit(self, func, *args, **kwargs):
+            raise AssertionError("submit should not be called")
+
         def shutdown(self):
             self.shutdown_called = True
 
-    monkeypatch.setattr(generator, "ThreadPoolExecutor", DummyExecutor)
+    backend = DummyBackend()
     monkeypatch.setattr(generator, "prepare_waste_frame", lambda df: df)
     monkeypatch.setattr(generator, "_pick_materials", lambda df, rng, n=2, bias=2.0: pd.DataFrame(
         {
@@ -640,15 +732,125 @@ def test_generate_candidates_uses_parallel_backend(monkeypatch):
         crew_time_low=False,
         optimizer_evals=0,
         use_ml=False,
+        backend=backend,
     )
 
     assert len(candidates) == 5
     scores = [cand["score"] for cand in candidates]
     assert scores == sorted(scores, reverse=True)
     assert len(draws) == 5
-    assert created and created[0].map_calls >= 1
-    assert created[0].shutdown_called is True
+    assert backend.map_calls >= 1
+    assert backend.shutdown_called is False
     assert history.empty
+
+
+def test_generate_candidates_parallel_is_deterministic(monkeypatch):
+    monkeypatch.setattr(generator, "_PARALLEL_THRESHOLD", 1)
+    monkeypatch.setattr(generator, "prepare_waste_frame", lambda df: df)
+    monkeypatch.setattr(generator, "_pick_materials", lambda df, rng, n=2, bias=2.0: pd.DataFrame(
+        {
+            "kg": [1.0],
+            "_source_id": ["A"],
+            "_source_category": ["packaging"],
+            "_source_flags": [""],
+            "_problematic": [0],
+            "material": ["foil"],
+            "category": ["packaging"],
+            "flags": [""],
+        }
+    ))
+    monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ([], {}))
+    monkeypatch.setattr(
+        generator,
+        "heuristic_props",
+        lambda *args, **kwargs: pd.DataFrame(
+            {
+                "kg": [1.0],
+                "pct_mass": [100.0],
+                "pct_volume": [100.0],
+                "moisture_pct": [0.0],
+                "difficulty_factor": [1.0],
+                "density_kg_m3": [1.0],
+                "category": ["packaging"],
+                "flags": [""],
+                "_problematic": [0],
+                "_source_id": ["A"],
+                "_source_category": ["packaging"],
+                "_source_flags": [""],
+                "material": ["foil"],
+            }
+        ),
+    )
+    monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
+
+    def fake_build(picks, proc_df, rng, target, crew_time_low, use_ml, tuning):
+        value = round(rng.random(), 6)
+        return {
+            "score": value,
+            "props": generator.PredProps(
+                rigidity=1.0,
+                tightness=1.0,
+                mass_final_kg=1.0,
+                energy_kwh=0.1,
+                water_l=0.1,
+                crew_min=1.0,
+            ),
+        }
+
+    monkeypatch.setattr(generator, "_build_candidate", fake_build)
+
+    base_random_cls = random.Random
+
+    def deterministic_random(seed: int | None = None):
+        if seed is None:
+            seed = 1234
+        return base_random_cls(seed)
+
+    monkeypatch.setattr(generator.random, "Random", deterministic_random)
+
+    waste_df = pd.DataFrame(
+        {
+            "material": ["foil"],
+            "kg": [1.0],
+            "_problematic": [0],
+            "_source_id": ["A"],
+            "_source_category": ["packaging"],
+            "_source_flags": [""],
+            "category": ["packaging"],
+            "flags": [""],
+        }
+    )
+    proc_df = pd.DataFrame(
+        {
+            "process_id": ["P01"],
+            "name": ["Process"],
+            "energy_kwh_per_kg": [1.0],
+            "water_l_per_kg": [0.5],
+            "crew_min_per_batch": [30.0],
+        }
+    )
+
+    def run_once() -> list[float]:
+        backend = execution.ThreadPoolBackend(max_workers=4)
+        try:
+            candidates, _ = generator.generate_candidates(
+                waste_df,
+                proc_df,
+                target={},
+                n=4,
+                crew_time_low=False,
+                optimizer_evals=0,
+                use_ml=False,
+                backend=backend,
+            )
+        finally:
+            backend.shutdown()
+        return [cand["score"] for cand in candidates]
+
+    scores_a = run_once()
+    scores_b = run_once()
+
+    assert scores_a == scores_b
 
 
 def test_append_inference_log_appends_without_reads(monkeypatch, tmp_path):
@@ -804,8 +1006,6 @@ def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch, tmp_path):
 
     log_dir = logging_utils.LOGS_ROOT
     log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"inference_{datetime.utcnow().strftime('%Y%m%d')}.parquet"
-    log_path.unlink(missing_ok=True)
     waste_df = pd.DataFrame(
         {
             "id": ["W1", "W2"],
@@ -844,87 +1044,7 @@ def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch, tmp_path):
     assert "auxiliary" in cand
 
 
-def test_generate_candidates_handles_missing_curated_labels(monkeypatch, tmp_path):
-    monkeypatch.setattr(label_mapper, "_LABELS_CACHE", None, raising=False)
-    monkeypatch.setattr(label_mapper, "_LABELS_CACHE_PATH", None, raising=False)
-
-    missing_labels_path = tmp_path / "missing" / "labels.parquet"
-    monkeypatch.setattr(label_mapper, "GOLD_LABELS_PATH", missing_labels_path, raising=False)
-
-    calls: list[tuple[str, tuple, dict]] = []
-
-    def boom(*args, **kwargs):
-        calls.append(("ensure", args, kwargs))
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr(
-        "app.modules.data_build.ensure_gold_dataset",
-        boom,
-    )
-
-    picks_template = pd.DataFrame(
-        {
-            "kg": [1.0, 0.5],
-            "_source_id": ["A", "B"],
-            "_source_category": ["packaging", "eva"],
-            "_source_flags": ["", ""],
-            "_problematic": [0, 0],
-            "material": ["aluminum foil", "eva foam"],
-            "category": ["packaging", "eva"],
-            "flags": ["", ""],
-            "moisture_pct": [5.0, 10.0],
-            "difficulty_factor": [1.0, 2.0],
-        }
-    )
-
-    monkeypatch.setattr(generator, "prepare_waste_frame", lambda df: df)
-    monkeypatch.setattr(
-        generator,
-        "_pick_materials",
-        lambda df, rng, n=2, bias=2.0: picks_template.copy(),
-    )
-    monkeypatch.setattr(
-        generator,
-        "build_feature_tensor_batch",
-        lambda *args, **kwargs: object(),
-    )
-    monkeypatch.setattr(
-        generator,
-        "_compute_features_from_batch",
-        lambda batch: [{"process_id": "P01"}],
-    )
-    monkeypatch.setattr(generator, "MODEL_REGISTRY", None)
-
-    waste_df = picks_template.copy()
-    proc_df = pd.DataFrame(
-        {
-            "process_id": ["P01"],
-            "name": ["Process"],
-            "energy_kwh_per_kg": [1.0],
-            "water_l_per_kg": [0.5],
-            "crew_min_per_batch": [30.0],
-        }
-    )
-
-    candidates, history = generator.generate_candidates(waste_df, proc_df, target={}, n=1)
-
-    assert calls, "ensure_gold_dataset should have been invoked"
-    assert candidates, "Expected heuristic candidates even when gold labels are unavailable"
-
-    features = candidates[0].get("features", {})
-    assert features.get("curated_label_targets") == {}
-    assert features.get("prediction_mode") == "heuristic"
-    assert history.empty
-
-    cache = label_mapper._LABELS_CACHE
-    assert isinstance(cache, pd.DataFrame)
-    assert cache.empty
-    assert label_mapper._LABELS_CACHE_PATH == missing_labels_path
-
-
-def test_generate_candidates_warns_when_curated_labels_fail(
-    monkeypatch, tmp_path, caplog
-):
+def test_generate_candidates_handles_missing_curated_labels(monkeypatch, tmp_path, caplog):
     caplog.set_level(logging.WARNING, logger="app.modules.label_mapper")
     monkeypatch.setattr(label_mapper, "_LABELS_CACHE", None, raising=False)
     monkeypatch.setattr(label_mapper, "_LABELS_CACHE_PATH", None, raising=False)
@@ -1196,7 +1316,7 @@ def test_compute_feature_vector_dataframe_matches_tensor_batch():
     )
 
     tensor_batch = generator.build_feature_tensor_batch(
-        [prepared], [weights], [process], [regolith_pct]
+        [prepared], [weights], [process], [regolith_pct], backend="numpy"
     )
     tensor_features = generator.compute_feature_vector(tensor_batch)
 
@@ -1206,6 +1326,21 @@ def test_compute_feature_vector_dataframe_matches_tensor_batch():
     assert set(tensor_features) == set(dataframe_features)
     for key, value in dataframe_features.items():
         lhs = tensor_features[key]
+        if isinstance(value, numbers.Real):
+            assert lhs == pytest.approx(value, rel=1e-6, abs=1e-8)
+        else:
+            assert lhs == value
+
+    tensor_mapping = {
+        field: getattr(tensor_batch, field)
+        for field in generator.FeatureTensorBatch.__annotations__
+    }
+    mapping_features = generator.compute_feature_vector(tensor_mapping)
+    assert isinstance(mapping_features, list) and mapping_features
+    mapping_features = mapping_features[0]
+    assert set(mapping_features) == set(tensor_features)
+    for key, value in tensor_features.items():
+        lhs = mapping_features[key]
         if isinstance(value, numbers.Real):
             assert lhs == pytest.approx(value, rel=1e-6, abs=1e-8)
         else:
@@ -1403,6 +1538,9 @@ def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
         mission_reference_keys=mission_reference_keys,
         mission_reference_index=mission_reference_index,
         mission_reference_matrix=mission_reference_matrix,
+        mission_reference_dense=np.asarray(mission_reference_matrix.todense())
+        if generator.sparse is not None and generator.sparse.issparse(mission_reference_matrix)
+        else np.asarray(mission_reference_matrix, dtype=np.float64),
         mission_names=mission_names,
         mission_totals_vector=mission_totals_vector,
         processing_metrics={"gateway_i": {"processing_o2_ch4_yield_kg": 5.0}},
@@ -1519,6 +1657,9 @@ def test_prepare_waste_frame_injects_l2l_features(monkeypatch):
         mission_reference_keys=(),
         mission_reference_index={},
         mission_reference_matrix=empty_reference,
+        mission_reference_dense=np.asarray(empty_reference.todense())
+        if generator.sparse is not None and generator.sparse.issparse(empty_reference)
+        else np.asarray(empty_reference, dtype=np.float64),
         mission_names=(),
         mission_totals_vector=np.zeros(0, dtype=np.float64),
         processing_metrics={},
@@ -1650,10 +1791,87 @@ def test_prepare_waste_frame_vectorized_large_inventory():
         (volume_series > 0) & volume_series.notna()
     )
 
-    missing = expected_density.isna() | ~np.isfinite(expected_density)
-    if missing.any():
-        fallback = prepared.loc[missing].apply(generator._estimate_density_from_row, axis=1)
-        expected_density.loc[missing] = fallback
+    cat_mass = pd.to_numeric(prepared.get("category_total_mass_kg"), errors="coerce")
+    if not isinstance(cat_mass, pd.Series):
+        cat_mass = pd.Series(cat_mass, index=prepared.index, dtype=float)
+    cat_volume = pd.to_numeric(prepared.get("category_total_volume_m3"), errors="coerce")
+    if not isinstance(cat_volume, pd.Series):
+        cat_volume = pd.Series(cat_volume, index=prepared.index, dtype=float)
+    cat_density = cat_mass.divide(cat_volume).where((cat_volume > 0) & cat_volume.notna())
+    expected_density = expected_density.fillna(cat_density)
+
+    bundle = generator._official_features_bundle()
+    selected_columns: list[str] = []
+    if getattr(bundle, "composition_columns", None):
+        selected_columns.extend(
+            [
+                column
+                for column in bundle.composition_columns
+                if column in prepared.columns
+                and column in generator._COMPOSITION_DENSITY_MAP
+            ]
+        )
+    fallback_columns = [
+        column
+        for column in generator._COMPOSITION_DENSITY_MAP
+        if column in prepared.columns and column not in selected_columns
+    ]
+    selected_columns.extend(fallback_columns)
+
+    if selected_columns:
+        composition_numeric = {
+            column: pd.to_numeric(prepared[column], errors="coerce").fillna(0.0)
+            for column in selected_columns
+        }
+        composition_frac = pd.DataFrame(composition_numeric, index=prepared.index).div(100.0)
+        frac_total = composition_frac.sum(axis=1)
+        density_lookup = pd.Series(
+            {
+                column: float(generator._COMPOSITION_DENSITY_MAP[column])
+                for column in selected_columns
+            },
+            index=selected_columns,
+            dtype=float,
+        )
+        weighted_density = composition_frac.multiply(density_lookup, axis=1).sum(axis=1)
+        weighted_density = weighted_density.divide(frac_total).where(frac_total > 0)
+    else:
+        weighted_density = pd.Series(np.nan, index=prepared.index, dtype=float)
+
+    normalized_category = generator._vectorized_normalize_category(prepared["category"])
+    foam_mask = normalized_category == "foam packaging"
+    foam_default = generator._CATEGORY_DENSITY_DEFAULTS.get("foam packaging")
+    if foam_default is not None:
+        weighted_density = weighted_density.where(
+            ~foam_mask,
+            weighted_density.clip(upper=float(foam_default)),
+        )
+
+    expected_density = expected_density.fillna(weighted_density)
+
+    logistic_density_map: Dict[str, float] = {}
+    category_features = getattr(bundle, "l2l_category_features", None)
+    if isinstance(category_features, dict):
+        for key, features in category_features.items():
+            if not isinstance(features, dict):
+                continue
+            for name, value in features.items():
+                if not isinstance(value, (int, float)) or not np.isfinite(value):
+                    continue
+                if "density" not in str(name).lower():
+                    continue
+                normalized_key = generator.normalize_category(key)
+                if normalized_key:
+                    logistic_density_map.setdefault(normalized_key, float(value))
+                break
+
+    if logistic_density_map:
+        logistic_series = normalized_category.map(logistic_density_map)
+        logistic_series = pd.to_numeric(logistic_series, errors="coerce")
+        expected_density = expected_density.fillna(logistic_series)
+
+    category_defaults = normalized_category.map(generator._CATEGORY_DENSITY_DEFAULTS).astype(float)
+    expected_density = expected_density.fillna(category_defaults)
 
     default_density = float(
         generator._CATEGORY_DENSITY_DEFAULTS.get("packaging", 500.0)
@@ -1666,6 +1884,80 @@ def test_prepare_waste_frame_vectorized_large_inventory():
         check_names=False,
     )
 
+
+def test_prepare_waste_frame_density_missing_volume(monkeypatch):
+    data_sources.official_features_bundle.cache_clear()
+    generator._official_features_bundle.cache_clear()
+
+    dummy_table = pl.DataFrame(
+        schema={"category_norm": pl.Utf8, "subitem_norm": pl.Utf8},
+        data=[],
+    )
+
+    dummy_bundle = generator._OfficialFeaturesBundle(
+        value_columns=(),
+        composition_columns=("Aluminum_pct", "Plastic_Resin_pct", "approx_moisture_pct"),
+        direct_map={},
+        category_tokens={},
+        table=dummy_table,
+        value_matrix=np.empty((0, 0), dtype=np.float64),
+        mission_mass={},
+        mission_totals={},
+        mission_reference_keys=(),
+        mission_reference_index={},
+        mission_reference_matrix=np.zeros((0, 0), dtype=np.float64),
+        mission_names=(),
+        mission_totals_vector=np.zeros(0, dtype=np.float64),
+        processing_metrics={},
+        leo_mass_savings={},
+        propellant_benefits={},
+        l2l_constants={},
+        l2l_category_features={
+            "food packaging": {"l2l_packaging_density_kg_m3": 630.0},
+            "foam packaging": {"l2l_packaging_density_kg_m3": 95.0},
+        },
+        l2l_item_features={},
+        l2l_hints={},
+    )
+
+    def fake_bundle():
+        return dummy_bundle
+
+    fake_bundle.cache_clear = lambda: None  # type: ignore[attr-defined]
+    monkeypatch.setattr(generator, "official_features_bundle", fake_bundle)
+    monkeypatch.setattr(generator, "_official_features_bundle", fake_bundle)
+
+    waste_df = pd.DataFrame(
+        {
+            "id": ["A", "B", "C", "D", "E"],
+            "category": [
+                "Food Packaging",
+                "Structural Elements",
+                "Food Packaging",
+                "Foam Packaging",
+                "Other Packaging",
+            ],
+            "kg": [12.0, 5.0, 1.0, 0.8, 0.5],
+            "volume_l": [np.nan, np.nan, np.nan, np.nan, np.nan],
+            "category_total_mass_kg": [180.0, np.nan, np.nan, np.nan, np.nan],
+            "category_total_volume_m3": [0.25, np.nan, np.nan, np.nan, np.nan],
+            "Aluminum_pct": [0.0, 60.0, 0.0, 0.0, 0.0],
+            "Plastic_Resin_pct": [0.0, 40.0, 0.0, 0.0, 0.0],
+            "approx_moisture_pct": [0.0, 0.0, 0.0, 0.0, 0.0],
+        }
+    )
+
+    prepared = generator.prepare_waste_frame(waste_df)
+
+    densities = prepared["density_kg_m3"].to_numpy()
+
+    assert densities[0] == pytest.approx(720.0, rel=1e-6)
+    assert densities[1] == pytest.approx(2000.0, rel=1e-6)
+    assert densities[2] == pytest.approx(630.0, rel=1e-6)
+    assert densities[3] == pytest.approx(95.0, rel=1e-6)
+    assert densities[4] == pytest.approx(
+        generator._CATEGORY_DENSITY_DEFAULTS["other packaging"], rel=1e-6
+    )
 
 def test_compute_feature_vector_uses_l2l_packaging_ratio(monkeypatch):
     data_sources.official_features_bundle.cache_clear()
@@ -1696,6 +1988,9 @@ def test_compute_feature_vector_uses_l2l_packaging_ratio(monkeypatch):
         mission_reference_keys=(),
         mission_reference_index={},
         mission_reference_matrix=empty_reference,
+        mission_reference_dense=np.asarray(empty_reference.todense())
+        if generator.sparse is not None and generator.sparse.issparse(empty_reference)
+        else np.asarray(empty_reference, dtype=np.float64),
         mission_names=(),
         mission_totals_vector=np.zeros(0, dtype=np.float64),
         processing_metrics={},
