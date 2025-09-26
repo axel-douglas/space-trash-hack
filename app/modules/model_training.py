@@ -63,7 +63,6 @@ except Exception:  # pragma: no cover - environments without torch
     DataLoader = TensorDataset = None  # type: ignore[assignment]
     HAS_TORCH = False
 
-from app.modules.generator import compute_feature_vector, prepare_waste_frame
 from app.modules.label_mapper import derive_recipe_id, load_curated_labels, lookup_labels
 
 # ---------------------------------------------------------------------------
@@ -380,7 +379,7 @@ def _load_csv(path: Path) -> DataFrame:
 
 def _load_inventory() -> DataFrame:
     df = _load_csv(RAW_DIR / "nasa_waste_inventory.csv")
-    df = prepare_waste_frame(df)
+    df = _prepare_waste_frame(df)
     return df
 
 
@@ -654,7 +653,7 @@ def _generate_samples(n_samples: int, seed: int | None) -> List[SampledCombinati
         if str(process["process_id"]).upper() == "P03":
             regolith_pct = rng.uniform(0.15, 0.35)
 
-        features = compute_feature_vector(picks, weights, process, regolith_pct)
+        features = _compute_feature_vector(picks, weights, process, regolith_pct)
         recipe_id = derive_recipe_id(picks, process, features)
         if recipe_id:
             features.setdefault("recipe_id", recipe_id)
@@ -1463,3 +1462,18 @@ def cli(argv: Sequence[str] | None = None) -> Dict[str, Any]:
 if __name__ == "__main__":  # pragma: no cover - CLI entry point
     info = cli()
     print(json.dumps(info, indent=2))
+def _prepare_waste_frame(df: pd.DataFrame) -> pd.DataFrame:
+    from app.modules import generator
+
+    return generator.prepare_waste_frame(df)
+
+
+def _compute_feature_vector(
+    picks: pd.DataFrame,
+    weights: pd.Series,
+    process: pd.Series,
+    regolith_pct: float,
+) -> Dict[str, Any]:
+    from app.modules import generator
+
+    return generator.compute_feature_vector(picks, weights, process, regolith_pct)

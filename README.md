@@ -54,7 +54,7 @@ datasets con el catálogo de procesos y genera:
 - Ensemble de modelos de "wow effect":
   - `data/models/rexai_xgboost.joblib` (boosting por target).
   - `data/models/rexai_tabtransformer.pt` (transformer tabular ligero, opcional si PyTorch está disponible).
-- Autoencoder para embeddings latentes (`data/models/rexai_autoencoder.pt`, opcional PyTorch).
+- Autoencoder tabular opcional (`data/models/rexai_autoencoder.pt`, requiere PyTorch).
 - Metadatos en `data/models/metadata.json` (features, targets, fecha, métricas,
   importancias de features, residuales, paths de artefactos).
 

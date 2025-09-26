@@ -583,13 +583,6 @@ def _extract_grouped_metrics(filename: str, prefix: str) -> Dict[str, Dict[str, 
 
     return aggregated
 
-    "packaging": "other packaging glove",
-    "foam": "other packaging glove",
-    "glove": "other packaging glove",
-    "other packaging": "other packaging glove",
-    "other packaging glove": "other packaging glove",
-}
-
 def _normalize_text(value: Any) -> str:
     text = str(value or "").lower()
     text = text.replace("—", " ").replace("/", " ")

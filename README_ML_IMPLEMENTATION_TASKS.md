@@ -65,7 +65,7 @@ Este backlog transforma el plan técnico en sprints accionables. Cada tarea se p
 | ID | Tarea | Prioridad | Tipo | Dependencias | Entregable |
 | --- | --- | --- | --- | --- | --- |
 | S4.1 | Entrenar modelos XGBoost por target y comparar performance | 🟡 | ml | S1.3 | Resultados en notebook + modelos |
-| S4.2 | Autoencoder tabular para embeddings y detección de duplicados | 🟡 | ml | S1.2 | `autoencoder.pt`, documentación |
+| S4.2 | Autoencoder tabular para detección de duplicados en espacio latente | 🟡 | ml | S1.2 | `autoencoder.pt`, documentación |
 | S4.3 | Optimización en espacio latente (Bayesian Optimization / grid adaptativo) | 🟢 | ml | S4.2 | Script `optimize_latent.py` |
 | S4.4 | CI/CD: workflow que empaquete modelos y publique release ZIP (`package_model_bundle`) | 🟡 | infra | S1.3 | Archivo YAML de pipeline |
 
