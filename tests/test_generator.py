@@ -1730,10 +1730,87 @@ def test_prepare_waste_frame_vectorized_large_inventory():
         (volume_series > 0) & volume_series.notna()
     )
 
-    missing = expected_density.isna() | ~np.isfinite(expected_density)
-    if missing.any():
-        fallback = prepared.loc[missing].apply(generator._estimate_density_from_row, axis=1)
-        expected_density.loc[missing] = fallback
+    cat_mass = pd.to_numeric(prepared.get("category_total_mass_kg"), errors="coerce")
+    if not isinstance(cat_mass, pd.Series):
+        cat_mass = pd.Series(cat_mass, index=prepared.index, dtype=float)
+    cat_volume = pd.to_numeric(prepared.get("category_total_volume_m3"), errors="coerce")
+    if not isinstance(cat_volume, pd.Series):
+        cat_volume = pd.Series(cat_volume, index=prepared.index, dtype=float)
+    cat_density = cat_mass.divide(cat_volume).where((cat_volume > 0) & cat_volume.notna())
+    expected_density = expected_density.fillna(cat_density)
+
+    bundle = generator._official_features_bundle()
+    selected_columns: list[str] = []
+    if getattr(bundle, "composition_columns", None):
+        selected_columns.extend(
+            [
+                column
+                for column in bundle.composition_columns
+                if column in prepared.columns
+                and column in generator._COMPOSITION_DENSITY_MAP
+            ]
+        )
+    fallback_columns = [
+        column
+        for column in generator._COMPOSITION_DENSITY_MAP
+        if column in prepared.columns and column not in selected_columns
+    ]
+    selected_columns.extend(fallback_columns)
+
+    if selected_columns:
+        composition_numeric = {
+            column: pd.to_numeric(prepared[column], errors="coerce").fillna(0.0)
+            for column in selected_columns
+        }
+        composition_frac = pd.DataFrame(composition_numeric, index=prepared.index).div(100.0)
+        frac_total = composition_frac.sum(axis=1)
+        density_lookup = pd.Series(
+            {
+                column: float(generator._COMPOSITION_DENSITY_MAP[column])
+                for column in selected_columns
+            },
+            index=selected_columns,
+            dtype=float,
+        )
+        weighted_density = composition_frac.multiply(density_lookup, axis=1).sum(axis=1)
+        weighted_density = weighted_density.divide(frac_total).where(frac_total > 0)
+    else:
+        weighted_density = pd.Series(np.nan, index=prepared.index, dtype=float)
+
+    normalized_category = generator._vectorized_normalize_category(prepared["category"])
+    foam_mask = normalized_category == "foam packaging"
+    foam_default = generator._CATEGORY_DENSITY_DEFAULTS.get("foam packaging")
+    if foam_default is not None:
+        weighted_density = weighted_density.where(
+            ~foam_mask,
+            weighted_density.clip(upper=float(foam_default)),
+        )
+
+    expected_density = expected_density.fillna(weighted_density)
+
+    logistic_density_map: Dict[str, float] = {}
+    category_features = getattr(bundle, "l2l_category_features", None)
+    if isinstance(category_features, dict):
+        for key, features in category_features.items():
+            if not isinstance(features, dict):
+                continue
+            for name, value in features.items():
+                if not isinstance(value, (int, float)) or not np.isfinite(value):
+                    continue
+                if "density" not in str(name).lower():
+                    continue
+                normalized_key = generator.normalize_category(key)
+                if normalized_key:
+                    logistic_density_map.setdefault(normalized_key, float(value))
+                break
+
+    if logistic_density_map:
+        logistic_series = normalized_category.map(logistic_density_map)
+        logistic_series = pd.to_numeric(logistic_series, errors="coerce")
+        expected_density = expected_density.fillna(logistic_series)
+
+    category_defaults = normalized_category.map(generator._CATEGORY_DENSITY_DEFAULTS).astype(float)
+    expected_density = expected_density.fillna(category_defaults)
 
     default_density = float(
         generator._CATEGORY_DENSITY_DEFAULTS.get("packaging", 500.0)
@@ -1746,6 +1823,80 @@ def test_prepare_waste_frame_vectorized_large_inventory():
         check_names=False,
     )
 
+
+def test_prepare_waste_frame_density_missing_volume(monkeypatch):
+    data_sources.official_features_bundle.cache_clear()
+    generator._official_features_bundle.cache_clear()
+
+    dummy_table = pl.DataFrame(
+        schema={"category_norm": pl.Utf8, "subitem_norm": pl.Utf8},
+        data=[],
+    )
+
+    dummy_bundle = generator._OfficialFeaturesBundle(
+        value_columns=(),
+        composition_columns=("Aluminum_pct", "Plastic_Resin_pct", "approx_moisture_pct"),
+        direct_map={},
+        category_tokens={},
+        table=dummy_table,
+        value_matrix=np.empty((0, 0), dtype=np.float64),
+        mission_mass={},
+        mission_totals={},
+        mission_reference_keys=(),
+        mission_reference_index={},
+        mission_reference_matrix=np.zeros((0, 0), dtype=np.float64),
+        mission_names=(),
+        mission_totals_vector=np.zeros(0, dtype=np.float64),
+        processing_metrics={},
+        leo_mass_savings={},
+        propellant_benefits={},
+        l2l_constants={},
+        l2l_category_features={
+            "food packaging": {"l2l_packaging_density_kg_m3": 630.0},
+            "foam packaging": {"l2l_packaging_density_kg_m3": 95.0},
+        },
+        l2l_item_features={},
+        l2l_hints={},
+    )
+
+    def fake_bundle():
+        return dummy_bundle
+
+    fake_bundle.cache_clear = lambda: None  # type: ignore[attr-defined]
+    monkeypatch.setattr(generator, "official_features_bundle", fake_bundle)
+    monkeypatch.setattr(generator, "_official_features_bundle", fake_bundle)
+
+    waste_df = pd.DataFrame(
+        {
+            "id": ["A", "B", "C", "D", "E"],
+            "category": [
+                "Food Packaging",
+                "Structural Elements",
+                "Food Packaging",
+                "Foam Packaging",
+                "Other Packaging",
+            ],
+            "kg": [12.0, 5.0, 1.0, 0.8, 0.5],
+            "volume_l": [np.nan, np.nan, np.nan, np.nan, np.nan],
+            "category_total_mass_kg": [180.0, np.nan, np.nan, np.nan, np.nan],
+            "category_total_volume_m3": [0.25, np.nan, np.nan, np.nan, np.nan],
+            "Aluminum_pct": [0.0, 60.0, 0.0, 0.0, 0.0],
+            "Plastic_Resin_pct": [0.0, 40.0, 0.0, 0.0, 0.0],
+            "approx_moisture_pct": [0.0, 0.0, 0.0, 0.0, 0.0],
+        }
+    )
+
+    prepared = generator.prepare_waste_frame(waste_df)
+
+    densities = prepared["density_kg_m3"].to_numpy()
+
+    assert densities[0] == pytest.approx(720.0, rel=1e-6)
+    assert densities[1] == pytest.approx(2000.0, rel=1e-6)
+    assert densities[2] == pytest.approx(630.0, rel=1e-6)
+    assert densities[3] == pytest.approx(95.0, rel=1e-6)
+    assert densities[4] == pytest.approx(
+        generator._CATEGORY_DENSITY_DEFAULTS["other packaging"], rel=1e-6
+    )
 
 def test_compute_feature_vector_uses_l2l_packaging_ratio(monkeypatch):
     data_sources.official_features_bundle.cache_clear()

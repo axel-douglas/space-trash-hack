@@ -470,6 +470,9 @@ _COMPOSITION_DENSITY_MAP = {
     "EVOH_pct": 1250.0,
     "PET_pct": 1370.0,
     "Nitrile_pct": 1030.0,
+    "approx_moisture_pct": 1000.0,
+    "Other_pct": 500.0,
+    "Plastic_Resin_pct": 950.0,
 }
 
 _CATEGORY_DENSITY_DEFAULTS = {
@@ -1760,6 +1763,7 @@ def prepare_waste_frame(waste_df: pd.DataFrame) -> pd.DataFrame:
     out["_source_category"] = out["category"].astype(str)
     out["_source_flags"] = out["flags"].astype(str)
 
+    bundle = _official_features_bundle()
     out = _inject_official_features(out)
 
     mass = pd.to_numeric(out["kg"], errors="coerce").fillna(0.0)
@@ -1777,18 +1781,39 @@ def prepare_waste_frame(waste_df: pd.DataFrame) -> pd.DataFrame:
     cat_density = cat_mass.divide(cat_volume).where((cat_volume > 0) & cat_volume.notna())
     density = density.fillna(cat_density)
 
-    composition_columns: dict[str, pd.Series] = {}
-    for column in _COMPOSITION_DENSITY_MAP:
-        if column in out.columns:
-            composition_columns[column] = pd.to_numeric(out[column], errors="coerce").fillna(0.0)
-        else:
-            composition_columns[column] = pd.Series(0.0, index=out.index, dtype=float)
+    selected_columns: list[str] = []
+    if getattr(bundle, "composition_columns", None):
+        selected_columns.extend(
+            [
+                column
+                for column in bundle.composition_columns
+                if column in out.columns and column in _COMPOSITION_DENSITY_MAP
+            ]
+        )
+    fallback_columns = [
+        column
+        for column in _COMPOSITION_DENSITY_MAP
+        if column in out.columns and column not in selected_columns
+    ]
+    selected_columns.extend(fallback_columns)
 
-    composition_df = pd.DataFrame(composition_columns, index=out.index)
-    composition_frac = composition_df.div(100.0)
-    frac_total = composition_frac.sum(axis=1)
-    density_weights = composition_frac.mul(pd.Series(_COMPOSITION_DENSITY_MAP))
-    weighted_density = density_weights.sum(axis=1).div(frac_total).where(frac_total > 0)
+    if selected_columns:
+        composition_numeric = {
+            column: pd.to_numeric(out[column], errors="coerce").fillna(0.0)
+            for column in selected_columns
+        }
+        composition_frac = pd.DataFrame(composition_numeric, index=out.index).div(100.0)
+        frac_total = composition_frac.sum(axis=1)
+        density_lookup = pd.Series(
+            {column: float(_COMPOSITION_DENSITY_MAP[column]) for column in selected_columns},
+            index=selected_columns,
+            dtype=float,
+        )
+        density_weights = composition_frac.multiply(density_lookup, axis=1)
+        weighted_density = density_weights.sum(axis=1)
+        weighted_density = weighted_density.divide(frac_total).where(frac_total > 0)
+    else:
+        weighted_density = pd.Series(np.nan, index=out.index, dtype=float)
 
     normalized_category = _vectorized_normalize_category(out["category"])
     foam_mask = normalized_category == "foam packaging"
@@ -1800,6 +1825,35 @@ def prepare_waste_frame(waste_df: pd.DataFrame) -> pd.DataFrame:
         )
 
     density = density.fillna(weighted_density)
+
+    logistic_density_map: Dict[str, float] = {}
+    category_features = getattr(bundle, "l2l_category_features", None)
+    if isinstance(category_features, Mapping):
+        for key, features in category_features.items():
+            if not isinstance(features, Mapping):
+                continue
+            density_value: float | None = None
+            for name, value in features.items():
+                if not isinstance(value, (int, float)):
+                    continue
+                if not np.isfinite(value):
+                    continue
+                name_lower = str(name).lower()
+                if "density" not in name_lower:
+                    continue
+                density_value = float(value)
+                break
+            if density_value is None:
+                continue
+            normalized_key = normalize_category(key)
+            if not normalized_key:
+                continue
+            logistic_density_map.setdefault(normalized_key, density_value)
+
+    if logistic_density_map:
+        logistic_density = normalized_category.map(logistic_density_map)
+        logistic_density = pd.to_numeric(logistic_density, errors="coerce")
+        density = density.fillna(logistic_density)
 
     category_defaults = normalized_category.map(_CATEGORY_DENSITY_DEFAULTS).astype(float)
     density = density.fillna(category_defaults)
