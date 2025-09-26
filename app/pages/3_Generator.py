@@ -16,11 +16,11 @@ from app.modules.io import load_waste_df, load_process_df  # si tu IO usa load_p
 from app.modules.ml_models import MODEL_REGISTRY
 from app.modules.process_planner import choose_process
 from app.modules.safety import check_safety, safety_badge
-from app.modules.ui_blocks import inject_css
+from app.modules.ui_blocks import load_theme
 
 st.set_page_config(page_title="Rex-AI • Generador", page_icon="🤖", layout="wide")
 
-inject_css()
+load_theme()
 
 # ----------------------------- CSS local -----------------------------
 st.markdown(

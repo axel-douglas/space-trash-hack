@@ -1,23 +1,35 @@
-import streamlit as st
+from pathlib import Path
 from typing import Literal
 
-CSS = """
-<style>
-.card {
-  background:#151A21; border:1px solid #242C37; border-radius:16px; padding:18px; margin-bottom:12px;
-}
-.kpi { display:flex; gap:14px; }
-.kpi .pill { background:#0E1117; border:1px solid #242C37; border-radius:999px; padding:6px 12px; }
-.badge-ok { color:#0FD68B; }
-.badge-warn { color:#F39C12; }
-.badge-risk { color:#E74C3C; }
-.btn-primary { background:#00B894; color:#0E1117; border-radius:12px; padding:10px 16px; font-weight:700; }
-.small { opacity:0.8; font-size:0.9rem; }
-</style>
-"""
+import streamlit as st
+
+_THEME_KEY = "__rexai_theme_loaded__"
+
+
+def _theme_path() -> Path:
+    return Path(__file__).resolve().parents[1] / "static" / "theme.css"
+
+
+def load_theme() -> None:
+    """Inject the shared Rex-AI theme CSS once per Streamlit session."""
+
+    if st.session_state.get(_THEME_KEY):
+        return
+
+    theme_file = _theme_path()
+    try:
+        css = theme_file.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return
+
+    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+    st.session_state[_THEME_KEY] = True
+
 
 def inject_css():
-    st.markdown(CSS, unsafe_allow_html=True)
+    """Backward-compatible alias for legacy code paths."""
+
+    load_theme()
 
 def card(title:str, body:str=""):
     st.markdown(f"""<div class="card"><h4>{title}</h4><div class="small">{body}</div></div>""", unsafe_allow_html=True)

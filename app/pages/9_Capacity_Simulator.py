@@ -8,7 +8,11 @@ if str(ROOT) not in sys.path:
 
 # ⚠️ Debe ser la PRIMERA llamada de Streamlit
 import streamlit as st
+from app.modules.ui_blocks import load_theme
+
 st.set_page_config(page_title="Capacity Simulator", page_icon="🧮", layout="wide")
+
+load_theme()
 
 import math
 import numpy as np
@@ -19,31 +23,14 @@ import plotly.express as px
 from app.modules.capacity import LineConfig, simulate
 
 # ============== Estilos SpaceX/NASA-like ==============
-st.markdown("""
-<style>
-:root{
-  --bd: rgba(140,140,160,.28);
-  --ink:#0f172a;
-  --muted: rgba(15,23,42,.65);
-}
-.hero{border:1px solid var(--bd); border-radius:18px; padding:18px;
-      background: radial-gradient(900px 260px at 25% -10%, rgba(80,120,255,.10), transparent);}
-.pill{display:inline-block; padding:4px 10px; border-radius:999px; font-weight:700; font-size:.78rem;
-      border:1px solid var(--bd); margin-right:6px}
-.pill.ok{background:#e8f7ee; color:#136c3a; border-color:#b3e2c4}
-.pill.info{background:#e7f1ff; color:#174ea6; border-color:#c6dcff}
-.pill.warn{background:#fff3cd; color:#8a6d1d; border-color:#ffe69b}
-.block{border:1px solid var(--bd); border-radius:16px; padding:16px;}
-.kpi{border:1px solid var(--bd); border-radius:14px; padding:14px; margin-bottom:10px;}
-.kpi h3{margin:0 0 6px 0; font-size:.95rem; opacity:.8}
-.kpi .v{font-size:1.6rem; font-weight:800; letter-spacing:.2px}
-.small{font-size:.92rem; opacity:.9}
-.legend{font-size:.9rem; opacity:.8}
-hr{border:none;height:1px;background:var(--bd); margin:8px 0 16px 0}
-table{font-size:0.95rem}
-.callout{border-left:4px solid #8ab4ff; padding:10px 12px; background:rgba(138,180,255,.08); border-radius:8px;}
-</style>
-""", unsafe_allow_html=True)
+st.markdown(
+    """
+    <style>
+    .callout{border-left:4px solid #8ab4ff; padding:10px 12px; background:rgba(138,180,255,.08); border-radius:8px;}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ============== Estado compartido con el resto de la app ==============
 target    = st.session_state.get("target", None)

@@ -13,24 +13,12 @@ if str(repo_root) not in sys.path:
 import streamlit as st
 from pathlib import Path
 
+from app.modules.ui_blocks import load_theme
+
 # ⚠️ PRIMER comando Streamlit:
 st.set_page_config(page_title="REX-AI Mars — Brief", page_icon="🛰️", layout="wide")
 
-# ---------- Estilos mínimos (seguros) ----------
-st.markdown("""
-<style>
-:root{
-  --bd: rgba(130,140,160,.28);
-}
-.hero{border:1px solid var(--bd); border-radius:18px; padding:18px;
-      background: radial-gradient(900px 260px at 25% -10%, rgba(80,120,255,.10), transparent);}
-.card{border:1px solid var(--bd); border-radius:16px; padding:16px; margin-bottom:12px;}
-.kpi{border:1px solid var(--bd); border-radius:14px; padding:14px; margin-bottom:10px;}
-.kpi h3{margin:0 0 6px 0; font-size:.95rem; opacity:.8}
-.kpi .v{font-size:1.5rem; font-weight:800; letter-spacing:.2px}
-.small{font-size:.92rem; opacity:.9}
-</style>
-""", unsafe_allow_html=True)
+load_theme()
 
 # ---------- Header ----------
 logo_svg = repo_root / "app" / "static" / "logo_rexai.svg"

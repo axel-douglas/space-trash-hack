@@ -1,0 +1,131 @@
+:root {
+  --bg: #0b0d12;
+  --card: rgba(18, 21, 29, 0.72);
+  --stroke: rgba(255, 255, 255, 0.08);
+  --accent: #60a5fa;
+  --ink: #f8fafc;
+  --muted: rgba(226, 232, 240, 0.68);
+  --bd: rgba(140, 140, 160, 0.28);
+  --hero-background: radial-gradient(900px 260px at 25% -10%, rgba(80, 120, 255, 0.10), transparent);
+}
+
+body {
+  background: var(--bg);
+}
+
+.block-container {
+  padding: 2.6rem 3rem 3rem 3rem;
+}
+
+.hero {
+  border: 1px solid var(--bd);
+  border-radius: 18px;
+  padding: 18px;
+  background: var(--hero-background);
+}
+
+.block {
+  border: 1px solid var(--bd);
+  border-radius: 16px;
+  padding: 16px;
+}
+
+.card {
+  background: #151a21;
+  border: 1px solid #242c37;
+  border-radius: 16px;
+  padding: 18px;
+  margin-bottom: 12px;
+}
+
+.kpi {
+  border: 1px solid var(--bd);
+  border-radius: 14px;
+  padding: 14px;
+  margin-bottom: 10px;
+}
+
+.kpi h3 {
+  margin: 0 0 6px 0;
+  font-size: 0.95rem;
+  opacity: 0.8;
+}
+
+.kpi .v {
+  font-size: 1.6rem;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+}
+
+.kpi .hint {
+  font-size: 0.85rem;
+  opacity: 0.75;
+}
+
+.pill {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.78rem;
+  border: 1px solid var(--bd);
+  margin-right: 6px;
+}
+
+.pill.ok {
+  background: #e8f7ee;
+  color: #136c3a;
+  border-color: #b3e2c4;
+}
+
+.pill.info {
+  background: #e7f1ff;
+  color: #174ea6;
+  border-color: #c6dcff;
+}
+
+.pill.warn,
+.pill.med {
+  background: #fff3cd;
+  color: #8a6d1d;
+  border-color: #ffe69b;
+}
+
+.pill.bad {
+  background: #fdeceb;
+  color: #8b1b13;
+  border-color: #f5c2c0;
+}
+
+.small {
+  font-size: 0.92rem;
+  opacity: 0.9;
+}
+
+.legend {
+  font-size: 0.9rem;
+  opacity: 0.8;
+}
+
+hr {
+  border: none;
+  height: 1px;
+  background: var(--bd);
+  margin: 8px 0 16px 0;
+}
+
+table {
+  font-size: 0.95rem;
+}
+
+.badge-ok {
+  color: #0fd68b;
+}
+
+.badge-warn {
+  color: #f39c12;
+}
+
+.badge-risk {
+  color: #e74c3c;
+}
