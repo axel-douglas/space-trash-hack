@@ -16,6 +16,7 @@ import argparse
 import glob
 import hashlib
 import json
+import logging
 import math
 import random
 from dataclasses import dataclass
@@ -51,6 +52,34 @@ except Exception:  # pragma: no cover - environments without xgboost
     xgb = None  # type: ignore[assignment]
     HAS_XGBOOST = False
 
+try:  # Optional dependency for GPU-accelerated gradient boosting
+    import lightgbm as lgb
+    from lightgbm.basic import LightGBMError
+
+    HAS_LIGHTGBM = True
+except Exception:  # pragma: no cover - environments without lightgbm
+    lgb = None  # type: ignore[assignment]
+    LightGBMError = Exception  # type: ignore[assignment]
+    HAS_LIGHTGBM = False
+
+try:  # Optional dependency for ONNX export
+    from skl2onnx import convert_sklearn
+    from skl2onnx.common.data_types import FloatTensorType
+
+    HAS_SKL2ONNX = True
+except Exception:  # pragma: no cover - export dependencies optional
+    convert_sklearn = None  # type: ignore[assignment]
+    FloatTensorType = None  # type: ignore[assignment]
+    HAS_SKL2ONNX = False
+
+try:  # Optional dependency for ONNX serialization helpers
+    import onnx
+
+    HAS_ONNX = True
+except Exception:  # pragma: no cover - export dependencies optional
+    onnx = None  # type: ignore[assignment]
+    HAS_ONNX = False
+
 try:  # Optional dependency for deep models
     import torch
     from torch import nn
@@ -64,6 +93,8 @@ except Exception:  # pragma: no cover - environments without torch
     HAS_TORCH = False
 
 from app.modules.label_mapper import derive_recipe_id, load_curated_labels, lookup_labels
+
+LOGGER = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Paths & constants
@@ -88,6 +119,7 @@ METADATA_PATH = MODEL_DIR / "metadata_gold.json"
 LEGACY_METADATA_PATH = MODEL_DIR / "metadata.json"
 DATASET_PATH = PROCESSED_DIR / "rexai_training_dataset.parquet"
 DATASET_ML_PATH = PROCESSED_ML / "synthetic_runs.parquet"
+LIGHTGBM_ONNX_PATH = MODEL_DIR / "rexai_lightgbm.onnx"
 
 TARGET_COLUMNS = ["rigidez", "estanqueidad", "energy_kwh", "water_l", "crew_min"]
 CLASS_TARGET_COLUMNS = ["tightness_pass", "rigidity_level"]
@@ -1103,6 +1135,111 @@ def _train_xgboost(pipeline: Pipeline, df: DataFrame, seed: int | None) -> Dict[
     return {"metrics": metrics, "path": _relative_path(XGBOOST_PATH)}
 
 
+def _train_lightgbm_gpu(pipeline: Pipeline, df: DataFrame, seed: int | None) -> Dict[str, Any]:
+    """Train a GPU-ready LightGBM ensemble and export it to ONNX."""
+
+    if not HAS_LIGHTGBM:
+        return {}
+
+    preprocess = getattr(pipeline, "named_steps", {}).get("preprocess")
+    if preprocess is not None:
+        matrix = preprocess.transform(df[FEATURE_COLUMNS])
+        if hasattr(matrix, "toarray"):
+            matrix = matrix.toarray()
+    else:
+        matrix = df[FEATURE_COLUMNS].to_numpy(dtype=float)
+
+    features = np.asarray(matrix, dtype=np.float32)
+    targets = df[TARGET_COLUMNS].to_numpy(dtype=np.float32)
+
+    params = dict(
+        boosting_type="gbdt",
+        n_estimators=480,
+        learning_rate=0.05,
+        max_depth=-1,
+        subsample=0.85,
+        colsample_bytree=0.85,
+        reg_lambda=0.2,
+        reg_alpha=0.0,
+        random_state=seed or 0,
+        n_jobs=-1,
+        device_type="gpu",
+    )
+
+    base_estimator = lgb.LGBMRegressor(**params)
+    model = MultiOutputRegressor(base_estimator)
+    backend = "gpu"
+
+    try:
+        model.fit(features, targets)
+    except LightGBMError as exc:
+        LOGGER.warning("LightGBM GPU unavailable, fallback to CPU: %s", exc)
+        backend = "cpu"
+        cpu_params = dict(params)
+        cpu_params["device_type"] = "cpu"
+        model = MultiOutputRegressor(lgb.LGBMRegressor(**cpu_params))
+        model.fit(features, targets)
+    except Exception as exc:  # pragma: no cover - unexpected LightGBM failures
+        LOGGER.warning("Fallo entrenando LightGBM: %s", exc)
+        return {}
+
+    predictions = np.asarray(model.predict(features), dtype=float)
+    metrics: Dict[str, Dict[str, float]] = {}
+    maes: List[float] = []
+    rmses: List[float] = []
+    r2_scores: List[float] = []
+
+    for idx, target in enumerate(TARGET_COLUMNS):
+        truth = targets[:, idx].astype(float)
+        preds = predictions[:, idx]
+        mae = float(mean_absolute_error(truth, preds))
+        rmse = float(math.sqrt(mean_squared_error(truth, preds)))
+        r2 = float(r2_score(truth, preds))
+        metrics[target] = {"mae": mae, "rmse": rmse, "r2": r2}
+        maes.append(mae)
+        rmses.append(rmse)
+        r2_scores.append(r2)
+
+    if metrics:
+        metrics["overall"] = {
+            "mae": float(np.mean(maes)),
+            "rmse": float(np.mean(rmses)),
+            "r2": float(np.mean(r2_scores)),
+        }
+
+    payload: Dict[str, Any] = {
+        "metrics": metrics,
+        "backend": backend,
+        "provider": "onnxruntime",
+    }
+
+    if HAS_SKL2ONNX and HAS_ONNX:
+        try:
+            initial_types = [("input", FloatTensorType([None, features.shape[1]]))]
+            onnx_model = convert_sklearn(
+                model,
+                name="rexai_lightgbm",
+                initial_types=initial_types,
+                target_opset=17,
+            )
+            LIGHTGBM_ONNX_PATH.parent.mkdir(parents=True, exist_ok=True)
+            onnx.save_model(onnx_model, LIGHTGBM_ONNX_PATH)
+            payload["path"] = _relative_path(LIGHTGBM_ONNX_PATH)
+            payload["format"] = "onnx"
+            try:
+                payload["opset"] = int(next((imp.version for imp in onnx_model.opset_import), 0))
+            except StopIteration:  # pragma: no cover - opset metadata optional
+                payload["opset"] = 0
+        except Exception as exc:  # pragma: no cover - export optional
+            LOGGER.warning("No se pudo exportar LightGBM a ONNX: %s", exc)
+            try:
+                LIGHTGBM_ONNX_PATH.unlink(missing_ok=True)
+            except Exception:  # pragma: no cover - cleanup best effort
+                pass
+
+    return payload
+
+
 class _Autoencoder(nn.Module if HAS_TORCH else object):
     def __init__(self, input_dim: int, latent_dim: int = LATENT_DIM) -> None:
         if not HAS_TORCH:  # pragma: no cover - executed only without torch
@@ -1306,6 +1443,7 @@ def train_and_save(
 
     extras: Dict[str, Any] = {}
     extras["xgboost"] = _train_xgboost(pipeline, df, seed)
+    extras["lightgbm_gpu"] = _train_lightgbm_gpu(pipeline, df, seed)
     extras["autoencoder"] = _train_autoencoder(matrix)
     extras["tabtransformer"] = _train_tabtransformer(matrix, df[TARGET_COLUMNS].to_numpy(dtype=float))
     extras["classifiers"] = _train_classifiers(pipeline, df, seed)
@@ -1351,6 +1489,7 @@ def train_and_save(
         "artifacts": {
             "pipeline": _relative_path(PIPELINE_PATH),
             "xgboost": extras["xgboost"],
+            "lightgbm_gpu": extras["lightgbm_gpu"],
             "autoencoder": extras["autoencoder"],
             "tabtransformer": extras["tabtransformer"],
         },

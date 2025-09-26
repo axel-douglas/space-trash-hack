@@ -26,6 +26,14 @@ import pandas as pd
 import requests
 import streamlit as st
 
+try:  # Optional runtime for accelerated inference
+    import onnxruntime as ort
+
+    HAS_ONNXRUNTIME = True
+except Exception:  # pragma: no cover - optional dependency missing
+    ort = None  # type: ignore[assignment]
+    HAS_ONNXRUNTIME = False
+
 try:  # Optional dependency for embeddings
     import torch
     from torch import nn
@@ -49,6 +57,7 @@ AUTOENCODER_PATH = MODEL_DIR / "rexai_autoencoder.pt"
 TABTRANSFORMER_PATH = MODEL_DIR / "rexai_tabtransformer.pt"
 TIGHTNESS_CLASSIFIER_PATH = MODEL_DIR / "rexai_class_tightness.joblib"
 RIGIDITY_CLASSIFIER_PATH = MODEL_DIR / "rexai_class_rigidity.joblib"
+LIGHTGBM_ONNX_PATH = MODEL_DIR / "rexai_lightgbm.onnx"
 
 # Orden y nombres de objetivos que espera la UI
 TARGET_COLUMNS: List[str] = ["rigidez", "estanqueidad", "energy_kwh", "water_l", "crew_min"]
@@ -198,6 +207,10 @@ class ModelRegistry:
         self.classifier_meta: Dict[str, Any] = {}
         self.tightness_clf = None
         self.rigidity_clf = None
+        self.lightgbm_session = None
+        self.lightgbm_input_name: str | None = None
+        self.lightgbm_output_names: List[str] = []
+        self.lightgbm_meta: Dict[str, Any] = {}
         self.tightness_classes: np.ndarray = np.array([])
         self.rigidity_classes: np.ndarray = np.array([])
         self.tightness_score_map: Dict[int, float] = dict(DEFAULT_TIGHTNESS_SCORE_MAP)
@@ -361,6 +374,7 @@ class ModelRegistry:
 
         self._load_autoencoder()
         self._load_classifiers()
+        self._load_lightgbm()
 
     # ------------------------ Inferencia -------------------------------
     def predict(self, features: Mapping[str, Any]) -> Dict[str, Any]:
@@ -616,27 +630,50 @@ class ModelRegistry:
         return contribs
 
     def _predict_variants(self, matrix: np.ndarray) -> Dict[str, Dict[str, float]]:
-        """Predicciones alternativas con XGBoost (si hay artefactos)."""
+        """Predicciones alternativas con modelos adicionales."""
         out: Dict[str, Dict[str, float]] = {}
-        if not self.xgb_models:
-            return out
 
-        preds = []
-        for t in TARGET_COLUMNS:
-            model = self.xgb_models.get(t)
-            if model is None:
-                preds.append(np.zeros(matrix.shape[0]))
-            else:
-                preds.append(np.asarray(model.predict(matrix), dtype=float))
-        stacked = np.stack(preds, axis=1)[0]
-        out["xgboost"] = {
-            t: (
-                float(np.clip(stacked[i], 0.0, 1.0))
-                if t in {"rigidez", "estanqueidad"}
-                else float(max(0.0, stacked[i]))
-            )
-            for i, t in enumerate(TARGET_COLUMNS)
-        }
+        if self.xgb_models:
+            preds = []
+            for t in TARGET_COLUMNS:
+                model = self.xgb_models.get(t)
+                if model is None:
+                    preds.append(np.zeros(matrix.shape[0]))
+                else:
+                    preds.append(np.asarray(model.predict(matrix), dtype=float))
+            stacked = np.stack(preds, axis=1)[0]
+            out["xgboost"] = {
+                t: (
+                    float(np.clip(stacked[i], 0.0, 1.0))
+                    if t in {"rigidez", "estanqueidad"}
+                    else float(max(0.0, stacked[i]))
+                )
+                for i, t in enumerate(TARGET_COLUMNS)
+            }
+
+        if self.lightgbm_session is not None and self.lightgbm_input_name:
+            try:
+                matrix32 = np.asarray(matrix, dtype=np.float32)
+                outputs = self.lightgbm_session.run(
+                    None, {self.lightgbm_input_name: matrix32}
+                )
+                if outputs:
+                    values = np.asarray(outputs[0], dtype=float)
+                    if values.ndim == 1:
+                        values = values.reshape(1, -1)
+                    if values.shape[0] > 0:
+                        row = values[0]
+                        out["lightgbm_gpu"] = {
+                            target: (
+                                float(np.clip(row[idx], 0.0, 1.0))
+                                if target in {"rigidez", "estanqueidad"}
+                                else float(max(0.0, row[idx]))
+                            )
+                            for idx, target in enumerate(TARGET_COLUMNS)
+                        }
+            except Exception as exc:  # pragma: no cover - runtime errors raros
+                LOGGER.warning("Fallo inferencia LightGBM ONNX: %s", exc)
+
         return out
 
     def _apply_classifiers(
@@ -815,6 +852,60 @@ class ModelRegistry:
         else:
             self.rigidity_clf = None
             self.rigidity_classes = np.array([])
+
+    def _load_lightgbm(self) -> None:
+        meta = self.metadata.get("artifacts", {}).get("lightgbm_gpu", {})
+        if not isinstance(meta, dict):
+            meta = {}
+
+        self.lightgbm_meta = meta
+        self.lightgbm_session = None
+        self.lightgbm_input_name = None
+        self.lightgbm_output_names = []
+
+        if not HAS_ONNXRUNTIME:
+            return
+
+        path = meta.get("path") if isinstance(meta, dict) else None
+        model_path = self._resolve_artifact_path(path, LIGHTGBM_ONNX_PATH)
+        if model_path is None or not model_path.exists():
+            return
+
+        try:
+            session = ort.InferenceSession(model_path.as_posix(), providers=["CPUExecutionProvider"])
+        except Exception as exc:  # pragma: no cover - runtime errors are rare
+            LOGGER.warning("No se pudo cargar modelo ONNX LightGBM: %s", exc)
+            return
+
+        self.lightgbm_session = session
+        inputs = session.get_inputs()
+        if inputs:
+            self.lightgbm_input_name = inputs[0].name
+        outputs = session.get_outputs()
+        self.lightgbm_output_names = [out.name for out in outputs] if outputs else []
+
+    def _resolve_artifact_path(self, candidate: str | None, default: Path) -> Path | None:
+        if candidate:
+            candidate_path = Path(candidate)
+            search_order = []
+            if candidate_path.is_absolute():
+                search_order.append(candidate_path)
+            else:
+                search_order.append(self.model_dir / candidate_path)
+                search_order.append((DATA_ROOT.parent / candidate_path).resolve())
+        else:
+            search_order = []
+
+        search_order.append(default)
+
+        for option in search_order:
+            try:
+                resolved = option if option.is_absolute() else option.resolve()
+            except FileNotFoundError:
+                resolved = option
+            if resolved.exists():
+                return resolved
+        return None
 
 
 class _Autoencoder(nn.Module if HAS_TORCH else object):
