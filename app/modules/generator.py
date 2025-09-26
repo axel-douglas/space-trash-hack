@@ -69,6 +69,7 @@ from app.modules.data_sources import (
     resolve_dataset_path,
     slugify,
     to_lazy_frame,
+    token_set,
 )
 from app.modules.logging_utils import append_inference_log
 
@@ -507,28 +508,36 @@ _CATEGORY_DENSITY_DEFAULTS = {
 }
 
 
+def _load_regolith_vector() -> Dict[str, float]:
+    """Return a copy of the shared regolith composition vector."""
 
-def _normalize_text(value: Any) -> str:
-    text = str(value or "").lower()
-    text = text.replace("—", " ").replace("/", " ")
-    text = re.sub(r"\(.*?\)", " ", text)
-    text = re.sub(r"[^a-z0-9 ]+", " ", text)
-    tokens = []
-    for token in text.split():
-        if len(token) > 3 and token.endswith("s"):
-            token = token[:-1]
-        tokens.append(token)
-    return " ".join(tokens).strip()
+    return dict(REGOLITH_VECTOR)
 
 
 def _normalize_category(value: Any) -> str:
+    """Backward-compatible wrapper around :func:`normalize_category`."""
+
     return normalize_category(value)
+
+
+def _normalize_item(value: Any) -> str:
+    """Backward-compatible wrapper around :func:`normalize_item`."""
+
+    return normalize_item(value)
+
+
+def _token_set(value: Any) -> frozenset[str]:
+    """Compatibility shim delegating to :func:`token_set`."""
+
+    return token_set(value)
+
+
 def _build_match_key(category: Any, subitem: Any | None = None) -> str:
     """Return the canonical key used to match NASA reference tables."""
 
     if subitem:
-        return f"{_normalize_category(category)}|{_normalize_item(subitem)}"
-    return _normalize_category(category)
+        return f"{normalize_category(category)}|{normalize_item(subitem)}"
+    return normalize_category(category)
 def _estimate_density_from_row(row: pd.Series) -> float | None:
     """Estimate a material density with packaging-aware fallbacks."""
 
@@ -537,7 +546,7 @@ def _estimate_density_from_row(row: pd.Series) -> float | None:
     # estimator first honours category-specific defaults (e.g. ``gloves`` vs.
     # ``other packaging``) before falling back to the more general packaging
     # prior used by legacy data dumps.
-    category = _normalize_category(row.get("category", ""))
+    category = normalize_category(row.get("category", ""))
 
     try:
         cat_mass = float(row.get("category_total_mass_kg"))
@@ -571,15 +580,6 @@ def _estimate_density_from_row(row: pd.Series) -> float | None:
         return float(_CATEGORY_DENSITY_DEFAULTS[category])
 
     return None
-def _normalize_item(value: Any) -> str:
-    return normalize_item(value)
-
-
-def _token_set(value: Any) -> frozenset[str]:
-    normalized = _normalize_item(value)
-    if not normalized:
-        return frozenset()
-    return frozenset(normalized.split())
 
 
 _L2L_PARAMETERS: _L2LParameters | Mapping[str, Any] | None = None
@@ -697,6 +697,20 @@ def _official_features_bundle_new(cls, *args, **kwargs):
 
 
 _OfficialFeaturesBundle.__new__ = staticmethod(_official_features_bundle_new)
+
+
+_OfficialFeaturesBundle.__new__.__defaults__ = (
+    np.empty((0, 0), dtype=np.float64),
+    tuple(),
+    np.asarray([], dtype=np.float64),
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+    None,
+)
 
 
 def official_features_bundle() -> _OfficialFeaturesBundle:
@@ -1007,7 +1021,7 @@ def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], s
     if not bundle.value_columns:
         return {}, ""
 
-    category = _normalize_category(row.get("category", ""))
+    category = normalize_category(row.get("category", ""))
     if not category:
         return {}, ""
 
@@ -1027,7 +1041,7 @@ def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], s
     )
 
     for candidate in candidates:
-        normalized = _normalize_item(candidate)
+        normalized = normalize_item(candidate)
         if not normalized:
             continue
         for family in families:
@@ -1058,7 +1072,7 @@ def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], s
         indices = list(row_indices.tolist())
 
         for candidate in token_candidates:
-            tokens = _token_set(candidate)
+            tokens = token_set(candidate)
             if not tokens:
                 continue
             for reference, match_key, index in zip(reference_tokens, match_keys, indices, strict=False):
@@ -1086,8 +1100,7 @@ def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
     if "category" in existing_columns:
         norm_exprs.append(
             pl.col("category")
-            .map_elements(normalize_category)
-            .map_elements(_normalize_category, return_dtype=pl.String)
+            .map_elements(normalize_category, return_dtype=pl.String)
             .alias("category_norm")
         )
     else:
@@ -1101,8 +1114,7 @@ def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
         if source in existing_columns:
             norm_exprs.append(
                 pl.col(source)
-                .map_elements(normalize_item)
-                .map_elements(_normalize_item, return_dtype=pl.String)
+                .map_elements(normalize_item, return_dtype=pl.String)
                 .alias(alias)
             )
         else:
@@ -1263,11 +1275,13 @@ def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
                     if raw_key:
                         candidates.append(str(raw_key))
 
-                category_norm = _normalize_category(result_df.at[row_idx, "category"] if "category" in result_df.columns else "")
+                category_norm = normalize_category(
+                    result_df.at[row_idx, "category"] if "category" in result_df.columns else ""
+                )
                 if category_norm:
                     for source in ("material", "key_materials", "material_family"):
                         value = result_df.at[row_idx, source] if source in result_df.columns else ""
-                        normalized = _normalize_item(value)
+                        normalized = normalize_item(value)
                         if normalized:
                             candidates.append(f"{category_norm}|{normalized}")
                     candidates.append(category_norm)
