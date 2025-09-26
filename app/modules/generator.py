@@ -63,12 +63,11 @@ from app.modules.data_sources import (
     GAS_MEAN_YIELD,
     MEAN_REUSE,
     REGOLITH_VECTOR,
+    L2LParameters as _L2LParameters,
     load_l2l_parameters as _load_l2l_parameters,
     OfficialFeaturesBundle,
-    load_l2l_parameters,
     normalize_category,
     normalize_item,
-    official_features_bundle,
 )
 try:  # Optional heavy dependencies; gracefully disable logging if missing
     import pyarrow as pa
@@ -745,19 +744,73 @@ def _token_set(value: Any) -> frozenset[str]:
     return frozenset(normalized.split())
 
 
-_L2L_PARAMETERS = load_l2l_parameters()
-def _load_l2l_parameters() -> Mapping[str, Any]:
-    """Return optional Life-to-Life process parameters.
-
-    The production deployment sources these from reference datasets; the
-    open-source snapshot defaults to an empty mapping so the module can be
-    imported during tests without additional assets.
-    """
-
-    return {}
+_L2L_PARAMETERS: _L2LParameters | Mapping[str, Any] | None = None
 
 
-_L2L_PARAMETERS = _load_l2l_parameters()
+def _coerce_l2l_parameters(candidate: Any) -> _L2LParameters | None:
+    """Return a structured Logistics-to-Living payload when possible."""
+
+    if isinstance(candidate, _L2LParameters):
+        constants = getattr(candidate, "constants", None)
+        category_features = getattr(candidate, "category_features", None)
+        if isinstance(constants, Mapping) and isinstance(category_features, Mapping):
+            return candidate
+        return _L2LParameters(
+            dict(constants or {}),
+            {str(k): dict(v) for k, v in (category_features or {}).items() if isinstance(v, Mapping)},
+            {
+                str(k): dict(v)
+                for k, v in getattr(candidate, "item_features", {}).items()
+                if isinstance(v, Mapping)
+            },
+            {str(k): str(v) for k, v in getattr(candidate, "hints", {}).items()},
+        )
+
+    if isinstance(candidate, Mapping):
+        constants = candidate.get("constants", {})
+        category_features = candidate.get("category_features", {})
+        item_features = candidate.get("item_features", {})
+        hints = candidate.get("hints", {})
+        return _L2LParameters(
+            dict(constants) if isinstance(constants, Mapping) else {},
+            {
+                str(key): dict(value)
+                for key, value in (category_features if isinstance(category_features, Mapping) else {}).items()
+                if isinstance(value, Mapping)
+            },
+            {
+                str(key): dict(value)
+                for key, value in (item_features if isinstance(item_features, Mapping) else {}).items()
+                if isinstance(value, Mapping)
+            },
+            {str(key): str(value) for key, value in (hints if isinstance(hints, Mapping) else {}).items()},
+        )
+
+    return None
+
+
+def _get_l2l_parameters() -> _L2LParameters:
+    """Load Logistics-to-Living parameters with robust fallbacks."""
+
+    global _L2L_PARAMETERS
+
+    cached = _coerce_l2l_parameters(_L2L_PARAMETERS)
+    if cached is not None:
+        _L2L_PARAMETERS = cached
+        return cached
+
+    try:
+        loaded = _load_l2l_parameters()
+    except Exception:  # pragma: no cover - defensive guard for optional data
+        logging.getLogger(__name__).exception("Failed to load Logistics-to-Living parameters")
+        loaded = None
+
+    coerced = _coerce_l2l_parameters(loaded)
+    if coerced is None:
+        coerced = _L2LParameters({}, {}, {}, {})
+
+    _L2L_PARAMETERS = coerced
+    return coerced
 
 
 class _OfficialFeaturesBundle(NamedTuple):
@@ -927,7 +980,11 @@ def _build_mission_reference_tables(
 
 @lru_cache(maxsize=1)
 def _official_features_bundle() -> _OfficialFeaturesBundle:
-    l2l = _L2L_PARAMETERS
+    l2l = _get_l2l_parameters()
+    if not isinstance(getattr(l2l, "constants", None), Mapping) or not isinstance(
+        getattr(l2l, "category_features", None), Mapping
+    ):
+        l2l = _L2LParameters({}, {}, {}, {})
     if sparse is not None:
         empty_reference = sparse.csr_matrix((0, 0), dtype=np.float64)
     else:
