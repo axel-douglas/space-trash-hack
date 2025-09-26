@@ -5,9 +5,12 @@ import streamlit as st
 import pandas as pd
 
 from app.modules.scenarios import PLAYBOOKS  # dict: {scenario: Playbook(name, summary, steps=[...])}
+from app.modules.ui_blocks import load_theme
 
 # ⚠️ Debe ser la primera llamada
 st.set_page_config(page_title="Scenario Playbooks", page_icon="📚", layout="wide")
+
+load_theme()
 
 # ======== Estado compartido ========
 target      = st.session_state.get("target", None)
@@ -16,27 +19,17 @@ candidato   = state_sel["data"] if state_sel else None
 props       = candidato["props"] if candidato else None
 
 # ======== Estilos SpaceX/NASA-like ========
-st.markdown("""
-<style>
-:root{ --bd: rgba(140,140,160,.28); --ink: #0f172a; --muted: rgba(15,23,42,.65); }
-.hero{border:1px solid var(--bd); border-radius:16px; padding:18px;
-      background: radial-gradient(900px 260px at 20% -10%, rgba(80,120,255,.10), transparent);}
-.pill{display:inline-block; padding:4px 10px; border-radius:999px; font-weight:700; font-size:.78rem;
-      border:1px solid var(--bd); margin-right:6px}
-.pill.ok{background:#e8f7ee; color:#136c3a; border-color:#b3e2c4}
-.pill.info{background:#e7f1ff; color:#174ea6; border-color:#c6dcff}
-.pill.warn{background:#fff3cd; color:#8a6d1d; border-color:#ffe69b}
-.block{border:1px solid var(--bd); border-radius:16px; padding:16px;}
-.step{border:1px dashed var(--bd); border-radius:14px; padding:14px; margin-bottom:12px;}
-.step h4{margin:0 0 6px 0;}
-.kpi{border:1px solid var(--bd); border-radius:14px; padding:14px; margin-bottom:10px;}
-.kpi h3{margin:0 0 6px 0; font-size:.95rem; opacity:.8}
-.kpi .v{font-size:1.6rem; font-weight:800; letter-spacing:.2px}
-.legend{font-size:.9rem; opacity:.8}
-.small{font-size:.92rem; opacity:.9}
-.mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;}
-</style>
-""", unsafe_allow_html=True)
+st.markdown(
+    """
+    <style>
+    .hero {border-radius:16px; background: radial-gradient(900px 260px at 20% -10%, rgba(80,120,255,.10), transparent);}
+    .step{border:1px dashed var(--bd); border-radius:14px; padding:14px; margin-bottom:12px;}
+    .step h4{margin:0 0 6px 0;}
+    .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ======== HERO ========
 st.markdown("""

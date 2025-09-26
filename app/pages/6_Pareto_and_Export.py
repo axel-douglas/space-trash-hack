@@ -11,9 +11,12 @@ from app.modules.explain import compare_table
 from app.modules.analytics import pareto_front
 from app.modules.exporters import candidate_to_json, candidate_to_csv
 from app.modules.safety import check_safety  # recalcular badge al seleccionar
+from app.modules.ui_blocks import load_theme
 
 # ⚠️ PRIMERA llamada
 st.set_page_config(page_title="Pareto & Export", page_icon="📤", layout="wide")
+
+load_theme()
 
 # ======== estado requerido ========
 cands  = st.session_state.get("candidates", [])
@@ -25,25 +28,15 @@ if not cands or not target:
     st.stop()
 
 # ======== estilos (NASA/SpaceX-like) ========
-st.markdown("""
-<style>
-:root{ --bd: rgba(140,140,160,.28); --muted: rgba(255,255,255,.55); }
-.block{border:1px solid var(--bd); border-radius:16px; padding:16px;}
-.hero{border:1px solid var(--bd); border-radius:16px; padding:18px 18px 8px;
-      background: radial-gradient(1200px 380px at 20% -10%, rgba(80,120,255,.08), transparent);}
-.kpi{border:1px solid var(--bd); border-radius:14px; padding:14px; margin-bottom:10px;}
-.kpi h3{margin:0 0 6px 0; font-size:.95rem; opacity:.8}
-.kpi .v{font-size:1.6rem; font-weight:800; letter-spacing:.2px}
-.pill{display:inline-block; padding:4px 10px; border-radius:999px; font-weight:700; font-size:.78rem;
-      border:1px solid var(--bd); margin-right:6px}
-.pill.ok{background:#e8f7ee; color:#136c3a; border-color:#b3e2c4}
-.pill.info{background:#e7f1ff; color:#174ea6; border-color:#c6dcff}
-.pill.warn{background:#fff3cd; color:#8a6d1d; border-color:#ffe69b}
-.small{font-size:.92rem; opacity:.9}
-.legend{font-size:.86rem; opacity:.75}
-.section-title{margin-top:6px; margin-bottom:6px}
-</style>
-""", unsafe_allow_html=True)
+st.markdown(
+    """
+    <style>
+    .hero {border-radius:16px; padding:18px 18px 8px; background: radial-gradient(1200px 380px at 20% -10%, rgba(80,120,255,.08), transparent);}
+    .section-title{margin-top:6px; margin-bottom:6px}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ======== HERO ========
 st.markdown("""

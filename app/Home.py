@@ -4,6 +4,7 @@ import app  # noqa: F401
 from datetime import datetime
 import streamlit as st
 from app.modules.ml_models import MODEL_REGISTRY
+from app.modules.ui_blocks import load_theme
 
 st.set_page_config(
     page_title="Rex-AI • Mission Copilot",
@@ -11,20 +12,12 @@ st.set_page_config(
     layout="wide",
 )
 
+load_theme()
+
 # ──────────── Estilos (oscuro, cards y métricas) ────────────
 st.markdown(
     """
     <style>
-    :root {
-      --bg: #0b0d12;
-      --card: rgba(18,21,29,0.72);
-      --stroke: rgba(255,255,255,0.08);
-      --accent: #60a5fa;
-      --ink: #f8fafc;
-      --muted: rgba(226,232,240,0.68);
-    }
-    body {background: var(--bg);}
-    .block-container {padding: 2.6rem 3rem 3rem 3rem;}
     .hero {
       border-radius: 28px;
       padding: 36px 42px;

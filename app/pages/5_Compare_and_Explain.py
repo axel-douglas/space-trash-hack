@@ -6,9 +6,12 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from app.modules.explain import compare_table, score_breakdown
+from app.modules.ui_blocks import load_theme
 
 # ⚠️ Debe ser la PRIMERA llamada de Streamlit en la página
 st.set_page_config(page_title="Comparar & Explicar", page_icon="🧪", layout="wide")
+
+load_theme()
 
 # ======== estado requerido ========
 cands  = st.session_state.get("candidates", [])
@@ -18,23 +21,18 @@ if not cands or not target:
     st.stop()
 
 # ======== estilo visual ========
-st.markdown("""
-<style>
-/* Cards / KPIs */
-.kpi {border:1px solid rgba(128,128,128,0.25); border-radius:14px; padding:14px; margin-bottom:12px;}
-.kpi h3 {margin:0 0 6px 0; font-size:0.95rem; opacity:0.8;}
-.kpi .v {font-size:1.6rem; font-weight:700; letter-spacing:0.2px;}
-.kpi .hint {font-size:0.85rem; opacity:0.75;}
-/* Pills */
-.pill {display:inline-block; padding:4px 10px; border-radius:999px; font-weight:600; font-size:0.85rem;}
-.pill.ok {background:#e8f7ee; color:#136c3a; border:1px solid #b3e2c4;}
-.pill.med {background:#fff3cd; color:#8a6d1d; border:1px solid #ffe69b;}
-.pill.bad {background:#fdeceb; color:#8b1b13; border:1px solid #f5c2c0;}
-/* Secciones */
-h2 span.sub {font-size:0.95rem; font-weight:500; opacity:0.7; margin-left:8px;}
-.small {font-size:0.9rem; opacity:0.85;}
-</style>
-""", unsafe_allow_html=True)
+st.markdown(
+    """
+    <style>
+    .kpi {border-color: rgba(128,128,128,0.25); margin-bottom:12px;}
+    .kpi .v {font-weight:700;}
+    .pill {font-weight:600; font-size:0.85rem;}
+    h2 span.sub {font-size:0.95rem; font-weight:500; opacity:0.7; margin-left:8px;}
+    .small {font-size:0.9rem; opacity:0.85;}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 st.markdown("# 🧪 Compare & Explain")
 st.caption("Compará candidatos como en un *design review*: qué rinde más, dónde gasta menos, y por qué elige la IA esa receta.")
