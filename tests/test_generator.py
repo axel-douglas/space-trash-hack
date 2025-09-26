@@ -345,22 +345,27 @@ def test_generate_candidates_uses_parallel_backend(monkeypatch):
         }
     ))
     monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ([], {}))
-                {
-                    "kg": [1.0],
-                    "pct_mass": [100.0],
-                    "pct_volume": [100.0],
-                    "moisture_pct": [0.0],
-                    "difficulty_factor": [1.0],
-                    "density_kg_m3": [1.0],
-                    "category": ["packaging"],
-                    "flags": [""],
-                    "_problematic": [0],
-                    "_source_id": ["A"],
-                    "_source_category": ["packaging"],
-                    "_source_flags": [""],
-                    "material": ["foil"],
-                }
-    ))
+    monkeypatch.setattr(
+        generator,
+        "heuristic_props",
+        lambda *args, **kwargs: pd.DataFrame(
+            {
+                "kg": [1.0],
+                "pct_mass": [100.0],
+                "pct_volume": [100.0],
+                "moisture_pct": [0.0],
+                "difficulty_factor": [1.0],
+                "density_kg_m3": [1.0],
+                "category": ["packaging"],
+                "flags": [""],
+                "_problematic": [0],
+                "_source_id": ["A"],
+                "_source_category": ["packaging"],
+                "_source_flags": [""],
+                "material": ["foil"],
+            }
+        ),
+    )
     monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
 
     draws: list[float] = []
@@ -929,6 +934,111 @@ def test_prepare_waste_frame_injects_l2l_features(monkeypatch):
     assert "_l2l_page_hints" in row.index
     assert "p.42" in row["_l2l_page_hints"]
     assert "p.15" in row["_l2l_page_hints"]
+
+
+def test_prepare_waste_frame_vectorized_large_inventory():
+    rng = np.random.default_rng(42)
+    size = 2048
+
+    category_choices = np.array(
+        [
+            "Food Packaging",
+            "Foam Packaging",
+            "EVA Waste",
+            "Other Packaging Glove",
+        ]
+    )
+    material_choices = np.array(
+        [
+            "Polyethylene Film",
+            "Nomex Fabric",
+            "Aluminum Panel",
+            "Zotek Foam",
+            "Nitrile Glove",
+        ]
+    )
+    family_choices = np.array(
+        [
+            "PE-PET-AL Laminate",
+            "Closed_cell Foam",
+            "Polyester Textile",
+            "Nylon Mesh",
+            "Nomex Weave",
+        ]
+    )
+    flag_choices = np.array(["", "multilayer", "closed_cell", "ctb", "wipe"])
+
+    kg = rng.uniform(0.1, 25.0, size).round(4)
+    volume_l = rng.uniform(0.0, 50.0, size).round(4)
+    zero_volume_mask = rng.random(size) < 0.35
+    volume_l[zero_volume_mask] = 0.0
+
+    category_mass = rng.uniform(5.0, 120.0, size).round(4)
+    category_volume = rng.uniform(0.05, 5.0, size).round(4)
+    zero_category_volume = rng.random(size) < 0.4
+    category_volume[zero_category_volume] = 0.0
+
+    data = {
+        "id": [f"W{idx}" for idx in range(size)],
+        "category": rng.choice(category_choices, size=size),
+        "material": rng.choice(material_choices, size=size),
+        "material_family": rng.choice(family_choices, size=size),
+        "flags": rng.choice(flag_choices, size=size),
+        "kg": kg,
+        "volume_l": volume_l,
+        "category_total_mass_kg": category_mass,
+        "category_total_volume_m3": category_volume,
+    }
+
+    for column in generator._COMPOSITION_DENSITY_MAP:
+        values = rng.uniform(0.0, 100.0, size).round(3)
+        values[rng.random(size) < 0.45] = 0.0
+        data[column] = values
+
+    waste_df = pd.DataFrame(data)
+
+    prepared = generator.prepare_waste_frame(waste_df)
+    assert prepared.shape[0] == size
+
+    expected_tokens = (
+        prepared["material"].astype(str).str.lower()
+        + " "
+        + prepared["category"].astype(str).str.lower()
+        + " "
+        + prepared["flags"].astype(str).str.lower()
+        + " "
+        + prepared["key_materials"].astype(str).str.lower()
+    )
+    pd.testing.assert_series_equal(prepared["tokens"], expected_tokens, check_names=False)
+
+    expected_problematic = prepared.apply(generator._is_problematic, axis=1)
+    pd.testing.assert_series_equal(
+        prepared["_problematic"],
+        expected_problematic.astype(bool),
+        check_names=False,
+    )
+
+    mass_series = pd.to_numeric(prepared["kg"], errors="coerce").fillna(0.0)
+    volume_series = pd.to_numeric(prepared["volume_l"], errors="coerce") / 1000.0
+    expected_density = mass_series.divide(volume_series).where(
+        (volume_series > 0) & volume_series.notna()
+    )
+
+    missing = expected_density.isna() | ~np.isfinite(expected_density)
+    if missing.any():
+        fallback = prepared.loc[missing].apply(generator._estimate_density_from_row, axis=1)
+        expected_density.loc[missing] = fallback
+
+    default_density = float(
+        generator._CATEGORY_DENSITY_DEFAULTS.get("other packaging glove", 500.0)
+    )
+    expected_density = expected_density.fillna(default_density).clip(lower=20.0, upper=4000.0)
+
+    pd.testing.assert_series_equal(
+        prepared["density_kg_m3"],
+        expected_density,
+        check_names=False,
+    )
 
 
 def test_compute_feature_vector_uses_l2l_packaging_ratio(monkeypatch):

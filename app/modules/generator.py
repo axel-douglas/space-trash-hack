@@ -25,7 +25,9 @@ import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Mapping, Sequence, Tuple
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, Dict, Iterable, Mapping, NamedTuple, Sequence, Tuple
 
 try:
     import jax.numpy as jnp
@@ -45,6 +47,7 @@ from app.modules.data_sources import (
     MEAN_REUSE,
     REGOLITH_VECTOR,
     OfficialFeaturesBundle,
+    load_l2l_parameters,
     normalize_category,
     normalize_item,
     official_features_bundle,
@@ -679,8 +682,7 @@ def _normalize_text(value: Any) -> str:
 
 
 def _normalize_category(value: Any) -> str:
-    normalized = _normalize_text(value)
-    return _CATEGORY_SYNONYMS.get(normalized, normalized)
+    return normalize_category(value)
 def _build_match_key(category: Any, subitem: Any | None = None) -> str:
     """Return the canonical key used to match NASA reference tables."""
 
@@ -723,7 +725,7 @@ def _estimate_density_from_row(row: pd.Series) -> float | None:
 
     return None
 def _normalize_item(value: Any) -> str:
-    return _normalize_text(value)
+    return normalize_item(value)
 
 
 def _token_set(value: Any) -> frozenset[str]:
@@ -733,7 +735,7 @@ def _token_set(value: Any) -> frozenset[str]:
     return frozenset(normalized.split())
 
 
-_L2L_PARAMETERS = _load_l2l_parameters()
+_L2L_PARAMETERS = load_l2l_parameters()
 
 
 class _OfficialFeaturesBundle(NamedTuple):
@@ -1015,7 +1017,6 @@ def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
     norm_exprs: list[pl.Expr] = []
     if "category" in existing_columns:
         norm_exprs.append(
-            pl.col("category").map_elements(normalize_category).alias("category_norm")
             pl.col("category")
             .map_elements(_normalize_category, return_dtype=pl.String)
             .alias("category_norm")
@@ -1030,7 +1031,6 @@ def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
     ):
         if source in existing_columns:
             norm_exprs.append(
-                pl.col(source).map_elements(normalize_item).alias(alias)
                 pl.col(source)
                 .map_elements(_normalize_item, return_dtype=pl.String)
                 .alias(alias)
@@ -1372,18 +1372,54 @@ def prepare_waste_frame(waste_df: pd.DataFrame) -> pd.DataFrame:
     if "key_materials" not in out.columns:
         out["key_materials"] = out["material"].astype(str)
 
-    out["tokens"] = (
-        out["material"].astype(str).str.lower()
-        + " "
-        + out["category"].astype(str).str.lower()
-        + " "
-        + out["flags"].astype(str).str.lower()
-        + " "
-        + out["key_materials"].astype(str).str.lower()
-    )
+    # ------------------------------------------------------------------
+    # Vectorised token assembly and heuristic flags
+    # ------------------------------------------------------------------
+    for column in ("material", "category", "flags", "key_materials"):
+        if column not in out.columns:
+            out[column] = ""
+    material_lower = out["material"].astype(str).str.lower()
+    category_lower = out["category"].astype(str).str.lower()
+    flags_lower = out["flags"].astype(str).str.lower()
+    key_materials_lower = out["key_materials"].astype(str).str.lower()
+
+    tokens = material_lower.str.cat(category_lower, sep=" ", na_rep="")
+    tokens = tokens.str.cat(flags_lower, sep=" ", na_rep="")
+    tokens = tokens.str.cat(key_materials_lower, sep=" ", na_rep="")
+    out["tokens"] = tokens
 
     if "_problematic" not in out.columns:
-        out["_problematic"] = out.apply(_is_problematic, axis=1)
+        material_family_series = out.get("material_family")
+        if isinstance(material_family_series, pd.Series):
+            material_family_series = material_family_series.astype(str)
+        else:
+            material_family_series = pd.Series("", index=out.index, dtype=str)
+        family_tokens = material_lower.str.cat(
+            material_family_series.fillna("").str.lower(),
+            sep=" ",
+            na_rep="",
+        )
+
+        problematic_rules = (
+            category_lower.str.contains("pouches", na=False)
+            | flags_lower.str.contains("multilayer", na=False)
+            | family_tokens.str.contains("pe-pet-al", na=False)
+            | category_lower.str.contains("foam", na=False)
+            | family_tokens.str.contains("zotek", na=False)
+            | flags_lower.str.contains("closed_cell", na=False)
+            | category_lower.str.contains("eva", na=False)
+            | flags_lower.str.contains("ctb", na=False)
+            | family_tokens.str.contains("nomex", na=False)
+            | family_tokens.str.contains("nylon", na=False)
+            | family_tokens.str.contains("polyester", na=False)
+            | category_lower.str.contains("glove", na=False)
+            | family_tokens.str.contains("nitrile", na=False)
+            | flags_lower.str.contains("wipe", na=False)
+            | category_lower.str.contains("textile", na=False)
+        )
+        out["_problematic"] = problematic_rules.astype(bool)
+    else:
+        out["_problematic"] = out["_problematic"].astype(bool)
 
     out["_source_id"] = out["id"].astype(str)
     out["_source_category"] = out["category"].astype(str)
@@ -1394,22 +1430,63 @@ def prepare_waste_frame(waste_df: pd.DataFrame) -> pd.DataFrame:
     mass = pd.to_numeric(out["kg"], errors="coerce").fillna(0.0)
     volume_l = pd.to_numeric(out.get("volume_l"), errors="coerce")
     volume_m3 = volume_l / 1000.0
-    density = pd.Series(np.nan, index=out.index, dtype=float)
-    with_volume = volume_m3.notna() & (volume_m3 > 0)
-    density.loc[with_volume] = mass.loc[with_volume] / volume_m3.loc[with_volume]
 
-    missing_density = density.isna() | ~np.isfinite(density)
-    if missing_density.any():
-        for idx, row in out.loc[missing_density].iterrows():
-            estimate = _estimate_density_from_row(row)
-            if estimate is not None:
-                density.at[idx] = estimate
+    density = mass.divide(volume_m3).where((volume_m3 > 0) & volume_m3.notna())
+
+    cat_mass = pd.to_numeric(out.get("category_total_mass_kg"), errors="coerce")
+    if not isinstance(cat_mass, pd.Series):
+        cat_mass = pd.Series(cat_mass, index=out.index, dtype=float)
+    cat_volume = pd.to_numeric(out.get("category_total_volume_m3"), errors="coerce")
+    if not isinstance(cat_volume, pd.Series):
+        cat_volume = pd.Series(cat_volume, index=out.index, dtype=float)
+    cat_density = cat_mass.divide(cat_volume).where((cat_volume > 0) & cat_volume.notna())
+    density = density.fillna(cat_density)
+
+    composition_columns: dict[str, pd.Series] = {}
+    for column in _COMPOSITION_DENSITY_MAP:
+        if column in out.columns:
+            composition_columns[column] = pd.to_numeric(out[column], errors="coerce").fillna(0.0)
+        else:
+            composition_columns[column] = pd.Series(0.0, index=out.index, dtype=float)
+
+    composition_df = pd.DataFrame(composition_columns, index=out.index)
+    composition_frac = composition_df.div(100.0)
+    frac_total = composition_frac.sum(axis=1)
+    density_weights = composition_frac.mul(pd.Series(_COMPOSITION_DENSITY_MAP))
+    weighted_density = density_weights.sum(axis=1).div(frac_total).where(frac_total > 0)
+
+    normalized_category = _vectorized_normalize_category(out["category"])
+    foam_mask = normalized_category == "foam packaging"
+    foam_default = _CATEGORY_DENSITY_DEFAULTS.get("foam packaging")
+    if foam_default is not None:
+        weighted_density = weighted_density.where(
+            ~foam_mask,
+            weighted_density.clip(upper=float(foam_default)),
+        )
+
+    density = density.fillna(weighted_density)
+
+    category_defaults = normalized_category.map(_CATEGORY_DENSITY_DEFAULTS).astype(float)
+    density = density.fillna(category_defaults)
 
     default_density = float(_CATEGORY_DENSITY_DEFAULTS.get("other packaging glove", 500.0))
     density = density.fillna(default_density)
     out["density_kg_m3"] = density.clip(lower=20.0, upper=4000.0)
 
     return out
+
+
+def _vectorized_normalize_category(series: pd.Series) -> pd.Series:
+    """Return :func:`normalize_category` values without row-wise ``apply``."""
+
+    if not isinstance(series, pd.Series) or series.empty:
+        return pd.Series([], dtype=str)
+
+    values = series.astype(str)
+    unique_values = pd.unique(values)
+    mapping = {value: normalize_category(value) for value in unique_values}
+    normalized = values.map(mapping)
+    return normalized.fillna("")
 
 
 def _is_problematic(row: pd.Series) -> bool:
