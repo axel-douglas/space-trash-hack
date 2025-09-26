@@ -3,9 +3,9 @@ Fabrics,Clothing,0.16,36.5,86.5,173.0,296.0
 Paper & Office Supplies,,0.007,1.5,3.5,7.0,12.0
 Fabrics,Cleaning Wipes,0.137,31.0,74.0,148.0,253.0
 Fabrics,Towels/Wash Cloths,0.098,22.0,53.0,106.0,181.0
-Foam Packaging for Launch,,0.04,9.0,21.5,43.0,73.5
-Other Crew Supplies,,0.037,8.5,20.0,40.0,68.5
-Food & Packaging,,0.352,75.5,190.0,380.0,645.5
-EVA Supplies,,0.01,2.5,5.5,11.0,19.0
+Foam Packaging,Zotek F30 (PVDF foam),0.04,9.0,21.5,43.0,73.5
+Other Packaging/Gloves (B),Nitrile gloves,0.037,8.5,20.0,40.0,68.5
+Food Packaging,Overwrap,0.352,75.5,190.0,380.0,645.5
+EVA Waste,Cargo Transfer Bags (CTB),0.01,2.5,5.5,11.0,19.0
 Human Wastes,,0.449,102.5,243.0,485.0,830.5
 Waste Recovery/Mgt System,,0.162,37.0,87.0,174.0,298.0
