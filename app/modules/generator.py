@@ -14,6 +14,7 @@ candidate assembly.
 
 from __future__ import annotations
 
+import atexit
 import itertools
 import json
 import logging
@@ -48,6 +49,13 @@ from app.modules.data_sources import (
     normalize_item,
     official_features_bundle,
 )
+try:  # Optional heavy dependencies; gracefully disable logging if missing
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+except Exception:  # pragma: no cover - pyarrow is expected in production
+    pa = None  # type: ignore[assignment]
+    pq = None  # type: ignore[assignment]
+
 from app.modules.label_mapper import derive_recipe_id, lookup_labels
 from app.modules.logging_utils import append_inference_log
 from app.modules.ranking import derive_auxiliary_signals, score_recipe
@@ -58,6 +66,308 @@ except Exception:  # pragma: no cover - fallback when models are not available
     MODEL_REGISTRY = None
 
 _OfficialFeaturesBundle = OfficialFeaturesBundle
+DATASETS_ROOT = Path(__file__).resolve().parents[2] / "datasets"
+LOGS_ROOT = Path(__file__).resolve().parents[2] / "data" / "logs"
+
+_INFERENCE_LOG_LOCK = threading.Lock()
+_INFERENCE_LOG_STATE: Dict[str, Any] = {
+    "date": None,
+    "path": None,
+    "schema": None,
+    "writer": None,
+}
+
+
+def _to_lazy_frame(
+    frame: pd.DataFrame | pl.DataFrame | pl.LazyFrame,
+) -> tuple[pl.LazyFrame, str]:
+    """Return a :class:`polars.LazyFrame` along with the original frame type."""
+
+    if isinstance(frame, pl.LazyFrame):
+        return frame, "lazy"
+    if isinstance(frame, pl.DataFrame):
+        return frame.lazy(), "polars"
+    if isinstance(frame, pd.DataFrame):
+        return pl.from_pandas(frame).lazy(), "pandas"
+    raise TypeError(f"Unsupported frame type: {type(frame)!r}")
+
+
+def _from_lazy_frame(lazy: pl.LazyFrame, frame_kind: str) -> pd.DataFrame | pl.DataFrame | pl.LazyFrame:
+    """Convert *lazy* back to the representation described by *frame_kind*."""
+
+    if frame_kind == "lazy":
+        return lazy
+
+    collected = lazy.collect()
+    if frame_kind == "polars":
+        return collected
+    if frame_kind == "pandas":
+        return collected.to_pandas()
+    raise ValueError(f"Unsupported frame kind: {frame_kind}")
+
+
+def _resolve_dataset_path(name: str) -> Path | None:
+    """Return the first dataset path that exists for *name*.
+
+    The helper checks the canonical ``datasets`` root alongside the ``raw``
+    subdirectory so callers do not need to remember where a file was stored.
+    """
+
+    candidates = (
+        DATASETS_ROOT / name,
+        DATASETS_ROOT / "raw" / name,
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _slugify(value: str) -> str:
+    """Convert *value* into a snake_case identifier safe for feature names."""
+
+    text = re.sub(r"[^0-9a-zA-Z]+", "_", str(value).strip().lower())
+    text = re.sub(r"_+", "_", text).strip("_")
+    return text or "value"
+
+
+def _to_serializable(value: Any) -> Any:
+    """Convert *value* into a JSON-serializable structure."""
+
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, (list, tuple, set)):
+        return [_to_serializable(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _to_serializable(v) for k, v in value.items()}
+    if isinstance(value, np.ndarray):
+        return [_to_serializable(v) for v in value.tolist()]
+    return str(value)
+
+
+def _resolve_inference_log_dir(timestamp: datetime) -> Path:
+    """Return the directory backing inference logs for *timestamp*."""
+
+    return LOGS_ROOT / "inference" / timestamp.strftime("%Y%m%d")
+
+
+def _close_inference_log_writer_locked() -> None:
+    state = _INFERENCE_LOG_STATE
+    writer = state.get("writer")
+    if writer is not None:
+        try:
+            writer.close()
+        except Exception:
+            pass
+    state["writer"] = None
+    state["schema"] = None
+    state["date"] = None
+    state["path"] = None
+
+
+def _close_inference_log_writer() -> None:
+    if pq is None:
+        return
+    with _INFERENCE_LOG_LOCK:
+        _close_inference_log_writer_locked()
+
+
+def _next_inference_log_path(log_dir: Path, date_token: str) -> Path:
+    base_name = f"inference_{date_token}"
+    candidate = log_dir / f"{base_name}.parquet"
+    if not candidate.exists():
+        return candidate
+
+    index = 1
+    while True:
+        candidate = log_dir / f"{base_name}_{index:03d}.parquet"
+        if not candidate.exists():
+            return candidate
+        index += 1
+
+
+def _ensure_inference_log_writer_locked(
+    timestamp: datetime, field_names: Iterable[str]
+) -> tuple[pa.Schema | None, Any | None]:
+    if pa is None or pq is None:
+        return None, None
+
+    desired_fields = sorted(set(str(name) for name in field_names))
+    state = _INFERENCE_LOG_STATE
+
+    current_date = state.get("date")
+    date_token = timestamp.strftime("%Y%m%d")
+    schema: pa.Schema | None = state.get("schema")
+
+    if current_date != date_token:
+        _close_inference_log_writer_locked()
+        schema = None
+
+    if schema is not None:
+        existing_fields = list(schema.names)
+    else:
+        existing_fields = []
+
+    if set(existing_fields) != set(desired_fields):
+        if state.get("writer") is not None:
+            _close_inference_log_writer_locked()
+        all_fields = sorted(set(existing_fields) | set(desired_fields))
+        schema = pa.schema((pa.field(name, pa.string()) for name in all_fields))
+
+        log_dir = _resolve_inference_log_dir(timestamp)
+        log_dir.mkdir(parents=True, exist_ok=True)
+        path = _next_inference_log_path(log_dir, date_token)
+
+        try:
+            writer = pq.ParquetWriter(str(path), schema=schema)
+        except Exception:
+            return None, None
+
+        state["date"] = date_token
+        state["path"] = path
+        state["schema"] = schema
+        state["writer"] = writer
+        return schema, writer
+
+    writer = state.get("writer")
+    if writer is None:
+        log_dir = _resolve_inference_log_dir(timestamp)
+        log_dir.mkdir(parents=True, exist_ok=True)
+        path = _next_inference_log_path(log_dir, date_token)
+        try:
+            writer = pq.ParquetWriter(str(path), schema=schema)
+        except Exception:
+            return None, None
+        state["date"] = date_token
+        state["path"] = path
+        state["writer"] = writer
+
+    return schema, writer
+
+
+if pq is not None:  # pragma: no branch - guard for optional dependency
+    atexit.register(_close_inference_log_writer)
+
+
+def _prepare_inference_event(
+    input_features: Dict[str, Any],
+    prediction: Dict[str, Any] | None,
+    uncertainty: Dict[str, Any] | None,
+    model_registry: Any | None,
+    timestamp: datetime | None = None,
+) -> tuple[datetime, Dict[str, str | None]]:
+    """Build the serializable payload for an inference log event."""
+
+    now = timestamp or datetime.now(UTC)
+
+    model_hash = ""
+    if model_registry is not None:
+        metadata = getattr(model_registry, "metadata", {}) or {}
+        if isinstance(metadata, dict):
+            model_hash = str(metadata.get("model_hash") or metadata.get("checksum") or "")
+        if not model_hash:
+            for attr in ("model_hash", "checksum", "pipeline_checksum", "pipeline_hash"):
+                value = getattr(model_registry, attr, None)
+                if value:
+                    model_hash = str(value)
+                    break
+
+    payload: Dict[str, str | None] = {
+        "timestamp": now.isoformat(timespec="microseconds"),
+        "input_features": json.dumps(_to_serializable(input_features or {}), sort_keys=True),
+        "prediction": json.dumps(_to_serializable(prediction or {}), sort_keys=True),
+        "uncertainty": json.dumps(_to_serializable(uncertainty or {}), sort_keys=True),
+        "model_hash": model_hash or None,
+    }
+
+    return now, payload
+
+
+def _append_inference_log(
+    input_features: Dict[str, Any],
+    prediction: Dict[str, Any] | None,
+    uncertainty: Dict[str, Any] | None,
+    model_registry: Any | None,
+) -> None:
+    """Persist an inference event using a streaming Parquet writer."""
+
+    if pa is None or pq is None:  # pragma: no cover - dependencies should exist
+        return
+
+    try:
+        LOGS_ROOT.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return
+
+    event_time, event_payload = _prepare_inference_event(
+        input_features=input_features,
+        prediction=prediction,
+        uncertainty=uncertainty,
+        model_registry=model_registry,
+    )
+
+    with _INFERENCE_LOG_LOCK:
+        schema, writer = _ensure_inference_log_writer_locked(
+            event_time, event_payload.keys()
+        )
+        if schema is None or writer is None:
+            return
+
+        arrays = []
+        for field in schema:
+            value = event_payload.get(field.name)
+            arrays.append(pa.array([value], type=field.type))
+
+        table = pa.Table.from_arrays(arrays, schema=schema)
+
+        try:
+            writer.write_table(table)
+        except Exception:
+            _close_inference_log_writer_locked()
+
+
+def _load_regolith_vector() -> Dict[str, float]:
+    path = _resolve_dataset_path("MGS-1_Martian_Regolith_Simulant_Recipe.csv")
+    if path is None:
+        path = DATASETS_ROOT / "raw" / "mgs1_oxides.csv"
+
+    if path and path.exists():
+        table = pd.read_csv(path)
+        key_cols = [
+            col
+            for col in table.columns
+            if col.lower() in {"oxide", "component", "phase", "mineral"}
+        ]
+        value_cols = [
+            col
+            for col in table.columns
+            if any(token in col.lower() for token in ("wt", "weight", "percent"))
+        ]
+
+        key_col = key_cols[0] if key_cols else None
+        value_col = value_cols[0] if value_cols else None
+
+        if key_col and value_col:
+            working = table[[key_col, value_col]].dropna()
+
+            def _clean_label(value: Any) -> str:
+                text = str(value or "").lower()
+                text = re.sub(r"[^0-9a-z]+", "_", text)
+                text = re.sub(r"_+", "_", text).strip("_")
+                return text
+
+            working[key_col] = working[key_col].map(_clean_label)
+            weights = pd.to_numeric(working[value_col], errors="coerce")
+            total = float(weights.sum())
+            if total > 0:
+                normalised = weights.div(total)
+                return {
+                    str(key): float(normalised.iloc[idx])
+                    for idx, key in enumerate(working[key_col])
+                    if pd.notna(normalised.iloc[idx])
+                }
 
 
 _COMPOSITION_DENSITY_MAP = {
@@ -84,6 +394,613 @@ _CATEGORY_DENSITY_DEFAULTS = {
 }
 
 
+def _merge_reference_dataset(
+    base: pd.DataFrame | pl.DataFrame | pl.LazyFrame, filename: str, prefix: str
+) -> pd.DataFrame | pl.DataFrame | pl.LazyFrame:
+    path = _resolve_dataset_path(filename)
+    if path is None:
+        return base
+
+    base_lazy, base_kind = _to_lazy_frame(base)
+    base_columns = list(base_lazy.columns)
+
+    extra_lazy = pl.scan_csv(path)
+    extra_columns = extra_lazy.columns
+
+    join_cols = [col for col in ("category", "subitem") if col in base_columns and col in extra_columns]
+    if not join_cols:
+        return base
+
+    existing = set(base_columns)
+    rename_map: Dict[str, str] = {}
+    drop_cols: list[str] = []
+    for column in extra_columns:
+        if column in join_cols:
+            continue
+        if column in existing:
+            drop_cols.append(column)
+            continue
+        rename_map[column] = f"{prefix}_{_slugify(column)}"
+
+    if drop_cols:
+        extra_lazy = extra_lazy.drop(drop_cols)
+    if rename_map:
+        extra_lazy = extra_lazy.rename(rename_map)
+
+    added_columns = [rename_map.get(col, col) for col in extra_columns if col not in join_cols and col not in drop_cols]
+
+    merged_lazy = base_lazy.join(extra_lazy, on=join_cols, how="left")
+    if added_columns:
+        projection = base_columns + [col for col in added_columns if col not in base_columns]
+        merged_lazy = merged_lazy.select([pl.col(name) for name in projection])
+
+    result = _from_lazy_frame(merged_lazy, base_kind)
+    if isinstance(result, pd.DataFrame):
+        return result.loc[:, ~result.columns.duplicated()]
+    if isinstance(result, pl.DataFrame):
+        unique_cols = []
+        seen: set[str] = set()
+        for name in result.columns:
+            if name in seen:
+                continue
+            seen.add(name)
+            unique_cols.append(name)
+        return result.select(unique_cols)
+    return result
+
+
+def _mission_slug(column: str) -> str:
+    cleaned = column.lower()
+    cleaned = cleaned.replace("summary_", "")
+    cleaned = cleaned.replace("mass", "")
+    cleaned = cleaned.replace("kg", "")
+    cleaned = cleaned.replace("total", "")
+    cleaned = cleaned.replace("__", "_")
+    return _slugify(cleaned)
+
+
+class _WasteSummary(NamedTuple):
+    mass_by_key: Dict[str, Dict[str, float]]
+    mission_totals: Dict[str, float]
+
+
+def _load_waste_summary_data() -> _WasteSummary:
+    path = _resolve_dataset_path("nasa_waste_summary.csv")
+    if path is None:
+        return _WasteSummary({}, {})
+
+    table = pl.scan_csv(path)
+    if "category" not in table.columns:
+        return _WasteSummary({}, {})
+
+    mass_columns = [
+        column
+        for column in table.columns
+        if column.lower().endswith("mass_kg") and not column.lower().startswith("subitem_")
+    ]
+    if not mass_columns:
+        return _WasteSummary({}, {})
+
+    has_subitem = "subitem" in table.columns
+    subitem_expr = (
+        pl.when(pl.col("subitem").is_not_null())
+        .then(pl.col("subitem").map_elements(_normalize_item, return_dtype=pl.String))
+        .otherwise(pl.lit(""))
+        .alias("subitem_norm")
+        if has_subitem
+        else pl.lit("").alias("subitem_norm")
+    )
+
+    melted = (
+        table.with_columns(
+            pl.col("category")
+            .map_elements(_normalize_category, return_dtype=pl.String)
+            .alias("category_norm"),
+            subitem_expr,
+        )
+        .with_columns(
+            pl.when(pl.col("subitem_norm").str.len_bytes() > 0)
+            .then(pl.col("category_norm") + pl.lit("|") + pl.col("subitem_norm"))
+            .otherwise(pl.col("category_norm"))
+            .alias("item_key"),
+            pl.col("category_norm").alias("category_key"),
+        )
+        .melt(
+            id_vars=["category_key", "item_key"],
+            value_vars=mass_columns,
+            variable_name="mission_column",
+            value_name="mass_value",
+        )
+        .with_columns(
+            pl.col("mission_column")
+            .map_elements(_mission_slug, return_dtype=pl.String)
+            .alias("mission"),
+            pl.col("mass_value").cast(pl.Float64, strict=False).alias("mass"),
+        )
+        .filter(pl.col("mission").is_not_null() & pl.col("mass").is_finite() & (pl.col("mass") > 0))
+    )
+
+    row_count = melted.select(pl.len().alias("rows")).collect().row(0)[0]
+    if row_count == 0:
+        return _WasteSummary({}, {})
+
+    mission_totals_df = melted.group_by("mission").agg(pl.col("mass").sum()).collect()
+    mission_totals: Dict[str, float] = {}
+    if mission_totals_df.height:
+        missions = mission_totals_df.get_column("mission").to_list()
+        masses = mission_totals_df.get_column("mass").to_numpy()
+        for mission, mass in zip(missions, masses, strict=False):
+            if mission and mass is not None and np.isfinite(mass):
+                mission_totals[str(mission)] = float(mass)
+
+    mass_by_key: Dict[str, Dict[str, float]] = {}
+
+    subitem_totals_df = (
+        melted
+        .filter(pl.col("item_key") != pl.col("category_key"))
+        .group_by(["item_key", "mission"])
+        .agg(pl.col("mass").sum())
+        .collect()
+    )
+
+    if subitem_totals_df.height:
+        keys = subitem_totals_df.get_column("item_key").to_list()
+        missions = subitem_totals_df.get_column("mission").to_list()
+        masses = subitem_totals_df.get_column("mass").to_numpy()
+        for key, mission, mass in zip(keys, missions, masses, strict=False):
+            if not key or not mission or mass is None or not np.isfinite(mass):
+                continue
+            entry = mass_by_key.setdefault(str(key), {})
+            entry[str(mission)] = entry.get(str(mission), 0.0) + float(mass)
+
+    category_totals_df = (
+        melted.group_by(["category_key", "mission"]).agg(pl.col("mass").sum()).collect()
+    )
+
+    if category_totals_df.height:
+        keys = category_totals_df.get_column("category_key").to_list()
+        missions = category_totals_df.get_column("mission").to_list()
+        masses = category_totals_df.get_column("mass").to_numpy()
+        for key, mission, mass in zip(keys, missions, masses, strict=False):
+            if not key or not mission or mass is None or not np.isfinite(mass):
+                continue
+            entry = mass_by_key.setdefault(str(key), {})
+            entry[str(mission)] = entry.get(str(mission), 0.0) + float(mass)
+
+    return _WasteSummary(mass_by_key, mission_totals)
+
+
+def _extract_grouped_metrics(filename: str, prefix: str) -> Dict[str, Dict[str, float]]:
+    path = _resolve_dataset_path(filename)
+    if path is None:
+        return {}
+
+    table = pl.scan_csv(path)
+
+    row_count = table.select(pl.len().alias("rows")).collect().row(0)[0]
+    if row_count == 0:
+        return {}
+
+    schema = table.schema
+    numeric_cols = [
+        name
+        for name, dtype in schema.items()
+        if dtype.is_numeric()
+    ]
+    if not numeric_cols:
+        return {}
+
+    group_candidates = {
+        "mission",
+        "scenario",
+        "approach",
+        "vehicle",
+        "propulsion",
+        "architecture",
+    }
+    group_columns = [col for col in table.columns if col.lower() in group_candidates]
+
+    aggregated: Dict[str, Dict[str, float]] = {}
+
+    if not group_columns:
+        summary_df = table.select(
+            [pl.col(col).cast(pl.Float64, strict=False).mean().alias(col) for col in numeric_cols]
+        ).collect()
+        if summary_df.height:
+            metrics: Dict[str, float] = {}
+            for column in numeric_cols:
+                series = summary_df.get_column(column)
+                value = series[0] if series.len() else None
+                if value is None or (isinstance(value, float) and math.isnan(value)):
+                    continue
+                metrics[f"{prefix}_{_slugify(column)}"] = float(value)
+            if metrics:
+                aggregated[prefix] = metrics
+        return aggregated
+
+    combinations: list[tuple[str, ...]] = []
+    for length in range(1, len(group_columns) + 1):
+        combinations.extend(itertools.combinations(group_columns, length))
+
+    for combo in combinations:
+        grouped_df = (
+            table.group_by(list(combo))
+            .agg([pl.col(col).cast(pl.Float64, strict=False).mean().alias(col) for col in numeric_cols])
+            .collect()
+        )
+        if not grouped_df.height:
+            continue
+
+        combo_values = [grouped_df.get_column(column).to_list() for column in combo]
+        metric_arrays = [
+            np.asarray(grouped_df.get_column(column).to_numpy(), dtype=np.float64)
+            for column in numeric_cols
+        ]
+
+        for row_idx in range(grouped_df.height):
+            slug_parts: list[str] = []
+            for values, column in zip(combo_values, combo, strict=False):
+                value = values[row_idx]
+                if isinstance(value, str):
+                    slug_part = _slugify(value)
+                elif value is not None:
+                    slug_part = _slugify(str(value))
+                else:
+                    slug_part = ""
+                if slug_part:
+                    slug_parts.append(slug_part)
+            slug = "_".join(part for part in slug_parts if part)
+            if not slug:
+                continue
+
+            metrics: Dict[str, float] = {}
+            for array, column in zip(metric_arrays, numeric_cols, strict=False):
+                value = array[row_idx]
+                if value is None or not np.isfinite(value):
+                    continue
+                metrics[f"{prefix}_{_slugify(column)}"] = float(value)
+
+            if metrics:
+                aggregated[slug] = metrics
+
+    return aggregated
+
+def _normalize_text(value: Any) -> str:
+    text = str(value or "").lower()
+    text = text.replace("—", " ").replace("/", " ")
+    text = re.sub(r"\(.*?\)", " ", text)
+    text = re.sub(r"[^a-z0-9 ]+", " ", text)
+    tokens = []
+    for token in text.split():
+        if len(token) > 3 and token.endswith("s"):
+            token = token[:-1]
+        tokens.append(token)
+    return " ".join(tokens).strip()
+
+
+def _normalize_category(value: Any) -> str:
+    normalized = _normalize_text(value)
+    return _CATEGORY_SYNONYMS.get(normalized, normalized)
+def _build_match_key(category: Any, subitem: Any | None = None) -> str:
+    """Return the canonical key used to match NASA reference tables."""
+
+    if subitem:
+        return f"{_normalize_category(category)}|{_normalize_item(subitem)}"
+    return _normalize_category(category)
+def _estimate_density_from_row(row: pd.Series) -> float | None:
+    category = _normalize_category(row.get("category", ""))
+
+    try:
+        cat_mass = float(row.get("category_total_mass_kg"))
+        cat_volume = float(row.get("category_total_volume_m3"))
+    except (TypeError, ValueError):
+        cat_mass = cat_volume = float("nan")
+
+    if pd.notna(cat_mass) and pd.notna(cat_volume) and cat_volume > 0:
+        return float(np.clip(cat_mass / cat_volume, 20.0, 4000.0))
+
+    composition_weights: list[tuple[float, float]] = []
+    total = 0.0
+    for column, density in _COMPOSITION_DENSITY_MAP.items():
+        try:
+            pct = float(row.get(column, 0.0))
+        except (TypeError, ValueError):
+            pct = 0.0
+        if pct and not np.isnan(pct):
+            frac = pct / 100.0
+            if frac > 0:
+                composition_weights.append((frac, density))
+                total += frac
+
+    if total > 0 and composition_weights:
+        weighted = sum(frac * density for frac, density in composition_weights) / total
+        if category == "foam packaging":
+            return float(min(weighted, _CATEGORY_DENSITY_DEFAULTS.get(category, weighted)))
+        return float(np.clip(weighted, 20.0, 4000.0))
+
+    if category in _CATEGORY_DENSITY_DEFAULTS:
+        return float(_CATEGORY_DENSITY_DEFAULTS[category])
+
+    return None
+def _normalize_item(value: Any) -> str:
+    return _normalize_text(value)
+
+
+def _token_set(value: Any) -> frozenset[str]:
+    normalized = _normalize_item(value)
+    if not normalized:
+        return frozenset()
+    return frozenset(normalized.split())
+
+
+_L2L_PARAMETERS = _load_l2l_parameters()
+
+
+class _OfficialFeaturesBundle(NamedTuple):
+    value_columns: tuple[str, ...]
+    composition_columns: tuple[str, ...]
+    direct_map: Dict[str, int]
+    category_tokens: Dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]]
+    table: pl.DataFrame
+    value_matrix: np.ndarray
+    mission_mass: Dict[str, Dict[str, float]]
+    mission_totals: Dict[str, float]
+    processing_metrics: Dict[str, Dict[str, float]]
+    leo_mass_savings: Dict[str, Dict[str, float]]
+    propellant_benefits: Dict[str, Dict[str, float]]
+    l2l_constants: Dict[str, float]
+    l2l_category_features: Dict[str, Dict[str, float]]
+    l2l_item_features: Dict[str, Dict[str, float]]
+    l2l_hints: Dict[str, str]
+
+
+def _build_payload_from_row(row: np.ndarray, columns: Sequence[str]) -> Dict[str, float]:
+    payload: Dict[str, float] = {}
+    for name, value in zip(columns, row, strict=False):
+        if value is None:
+            payload[name] = float("nan")
+            continue
+        if isinstance(value, (float, np.floating)):
+            if math.isnan(value):
+                payload[name] = float("nan")
+            else:
+                payload[name] = float(value)
+            continue
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            numeric = float("nan")
+        payload[name] = numeric
+    return payload
+
+
+def _tokenize_subitems(subitems: Sequence[str]) -> np.ndarray:
+    array = np.asarray(list(subitems), dtype=object)
+    tokenizer = np.frompyfunc(lambda text: frozenset(str(text).split()) if text else frozenset(), 1, 1)
+    return tokenizer(array)
+
+
+def _vectorized_feature_maps(
+    table_df: pl.DataFrame, value_columns: Sequence[str]
+) -> tuple[Dict[str, int], Dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]], np.ndarray]:
+    value_frame = table_df.select(
+        [pl.col(col).cast(pl.Float64, strict=False).alias(col) for col in value_columns]
+    )
+
+    if value_frame.height != table_df.height:
+        value_matrix = np.empty((0, len(value_columns)), dtype=np.float64)
+    elif pa is not None:
+        arrow_block = value_frame.to_arrow()
+        arrays = [
+            np.asarray(arrow_block.column(i).to_numpy(zero_copy_only=False), dtype=np.float64)
+            for i in range(arrow_block.num_columns)
+        ]
+        value_matrix = (
+            np.column_stack(arrays)
+            if arrays
+            else np.empty((table_df.height, 0), dtype=np.float64)
+        )
+    else:
+        value_matrix = value_frame.to_numpy()
+
+    string_columns = ["key", "category_norm", "subitem_norm"]
+    if pa is not None:
+        string_block = table_df.select(string_columns).to_arrow()
+        keys_raw = string_block.column("key").to_pylist()
+        categories_raw = string_block.column("category_norm").to_pylist()
+        subitems_raw = string_block.column("subitem_norm").to_pylist()
+    else:
+        keys_raw = table_df.get_column("key").to_list()
+        categories_raw = table_df.get_column("category_norm").to_list()
+        subitems_raw = table_df.get_column("subitem_norm").to_list()
+
+    key_array = np.asarray([str(value) if value is not None else "" for value in keys_raw], dtype=object)
+    category_list = [str(value) if value is not None else "" for value in categories_raw]
+    subitem_list = [str(value) if value is not None else "" for value in subitems_raw]
+
+    direct_map = {key: idx for idx, key in enumerate(key_array) if key}
+
+    token_array = _tokenize_subitems(subitem_list)
+    row_indices = np.arange(len(key_array), dtype=np.int32)
+
+    category_tokens: Dict[str, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+    if category_list:
+        category_array = np.asarray(category_list, dtype=object)
+        unique_categories, inverse = np.unique(category_array, return_inverse=True)
+        for pos, category in enumerate(unique_categories):
+            if not category:
+                continue
+            mask = inverse == pos
+            matched_indices = row_indices[mask]
+            if matched_indices.size == 0:
+                continue
+            category_tokens[str(category)] = (
+                token_array[mask],
+                key_array[mask],
+                matched_indices,
+            )
+
+    return direct_map, category_tokens, value_matrix
+
+
+@lru_cache(maxsize=1)
+def _official_features_bundle() -> _OfficialFeaturesBundle:
+    l2l = _L2L_PARAMETERS
+    default = _OfficialFeaturesBundle(
+        (),
+        (),
+        {},
+        pl.DataFrame(),
+        np.empty((0, 0), dtype=np.float64),
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        l2l.constants,
+        l2l.category_features,
+        l2l.item_features,
+        l2l.hints,
+    )
+
+    if not _OFFICIAL_FEATURES_PATH.exists():
+        return default
+
+    table_lazy = pl.scan_csv(_OFFICIAL_FEATURES_PATH)
+    duplicate_suffixes = [column for column in table_lazy.columns if column.endswith(".1")]
+    if duplicate_suffixes:
+        table_lazy = table_lazy.drop(duplicate_suffixes)
+
+    table_lazy = _merge_reference_dataset(table_lazy, "nasa_waste_summary.csv", "summary")
+    table_lazy = _merge_reference_dataset(table_lazy, "nasa_waste_processing_products.csv", "processing")
+    table_lazy = _merge_reference_dataset(table_lazy, "nasa_leo_mass_savings.csv", "leo")
+    table_lazy = _merge_reference_dataset(table_lazy, "nasa_propellant_benefits.csv", "propellant")
+
+    table_lazy = table_lazy.with_columns(
+        [
+            pl.col("category")
+            .map_elements(_normalize_category, return_dtype=pl.String)
+            .alias("category_norm"),
+            pl.col("subitem")
+            .map_elements(_normalize_item, return_dtype=pl.String)
+            .alias("subitem_norm"),
+        ]
+    )
+
+    table_lazy = table_lazy.with_columns(
+        pl.when(pl.col("subitem_norm").str.len_bytes() > 0)
+        .then(pl.col("category_norm") + pl.lit("|") + pl.col("subitem_norm"))
+        .otherwise(pl.col("category_norm"))
+        .alias("key")
+    )
+
+    if isinstance(table_lazy, pd.DataFrame):  # pragma: no cover - defensive
+        table_df = pl.from_pandas(table_lazy)
+    elif isinstance(table_lazy, pl.DataFrame):
+        table_df = table_lazy
+    else:
+        table_df = table_lazy.collect()
+
+    if table_df.height == 0:
+        return default
+
+    columns = table_df.columns
+    excluded = {"category", "subitem", "category_norm", "subitem_norm", "token_set", "key"}
+    value_columns = tuple(col for col in columns if col not in excluded)
+    if not value_columns:
+        return default
+    composition_columns = tuple(
+        col for col in value_columns if col.endswith("_pct") and not col.startswith("subitem_")
+    )
+
+    direct_map, category_tokens, value_matrix = _vectorized_feature_maps(table_df, value_columns)
+
+    waste_summary = _load_waste_summary_data()
+    processing_metrics = _extract_grouped_metrics("nasa_waste_processing_products.csv", "processing")
+    leo_savings = _extract_grouped_metrics("nasa_leo_mass_savings.csv", "leo")
+    propellant_metrics = _extract_grouped_metrics("nasa_propellant_benefits.csv", "propellant")
+
+    table_join = table_df.select(
+        ["category_norm", "subitem_norm", *value_columns]
+    ).unique(subset=["category_norm", "subitem_norm"], maintain_order=True)
+
+    return _OfficialFeaturesBundle(
+        value_columns,
+        composition_columns,
+        direct_map,
+        category_tokens,
+        table_join,
+        value_matrix,
+        waste_summary.mass_by_key,
+        waste_summary.mission_totals,
+        processing_metrics,
+        leo_savings,
+        propellant_metrics,
+        l2l.constants,
+        l2l.category_features,
+        l2l.item_features,
+        l2l.hints,
+    )
+
+
+def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], str]:
+    bundle = _official_features_bundle()
+    if not bundle.value_columns:
+        return {}, ""
+
+    category = _normalize_category(row.get("category", ""))
+    if not category:
+        return {}, ""
+
+    candidates = (
+        row.get("material"),
+        row.get("material_family"),
+        row.get("key_materials"),
+    )
+
+    for candidate in candidates:
+        normalized = _normalize_item(candidate)
+        if not normalized:
+            continue
+        key = f"{category}|{normalized}"
+        index = bundle.direct_map.get(key)
+        if index is not None and 0 <= index < bundle.value_matrix.shape[0]:
+            payload = _build_payload_from_row(bundle.value_matrix[index], bundle.value_columns)
+            return payload, key
+
+    category_index = bundle.direct_map.get(category)
+    if category_index is not None and 0 <= category_index < bundle.value_matrix.shape[0]:
+        payload = _build_payload_from_row(bundle.value_matrix[category_index], bundle.value_columns)
+        return payload, category
+
+    token_candidates = [value for value in candidates if value]
+    if not token_candidates:
+        return {}, ""
+
+    matches = bundle.category_tokens.get(category)
+    if not matches:
+        return {}, ""
+
+    token_array, key_array, row_indices = matches
+    reference_tokens = list(token_array.tolist())
+    match_keys = list(key_array.tolist())
+    indices = list(row_indices.tolist())
+
+    for candidate in token_candidates:
+        tokens = _token_set(candidate)
+        if not tokens:
+            continue
+        for reference, match_key, index in zip(reference_tokens, match_keys, indices, strict=False):
+            if not isinstance(reference, frozenset):
+                continue
+            if tokens.issubset(reference) and 0 <= index < bundle.value_matrix.shape[0]:
+                payload = _build_payload_from_row(bundle.value_matrix[index], bundle.value_columns)
+                return payload, str(match_key)
+
+    return {}, ""
+
+
 def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
     bundle = official_features_bundle()
     if not bundle.value_columns or frame.empty:
@@ -99,6 +1016,9 @@ def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
     if "category" in existing_columns:
         norm_exprs.append(
             pl.col("category").map_elements(normalize_category).alias("category_norm")
+            pl.col("category")
+            .map_elements(_normalize_category, return_dtype=pl.String)
+            .alias("category_norm")
         )
     else:
         norm_exprs.append(pl.lit("").alias("category_norm"))
@@ -111,6 +1031,9 @@ def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
         if source in existing_columns:
             norm_exprs.append(
                 pl.col(source).map_elements(normalize_item).alias(alias)
+                pl.col(source)
+                .map_elements(_normalize_item, return_dtype=pl.String)
+                .alias(alias)
             )
         else:
             norm_exprs.append(pl.lit("").alias(alias))
@@ -524,17 +1447,6 @@ _KEYWORD_INDEX = {name: idx for idx, name in enumerate(_KEYWORD_FEATURES)}
 _PACKAGING_TARGETS = ("packaging", "food packaging")
 
 
-def _material_tokens(row: pd.Series) -> str:
-    parts = [
-        str(row.get("material", "")),
-        str(row.get("category", "")),
-        str(row.get("flags", "")),
-        str(row.get("material_family", "")),
-        str(row.get("key_materials", "")),
-    ]
-    return " ".join(parts).lower()
-
-
 def _keyword_fraction(tokens: Iterable[str], weights: Iterable[float], keywords: Tuple[str, ...]) -> float:
     score = 0.0
     for token, weight in zip(tokens, weights):
@@ -560,8 +1472,8 @@ class CandidateFeatureContext:
     difficulty: np.ndarray
     pct_mass: np.ndarray
     pct_volume: np.ndarray
-    tokens: Tuple[str, ...]
-    categories: Tuple[str, ...]
+    keyword_hits: np.ndarray
+    packaging_hits: np.ndarray
     regolith_pct: float
     mission_share: Dict[str, float]
     mission_scaled_mass: Dict[str, float]
@@ -611,8 +1523,7 @@ def _prepare_feature_context(
     elif len(raw_weights) > len(picks):
         raw_weights = raw_weights[: len(picks)]
 
-    tokens = tuple(_material_tokens(row) for _, row in picks.iterrows())
-    categories = tuple(str(row.get("category", "")).lower() for _, row in picks.iterrows())
+    item_count = len(picks)
 
     default_series = lambda default: pd.Series(default, index=picks.index, dtype=float)
     pct_mass = picks.get("pct_mass", default_series(0.0)).to_numpy(dtype=float) / 100.0
@@ -620,6 +1531,64 @@ def _prepare_feature_context(
     moisture = picks.get("moisture_pct", default_series(0.0)).to_numpy(dtype=float) / 100.0
     difficulty = picks.get("difficulty_factor", default_series(1.0)).to_numpy(dtype=float) / 3.0
     densities = picks.get("density_kg_m3", default_series(0.0)).to_numpy(dtype=float)
+    if item_count:
+        token_arrays: list[np.ndarray] = []
+        for column in ("material", "category", "flags", "material_family", "key_materials"):
+            if column in picks.columns:
+                values = np.asarray(
+                    picks[column].astype(str).fillna("").to_numpy(), dtype=str
+                )
+            else:
+                values = np.full(item_count, "", dtype=str)
+            token_arrays.append(values)
+
+        tokens_array = token_arrays[0].astype(str)
+        for part in token_arrays[1:]:
+            tokens_array = np.char.add(np.char.add(tokens_array, " "), part.astype(str))
+        tokens_array = np.asarray(np.char.lower(np.char.strip(tokens_array)))
+    else:
+        tokens_array = np.empty(0, dtype=str)
+
+    if "category" in picks.columns:
+        category_raw = np.asarray(
+            picks["category"].astype(str).fillna("").to_numpy(), dtype=str
+        )
+    else:
+        category_raw = np.full(item_count, "", dtype=str)
+    category_lower = np.asarray(np.char.lower(category_raw)) if item_count else np.empty(0, dtype=str)
+
+    keyword_hits = np.zeros((item_count, len(_KEYWORD_FEATURES)), dtype=float)
+    if item_count and len(_KEYWORD_FEATURES):
+        for kw_idx, patterns in enumerate(_KEYWORD_FEATURES.values()):
+            if not patterns:
+                continue
+            mask = np.zeros(item_count, dtype=bool)
+            for pattern in patterns:
+                if not pattern:
+                    continue
+                mask |= np.char.find(tokens_array, pattern.lower()) >= 0
+            keyword_hits[:, kw_idx] = mask.astype(float)
+
+    packaging_hits = np.zeros(item_count, dtype=float)
+    if item_count and _PACKAGING_TARGETS:
+        mask = np.zeros(item_count, dtype=bool)
+        for target in _PACKAGING_TARGETS:
+            if not target:
+                continue
+            mask |= np.char.find(category_lower, target.lower()) >= 0
+        packaging_hits = mask.astype(float)
+
+    def _series_or_default(column: str, default: float) -> pd.Series:
+        series = picks.get(column)
+        if isinstance(series, pd.Series):
+            return pd.to_numeric(series, errors="coerce").fillna(default)
+        return pd.Series(default, index=picks.index, dtype=float)
+
+    pct_mass = _series_or_default("pct_mass", 0.0).to_numpy(dtype=float) / 100.0
+    pct_volume = _series_or_default("pct_volume", 0.0).to_numpy(dtype=float) / 100.0
+    moisture = _series_or_default("moisture_pct", 0.0).to_numpy(dtype=float) / 100.0
+    difficulty = _series_or_default("difficulty_factor", 1.0).to_numpy(dtype=float) / 3.0
+    densities = _series_or_default("density_kg_m3", 0.0).to_numpy(dtype=float)
 
     official_comp: Dict[str, float] = {}
     if bundle.composition_columns:
@@ -669,15 +1638,58 @@ def _prepare_feature_context(
                 missions = bundle.mission_mass.get(key)
                 if not missions:
                     continue
+        if item_count:
+            if "_official_match_key" in picks.columns:
+                match_keys = np.asarray(
+                    picks["_official_match_key"].astype(str).fillna("").to_numpy(),
+                    dtype=str,
+                )
+            else:
+                match_keys = np.full(item_count, "", dtype=str)
 
-                for mission, reference_mass in missions.items():
-                    total_reference = bundle.mission_totals.get(mission)
-                    if not total_reference or total_reference <= 0:
+            normalized_categories = np.array(
+                [_normalize_category(value) for value in category_raw], dtype=object
+            )
+            effective_keys = match_keys.astype(object)
+            empty_mask = effective_keys == ""
+            if empty_mask.any():
+                effective_keys[empty_mask] = normalized_categories[empty_mask]
+
+            weights_arr = raw_weights[:item_count]
+            positive_mask = (weights_arr > 0) & np.isfinite(weights_arr)
+            if not positive_mask.all():
+                effective_keys = effective_keys.astype(object)
+                effective_keys[~positive_mask] = ""
+
+            if effective_keys.size:
+                unique_keys, inverse = np.unique(effective_keys, return_inverse=True)
+                for key_idx, key in enumerate(unique_keys):
+                    if not key:
                         continue
-                    share = (reference_mass / total_reference) * weight
-                    mission_share[mission] = mission_share.get(mission, 0.0) + share
-                    mission_official_mass[mission] = mission_official_mass.get(mission, 0.0) + weight * float(reference_mass)
-                    mission_scaled_mass[mission] = mission_scaled_mass.get(mission, 0.0) + share * total_kg
+                    missions = bundle.mission_mass.get(str(key))
+                    if not missions:
+                        continue
+                    mask = inverse == key_idx
+                    if not mask.any():
+                        continue
+                    weights_for_key = weights_arr[mask]
+                    if not weights_for_key.size:
+                        continue
+                    for mission, reference_mass in missions.items():
+                        total_reference = bundle.mission_totals.get(mission)
+                        if not total_reference or total_reference <= 0:
+                            continue
+                        ref_mass_float = float(reference_mass)
+                        reference_total = float(total_reference)
+                        share_values = (ref_mass_float / reference_total) * weights_for_key
+                        share_total = float(np.sum(share_values))
+                        if share_total <= 0:
+                            continue
+                        mission_share[mission] = mission_share.get(mission, 0.0) + share_total
+                        mission_official_mass[mission] = mission_official_mass.get(mission, 0.0) + float(
+                            np.sum(weights_for_key * ref_mass_float)
+                        )
+                        mission_scaled_mass[mission] = mission_scaled_mass.get(mission, 0.0) + share_total * total_kg
 
     return CandidateFeatureContext(
         total_mass=total_kg,
@@ -687,8 +1699,8 @@ def _prepare_feature_context(
         difficulty=difficulty,
         pct_mass=pct_mass,
         pct_volume=pct_volume,
-        tokens=tokens,
-        categories=categories,
+        keyword_hits=keyword_hits,
+        packaging_hits=packaging_hits,
         regolith_pct=float(regolith_pct),
         mission_share=mission_share,
         mission_scaled_mass=mission_scaled_mass,
@@ -747,16 +1759,11 @@ def _contexts_to_tensor_batch(
             difficulty[idx, :count] = ctx.difficulty[:count]
             pct_mass[idx, :count] = ctx.pct_mass[:count]
             pct_volume[idx, :count] = ctx.pct_volume[:count]
-
-            for item_idx in range(count):
-                token = ctx.tokens[item_idx]
-                category = ctx.categories[item_idx]
-                for kw_idx, keywords in enumerate(keyword_names):
-                    patterns = _KEYWORD_FEATURES[keywords]
-                    if any(pattern in token for pattern in patterns):
-                        keyword_hits[idx, item_idx, kw_idx] = 1.0
-                if any(target in category for target in _PACKAGING_TARGETS):
-                    packaging_hits[idx, item_idx] = 1.0
+            if ctx.keyword_hits.size:
+                kw_cols = min(ctx.keyword_hits.shape[1], len(keyword_names))
+                keyword_hits[idx, :count, :kw_cols] = ctx.keyword_hits[:count, :kw_cols]
+            if ctx.packaging_hits.size:
+                packaging_hits[idx, :count] = ctx.packaging_hits[:count]
 
         for mission_idx, mission in enumerate(mission_names):
             mission_share[idx, mission_idx] = ctx.mission_share.get(mission, 0.0)
@@ -1233,6 +2240,16 @@ def heuristic_props(
             picks.get("difficulty_factor", pd.Series(1.0, index=picks.index)).to_numpy(dtype=float) / 3.0,
         )
     )
+    def _vector(column: str, default: float, scale: float) -> np.ndarray:
+        series = picks.get(column)
+        if isinstance(series, pd.Series):
+            values = pd.to_numeric(series, errors="coerce").fillna(default).to_numpy(dtype=float)
+        else:
+            values = np.full(len(picks), default, dtype=float)
+        return values * scale
+
+    moisture = float(np.dot(base_weights, _vector("moisture_pct", 0.0, 1.0 / 100.0)))
+    difficulty = float(np.dot(base_weights, _vector("difficulty_factor", 1.0, 1.0 / 3.0)))
 
     energy_kwh = total_mass * (process_energy + 0.25 * difficulty + 0.12 * moisture + 0.18 * regolith_pct)
     water_l = total_mass * (process_water + 0.35 * moisture + 0.08 * regolith_pct)
@@ -1659,19 +2676,13 @@ def generate_candidates(
         if components:
             components_batch.append(components)
 
-    candidates: list[dict] = []
-    if components_batch:
-        batch = build_feature_tensor_batch(
-            [comp.picks for comp in components_batch],
-            [comp.weights for comp in components_batch],
-            [comp.process for comp in components_batch],
-            [comp.regolith_pct for comp in components_batch],
-        )
-        features_list = _compute_features_from_batch(batch)
-        for comp, feat in zip(components_batch, features_list):
-            candidate = _finalize_candidate(comp, feat, target, crew_time_low, use_ml)
-            if candidate:
-                candidates.append(candidate)
+    attempts = 0
+    max_attempts = max(n * 2, 4)
+    while len(candidates) < n and attempts < max_attempts:
+        attempts += 1
+        candidate = sampler({})
+        if candidate:
+            candidates.append(candidate)
 
     history = pd.DataFrame()
     if optimizer_evals and optimizer_evals > 0:

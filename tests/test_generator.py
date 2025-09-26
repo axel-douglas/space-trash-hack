@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 import json
+import numbers
 import random
 import shutil
+import time
 from datetime import datetime
 from pathlib import Path
 
 from deltalake import DeltaTable
+from datetime import datetime
+from typing import Dict
 
 import pandas as pd
 import pytest
+import numpy as np
+import pyarrow.parquet as pq
 
 from app.modules import data_sources, generator, logging_utils
 
@@ -169,13 +175,87 @@ def test_official_features_bundle_polars_pipeline(tmp_path, monkeypatch):
     assert "processing_output_kg" in bundle.value_columns
     assert "leo_savings_pct" in bundle.value_columns
     assert "propellant_benefit" in bundle.value_columns
-    assert bundle.direct_map["other packaging glove|foam"]["value_kg"] == pytest.approx(2.5)
+    idx = bundle.direct_map["other packaging glove|foam"]
+    payload = generator._build_payload_from_row(bundle.value_matrix[idx], bundle.value_columns)
+    assert payload["value_kg"] == pytest.approx(2.5)
     assert "category_norm" in bundle.table.columns
     assert "subitem_norm" in bundle.table.columns
     assert bundle.mission_totals["artemis"] == pytest.approx(13.0)
     assert bundle.processing_metrics["processing"]["processing_output_kg"] == pytest.approx(3.0)
+    tokens, match_keys, indices = bundle.category_tokens["other packaging glove"]
+    assert "other packaging glove|foam" in match_keys.tolist()
+    assert idx in indices.tolist()
 
     data_sources.official_features_bundle.cache_clear()
+
+
+def test_vectorized_feature_map_benchmark():
+    rows = 4000
+    categories = ["Packaging" if idx % 2 == 0 else "Food Packaging" for idx in range(rows)]
+    subitems = [f"Item {idx}" for idx in range(rows)]
+    values = [float(idx % 17 + 1) for idx in range(rows)]
+
+    table_df = pl.DataFrame(
+        {
+            "category": categories,
+            "subitem": subitems,
+            "value_kg": values,
+        }
+    ).with_columns(
+        pl.col("category")
+        .map_elements(generator._normalize_category, return_dtype=pl.String)
+        .alias("category_norm"),
+        pl.col("subitem")
+        .map_elements(generator._normalize_item, return_dtype=pl.String)
+        .alias("subitem_norm"),
+    ).with_columns(
+        pl.when(pl.col("subitem_norm").str.len_bytes() > 0)
+        .then(pl.col("category_norm") + pl.lit("|") + pl.col("subitem_norm"))
+        .otherwise(pl.col("category_norm"))
+        .alias("key"),
+    )
+
+    excluded = {"category", "subitem", "category_norm", "subitem_norm", "key"}
+    value_columns = tuple(col for col in table_df.columns if col not in excluded)
+
+    def baseline_builder():
+        direct_map: Dict[str, Dict[str, float]] = {}
+        category_tokens: Dict[str, list[tuple[frozenset[str], Dict[str, float], str]]] = {}
+        for row in table_df.to_dicts():
+            key = row["key"]
+            if not key:
+                continue
+            payload = {col: float(row[col]) for col in value_columns}
+            direct_map[key] = payload
+            category_tokens.setdefault(row["category_norm"], []).append(
+                (generator._token_set(row["subitem_norm"]), payload, key)
+            )
+        return direct_map, category_tokens
+
+    baseline_map, _ = baseline_builder()
+    vector_map, _, value_matrix = generator._vectorized_feature_maps(table_df, value_columns)
+
+    assert set(baseline_map.keys()) == set(vector_map.keys())
+    sample_keys = list(baseline_map.keys())[:10]
+    for key in sample_keys:
+        idx = vector_map[key]
+        payload = generator._build_payload_from_row(value_matrix[idx], value_columns)
+        assert payload == baseline_map[key]
+
+    def measure(fn):
+        best = float("inf")
+        for _ in range(3):
+            start = time.perf_counter()
+            fn()
+            elapsed = time.perf_counter() - start
+            best = min(best, elapsed)
+        return best
+
+    baseline_time = measure(baseline_builder)
+    vectorized_time = measure(lambda: generator._vectorized_feature_maps(table_df, value_columns))
+
+    assert vectorized_time < baseline_time
+
 
 class DummyRegistry:
     ready = True
@@ -223,6 +303,13 @@ def _collect_single_log_dir(root: Path) -> Path:
     return day_dirs[0]
 
 
+def _read_inference_log(day_dir: Path) -> pd.DataFrame:
+    files = sorted(day_dir.glob("*.parquet"))
+    assert files, "Expected at least one Parquet log shard"
+    frames = [pq.read_table(file).to_pandas() for file in files]
+    return pd.concat(frames, ignore_index=True, sort=False)
+
+
 def test_generate_candidates_uses_parallel_backend(monkeypatch):
     monkeypatch.setattr(generator, "_PARALLEL_THRESHOLD", 1)
 
@@ -252,8 +339,29 @@ def test_generate_candidates_uses_parallel_backend(monkeypatch):
             "_source_flags": [""],
             "_problematic": [0],
             "material": ["foil"],
+            "category": ["packaging"],
+            "flags": [""],
+            "_problematic": [0],
         }
     ))
+    monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ([], {}))
+                {
+                    "kg": [1.0],
+                    "pct_mass": [100.0],
+                    "pct_volume": [100.0],
+                    "moisture_pct": [0.0],
+                    "difficulty_factor": [1.0],
+                    "density_kg_m3": [1.0],
+                    "category": ["packaging"],
+                    "flags": [""],
+                    "_problematic": [0],
+                    "_source_id": ["A"],
+                    "_source_category": ["packaging"],
+                    "_source_flags": [""],
+                    "material": ["foil"],
+                }
+    ))
+    monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
 
     draws: list[float] = []
 
@@ -286,9 +394,28 @@ def test_generate_candidates_uses_parallel_backend(monkeypatch):
             "_source_id": ["A"],
             "_source_category": ["packaging"],
             "_source_flags": [""],
+            "category": ["packaging"],
+            "flags": [""],
         }
     )
-    proc_df = pd.DataFrame({"process_id": ["P01"], "name": ["Process"]})
+    proc_df = pd.DataFrame(
+        {
+            "process_id": ["P01"],
+            "name": ["Process"],
+            "energy_kwh_per_kg": [1.0],
+            "water_l_per_kg": [0.5],
+            "crew_min_per_batch": [30.0],
+        }
+    )
+    proc_df = pd.DataFrame(
+        {
+            "process_id": ["P01"],
+            "name": ["Process"],
+            "energy_kwh_per_kg": [1.0],
+            "water_l_per_kg": [0.5],
+            "crew_min_per_batch": [30.0],
+        }
+    )
 
     candidates, history = generator.generate_candidates(
         waste_df,
@@ -311,6 +438,8 @@ def test_generate_candidates_uses_parallel_backend(monkeypatch):
 
 def test_append_inference_log_appends_without_reads(monkeypatch, tmp_path):
     monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
+    monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
+    generator._close_inference_log_writer()
 
     log_root = tmp_path / "inference"
     if log_root.exists():
@@ -324,13 +453,17 @@ def test_append_inference_log_appends_without_reads(monkeypatch, tmp_path):
             model_registry=None,
         )
 
+    generator._close_inference_log_writer()
+
     log_dir = _collect_single_log_dir(tmp_path)
-    table = DeltaTable(str(log_dir)).to_pyarrow_table()
-    assert table.num_rows == 2
+    table = _read_inference_log(log_dir)
+    assert len(table) == 2
 
 
 def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
     monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
+    monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
+    generator._close_inference_log_writer()
 
     log_root = tmp_path / "inference"
     if log_root.exists():
@@ -360,8 +493,10 @@ def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
         model_registry=None,
     )
 
+    generator._close_inference_log_writer()
+
     log_dir = _collect_single_log_dir(tmp_path)
-    log_df = DeltaTable(str(log_dir)).to_pandas()
+    log_df = _read_inference_log(log_dir)
     assert "session_id" in log_df.columns
     assert log_df["session_id"].isna().sum() == 1
     assert set(log_df["session_id"].dropna()) == {"alpha"}
@@ -371,6 +506,7 @@ def test_generate_candidates_appends_inference_log(monkeypatch, tmp_path):
     monkeypatch.setattr(generator, "MODEL_REGISTRY", DummyRegistry())
     monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
     monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
+    generator._close_inference_log_writer()
 
     log_root = tmp_path / "inference"
     if log_root.exists():
@@ -401,8 +537,10 @@ def test_generate_candidates_appends_inference_log(monkeypatch, tmp_path):
     assert candidates, "Expected at least one candidate to be generated"
     assert history.empty
 
+    generator._close_inference_log_writer()
+
     log_dir = _collect_single_log_dir(tmp_path)
-    log_df = DeltaTable(str(log_dir)).to_pandas().sort_values("timestamp")
+    log_df = _read_inference_log(log_dir).sort_values("timestamp")
     for column in ["timestamp", "input_features", "prediction", "uncertainty", "model_hash"]:
         assert column in log_df.columns
 
@@ -445,6 +583,8 @@ def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch, tmp_path):
 
     monkeypatch.setattr(generator, "MODEL_REGISTRY", NoCallRegistry())
     monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
+    monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
+    generator._close_inference_log_writer()
 
     log_root = tmp_path / "inference"
     if log_root.exists():
@@ -598,19 +738,64 @@ def test_compute_feature_vector_keyword_fallback_triggers_polyethylene():
         assert candidate["gas_recovery_index"] == pytest.approx(features["gas_recovery_index"], rel=1e-6)
 
 
+def test_compute_feature_vector_dataframe_matches_tensor_batch():
+    waste_df = pd.DataFrame(
+        {
+            "id": ["X", "Y", "Z"],
+            "category": ["Food Packaging", "Food Packaging", "Logistics"],
+            "material": [
+                "Rehydratable Pouch",
+                "Nomex shipping bag",
+                "Polyethylene foam block",
+            ],
+            "kg": [7.0, 2.0, 4.0],
+            "volume_l": [0.0, 1.0, 8.0],
+            "flags": ["", "multilayer", ""],
+        }
+    )
+
+    prepared = generator.prepare_waste_frame(waste_df)
+    process = _dummy_process_series()
+    weights = [0.5, 0.3, 0.2]
+    regolith_pct = 0.15
+
+    dataframe_features = generator.compute_feature_vector(
+        prepared, weights, process, regolith_pct
+    )
+
+    tensor_batch = generator.build_feature_tensor_batch(
+        [prepared], [weights], [process], [regolith_pct]
+    )
+    tensor_features = generator.compute_feature_vector(tensor_batch)
+
+    assert isinstance(tensor_features, list) and tensor_features, "Tensor batch returned no features"
+    tensor_features = tensor_features[0]
+
+    assert set(tensor_features) == set(dataframe_features)
+    for key, value in dataframe_features.items():
+        lhs = tensor_features[key]
+        if isinstance(value, numbers.Real):
+            assert lhs == pytest.approx(value, rel=1e-6, abs=1e-8)
+        else:
+            assert lhs == value
+
+
 def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
     # Ensure cached bundles from other tests do not leak.
     data_sources.official_features_bundle.cache_clear()
 
     match_key = "food packaging|rehydratable pouch"
+    dummy_matrix = np.array([[1.0]], dtype=np.float64)
     dummy_bundle = generator._OfficialFeaturesBundle(
         value_columns=("dummy_col",),
         composition_columns=(),
-        direct_map={match_key: {"dummy_col": 1.0}},
+        direct_map={match_key: 0},
         category_tokens={
-            "food packaging": [
-                (frozenset({"rehydratable", "pouch"}), {"dummy_col": 1.0}, match_key)
-            ]
+            "food packaging": (
+                np.array([frozenset({"rehydratable", "pouch"})], dtype=object),
+                np.array([match_key], dtype=object),
+                np.array([0], dtype=np.int32),
+            )
         },
         table=pl.DataFrame(
             {
@@ -619,6 +804,7 @@ def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
                 "dummy_col": [1.0],
             }
         ),
+        value_matrix=dummy_matrix,
         mission_mass={
             match_key: {"gateway_i": 200.0},
             "food packaging": {"gateway_i": 300.0},
@@ -683,14 +869,17 @@ def test_prepare_waste_frame_injects_l2l_features(monkeypatch):
     data_sources.official_features_bundle.cache_clear()
 
     match_key = "food packaging|rehydratable pouch"
+    dummy_matrix = np.array([[1.0]], dtype=np.float64)
     dummy_bundle = generator._OfficialFeaturesBundle(
         value_columns=("dummy_col",),
         composition_columns=(),
-        direct_map={match_key: {"dummy_col": 1.0}},
+        direct_map={match_key: 0},
         category_tokens={
-            "food packaging": [
-                (frozenset({"rehydratable", "pouch"}), {"dummy_col": 1.0}, match_key)
-            ]
+            "food packaging": (
+                np.array([frozenset({"rehydratable", "pouch"})], dtype=object),
+                np.array([match_key], dtype=object),
+                np.array([0], dtype=np.int32),
+            )
         },
         table=pl.DataFrame(
             {
@@ -699,6 +888,7 @@ def test_prepare_waste_frame_injects_l2l_features(monkeypatch):
                 "dummy_col": [1.0],
             }
         ),
+        value_matrix=dummy_matrix,
         mission_mass={},
         mission_totals={},
         processing_metrics={},
@@ -744,6 +934,7 @@ def test_prepare_waste_frame_injects_l2l_features(monkeypatch):
 def test_compute_feature_vector_uses_l2l_packaging_ratio(monkeypatch):
     data_sources.official_features_bundle.cache_clear()
 
+    dummy_matrix = np.empty((0, 0), dtype=np.float64)
     dummy_bundle = generator._OfficialFeaturesBundle(
         value_columns=("dummy_col",),
         composition_columns=(),
@@ -757,6 +948,7 @@ def test_compute_feature_vector_uses_l2l_packaging_ratio(monkeypatch):
             },
             data=[],
         ),
+        value_matrix=dummy_matrix,
         mission_mass={},
         mission_totals={},
         processing_metrics={},
