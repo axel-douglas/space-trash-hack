@@ -14,6 +14,7 @@ pipeline can rely on a single source of truth.
 
 from __future__ import annotations
 
+import atexit
 import itertools
 import json
 import logging
@@ -44,13 +45,10 @@ import polars as pl
 
 try:  # Optional heavy dependencies; gracefully disable logging if missing
     import pyarrow as pa
+    import pyarrow.parquet as pq
 except Exception:  # pragma: no cover - pyarrow is expected in production
     pa = None  # type: ignore[assignment]
-
-try:  # ``deltalake`` provides lightweight Delta transactions
-    from deltalake.writer import write_deltalake
-except Exception:  # pragma: no cover - deltalake is expected in production
-    write_deltalake = None  # type: ignore[assignment]
+    pq = None  # type: ignore[assignment]
 
 from app.modules.label_mapper import derive_recipe_id, lookup_labels
 from app.modules.ranking import derive_auxiliary_signals, score_recipe
@@ -64,6 +62,12 @@ DATASETS_ROOT = Path(__file__).resolve().parents[2] / "datasets"
 LOGS_ROOT = Path(__file__).resolve().parents[2] / "data" / "logs"
 
 _INFERENCE_LOG_LOCK = threading.Lock()
+_INFERENCE_LOG_STATE: Dict[str, Any] = {
+    "date": None,
+    "path": None,
+    "schema": None,
+    "writer": None,
+}
 
 
 def _to_lazy_frame(
@@ -136,9 +140,107 @@ def _to_serializable(value: Any) -> Any:
 
 
 def _resolve_inference_log_dir(timestamp: datetime) -> Path:
-    """Return the Delta Lake directory for the given *timestamp*."""
+    """Return the directory backing inference logs for *timestamp*."""
 
     return LOGS_ROOT / "inference" / timestamp.strftime("%Y%m%d")
+
+
+def _close_inference_log_writer_locked() -> None:
+    state = _INFERENCE_LOG_STATE
+    writer = state.get("writer")
+    if writer is not None:
+        try:
+            writer.close()
+        except Exception:
+            pass
+    state["writer"] = None
+    state["schema"] = None
+    state["date"] = None
+    state["path"] = None
+
+
+def _close_inference_log_writer() -> None:
+    if pq is None:
+        return
+    with _INFERENCE_LOG_LOCK:
+        _close_inference_log_writer_locked()
+
+
+def _next_inference_log_path(log_dir: Path, date_token: str) -> Path:
+    base_name = f"inference_{date_token}"
+    candidate = log_dir / f"{base_name}.parquet"
+    if not candidate.exists():
+        return candidate
+
+    index = 1
+    while True:
+        candidate = log_dir / f"{base_name}_{index:03d}.parquet"
+        if not candidate.exists():
+            return candidate
+        index += 1
+
+
+def _ensure_inference_log_writer_locked(
+    timestamp: datetime, field_names: Iterable[str]
+) -> tuple[pa.Schema | None, Any | None]:
+    if pa is None or pq is None:
+        return None, None
+
+    desired_fields = sorted(set(str(name) for name in field_names))
+    state = _INFERENCE_LOG_STATE
+
+    current_date = state.get("date")
+    date_token = timestamp.strftime("%Y%m%d")
+    schema: pa.Schema | None = state.get("schema")
+
+    if current_date != date_token:
+        _close_inference_log_writer_locked()
+        schema = None
+
+    if schema is not None:
+        existing_fields = list(schema.names)
+    else:
+        existing_fields = []
+
+    if set(existing_fields) != set(desired_fields):
+        if state.get("writer") is not None:
+            _close_inference_log_writer_locked()
+        all_fields = sorted(set(existing_fields) | set(desired_fields))
+        schema = pa.schema((pa.field(name, pa.string()) for name in all_fields))
+
+        log_dir = _resolve_inference_log_dir(timestamp)
+        log_dir.mkdir(parents=True, exist_ok=True)
+        path = _next_inference_log_path(log_dir, date_token)
+
+        try:
+            writer = pq.ParquetWriter(str(path), schema=schema)
+        except Exception:
+            return None, None
+
+        state["date"] = date_token
+        state["path"] = path
+        state["schema"] = schema
+        state["writer"] = writer
+        return schema, writer
+
+    writer = state.get("writer")
+    if writer is None:
+        log_dir = _resolve_inference_log_dir(timestamp)
+        log_dir.mkdir(parents=True, exist_ok=True)
+        path = _next_inference_log_path(log_dir, date_token)
+        try:
+            writer = pq.ParquetWriter(str(path), schema=schema)
+        except Exception:
+            return None, None
+        state["date"] = date_token
+        state["path"] = path
+        state["writer"] = writer
+
+    return schema, writer
+
+
+if pq is not None:  # pragma: no branch - guard for optional dependency
+    atexit.register(_close_inference_log_writer)
 
 
 def _prepare_inference_event(
@@ -181,9 +283,9 @@ def _append_inference_log(
     uncertainty: Dict[str, Any] | None,
     model_registry: Any | None,
 ) -> None:
-    """Persist an inference event using Delta transactions to avoid read-modify-write."""
+    """Persist an inference event using a streaming Parquet writer."""
 
-    if pa is None or write_deltalake is None:  # pragma: no cover - dependencies should exist
+    if pa is None or pq is None:  # pragma: no cover - dependencies should exist
         return
 
     try:
@@ -198,31 +300,24 @@ def _append_inference_log(
         model_registry=model_registry,
     )
 
-    log_dir = _resolve_inference_log_dir(event_time)
+    with _INFERENCE_LOG_LOCK:
+        schema, writer = _ensure_inference_log_writer_locked(
+            event_time, event_payload.keys()
+        )
+        if schema is None or writer is None:
+            return
 
-    try:
-        log_dir.parent.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        return
+        arrays = []
+        for field in schema:
+            value = event_payload.get(field.name)
+            arrays.append(pa.array([value], type=field.type))
 
-    data = {
-        key: pa.array([value], type=pa.string())
-        for key, value in event_payload.items()
-    }
+        table = pa.Table.from_arrays(arrays, schema=schema)
 
-    table = pa.table(data)
-
-    try:
-        with _INFERENCE_LOG_LOCK:
-            write_deltalake(
-                str(log_dir),
-                table,
-                mode="append",
-                schema_mode="merge",
-                engine="rust",
-            )
-    except Exception:
-        return
+        try:
+            writer.write_table(table)
+        except Exception:
+            _close_inference_log_writer_locked()
 
 
 def _load_regolith_vector() -> Dict[str, float]:
@@ -1553,17 +1648,6 @@ _KEYWORD_INDEX = {name: idx for idx, name in enumerate(_KEYWORD_FEATURES)}
 _PACKAGING_TARGETS = ("packaging", "food packaging")
 
 
-def _material_tokens(row: pd.Series) -> str:
-    parts = [
-        str(row.get("material", "")),
-        str(row.get("category", "")),
-        str(row.get("flags", "")),
-        str(row.get("material_family", "")),
-        str(row.get("key_materials", "")),
-    ]
-    return " ".join(parts).lower()
-
-
 def _keyword_fraction(tokens: Iterable[str], weights: Iterable[float], keywords: Tuple[str, ...]) -> float:
     score = 0.0
     for token, weight in zip(tokens, weights):
@@ -1589,8 +1673,8 @@ class CandidateFeatureContext:
     difficulty: np.ndarray
     pct_mass: np.ndarray
     pct_volume: np.ndarray
-    tokens: Tuple[str, ...]
-    categories: Tuple[str, ...]
+    keyword_hits: np.ndarray
+    packaging_hits: np.ndarray
     regolith_pct: float
     mission_share: Dict[str, float]
     mission_scaled_mass: Dict[str, float]
@@ -1640,8 +1724,54 @@ def _prepare_feature_context(
     elif len(raw_weights) > len(picks):
         raw_weights = raw_weights[: len(picks)]
 
-    tokens = tuple(_material_tokens(row) for _, row in picks.iterrows())
-    categories = tuple(str(row.get("category", "")).lower() for _, row in picks.iterrows())
+    item_count = len(picks)
+
+    if item_count:
+        token_arrays: list[np.ndarray] = []
+        for column in ("material", "category", "flags", "material_family", "key_materials"):
+            if column in picks.columns:
+                values = np.asarray(
+                    picks[column].astype(str).fillna("").to_numpy(), dtype=str
+                )
+            else:
+                values = np.full(item_count, "", dtype=str)
+            token_arrays.append(values)
+
+        tokens_array = token_arrays[0].astype(str)
+        for part in token_arrays[1:]:
+            tokens_array = np.char.add(np.char.add(tokens_array, " "), part.astype(str))
+        tokens_array = np.asarray(np.char.lower(np.char.strip(tokens_array)))
+    else:
+        tokens_array = np.empty(0, dtype=str)
+
+    if "category" in picks.columns:
+        category_raw = np.asarray(
+            picks["category"].astype(str).fillna("").to_numpy(), dtype=str
+        )
+    else:
+        category_raw = np.full(item_count, "", dtype=str)
+    category_lower = np.asarray(np.char.lower(category_raw)) if item_count else np.empty(0, dtype=str)
+
+    keyword_hits = np.zeros((item_count, len(_KEYWORD_FEATURES)), dtype=float)
+    if item_count and len(_KEYWORD_FEATURES):
+        for kw_idx, patterns in enumerate(_KEYWORD_FEATURES.values()):
+            if not patterns:
+                continue
+            mask = np.zeros(item_count, dtype=bool)
+            for pattern in patterns:
+                if not pattern:
+                    continue
+                mask |= np.char.find(tokens_array, pattern.lower()) >= 0
+            keyword_hits[:, kw_idx] = mask.astype(float)
+
+    packaging_hits = np.zeros(item_count, dtype=float)
+    if item_count and _PACKAGING_TARGETS:
+        mask = np.zeros(item_count, dtype=bool)
+        for target in _PACKAGING_TARGETS:
+            if not target:
+                continue
+            mask |= np.char.find(category_lower, target.lower()) >= 0
+        packaging_hits = mask.astype(float)
 
     def _series_or_default(column: str, default: float) -> pd.Series:
         series = picks.get(column)
@@ -1674,44 +1804,58 @@ def _prepare_feature_context(
     mission_official_mass: Dict[str, float] = {}
 
     if bundle.mission_mass and bundle.mission_totals:
-        match_keys_col = picks.get("_official_match_key")
-        if match_keys_col is not None:
-            match_keys_list = match_keys_col.fillna("").astype(str).tolist()
-        else:
-            match_keys_list = [""] * len(picks)
+        if item_count:
+            if "_official_match_key" in picks.columns:
+                match_keys = np.asarray(
+                    picks["_official_match_key"].astype(str).fillna("").to_numpy(),
+                    dtype=str,
+                )
+            else:
+                match_keys = np.full(item_count, "", dtype=str)
 
-        for idx, (_, row) in enumerate(picks.iterrows()):
-            weight = float(raw_weights[idx]) if idx < len(raw_weights) else 0.0
-            if weight <= 0:
-                continue
+            normalized_categories = np.array(
+                [_normalize_category(value) for value in category_raw], dtype=object
+            )
+            effective_keys = match_keys.astype(object)
+            empty_mask = effective_keys == ""
+            if empty_mask.any():
+                effective_keys[empty_mask] = normalized_categories[empty_mask]
 
-            keys_to_check: list[str] = []
-            match_key = match_keys_list[idx] if idx < len(match_keys_list) else ""
-            if match_key:
-                keys_to_check.append(match_key)
+            weights_arr = raw_weights[:item_count]
+            positive_mask = (weights_arr > 0) & np.isfinite(weights_arr)
+            if not positive_mask.all():
+                effective_keys = effective_keys.astype(object)
+                effective_keys[~positive_mask] = ""
 
-            if not match_key:
-                category_key = _normalize_category(row.get("category", ""))
-                if category_key:
-                    keys_to_check.append(category_key)
-
-            seen_keys: set[str] = set()
-            for key in keys_to_check:
-                if not key or key in seen_keys:
-                    continue
-                seen_keys.add(key)
-                missions = bundle.mission_mass.get(key)
-                if not missions:
-                    continue
-
-                for mission, reference_mass in missions.items():
-                    total_reference = bundle.mission_totals.get(mission)
-                    if not total_reference or total_reference <= 0:
+            if effective_keys.size:
+                unique_keys, inverse = np.unique(effective_keys, return_inverse=True)
+                for key_idx, key in enumerate(unique_keys):
+                    if not key:
                         continue
-                    share = (reference_mass / total_reference) * weight
-                    mission_share[mission] = mission_share.get(mission, 0.0) + share
-                    mission_official_mass[mission] = mission_official_mass.get(mission, 0.0) + weight * float(reference_mass)
-                    mission_scaled_mass[mission] = mission_scaled_mass.get(mission, 0.0) + share * total_kg
+                    missions = bundle.mission_mass.get(str(key))
+                    if not missions:
+                        continue
+                    mask = inverse == key_idx
+                    if not mask.any():
+                        continue
+                    weights_for_key = weights_arr[mask]
+                    if not weights_for_key.size:
+                        continue
+                    for mission, reference_mass in missions.items():
+                        total_reference = bundle.mission_totals.get(mission)
+                        if not total_reference or total_reference <= 0:
+                            continue
+                        ref_mass_float = float(reference_mass)
+                        reference_total = float(total_reference)
+                        share_values = (ref_mass_float / reference_total) * weights_for_key
+                        share_total = float(np.sum(share_values))
+                        if share_total <= 0:
+                            continue
+                        mission_share[mission] = mission_share.get(mission, 0.0) + share_total
+                        mission_official_mass[mission] = mission_official_mass.get(mission, 0.0) + float(
+                            np.sum(weights_for_key * ref_mass_float)
+                        )
+                        mission_scaled_mass[mission] = mission_scaled_mass.get(mission, 0.0) + share_total * total_kg
 
     return CandidateFeatureContext(
         total_mass=total_kg,
@@ -1721,8 +1865,8 @@ def _prepare_feature_context(
         difficulty=difficulty,
         pct_mass=pct_mass,
         pct_volume=pct_volume,
-        tokens=tokens,
-        categories=categories,
+        keyword_hits=keyword_hits,
+        packaging_hits=packaging_hits,
         regolith_pct=float(regolith_pct),
         mission_share=mission_share,
         mission_scaled_mass=mission_scaled_mass,
@@ -1781,16 +1925,11 @@ def _contexts_to_tensor_batch(
             difficulty[idx, :count] = ctx.difficulty[:count]
             pct_mass[idx, :count] = ctx.pct_mass[:count]
             pct_volume[idx, :count] = ctx.pct_volume[:count]
-
-            for item_idx in range(count):
-                token = ctx.tokens[item_idx]
-                category = ctx.categories[item_idx]
-                for kw_idx, keywords in enumerate(keyword_names):
-                    patterns = _KEYWORD_FEATURES[keywords]
-                    if any(pattern in token for pattern in patterns):
-                        keyword_hits[idx, item_idx, kw_idx] = 1.0
-                if any(target in category for target in _PACKAGING_TARGETS):
-                    packaging_hits[idx, item_idx] = 1.0
+            if ctx.keyword_hits.size:
+                kw_cols = min(ctx.keyword_hits.shape[1], len(keyword_names))
+                keyword_hits[idx, :count, :kw_cols] = ctx.keyword_hits[:count, :kw_cols]
+            if ctx.packaging_hits.size:
+                packaging_hits[idx, :count] = ctx.packaging_hits[:count]
 
         for mission_idx, mission in enumerate(mission_names):
             mission_share[idx, mission_idx] = ctx.mission_share.get(mission, 0.0)
@@ -2679,27 +2818,13 @@ def generate_candidates(
         if executor is not None:
             executor.shutdown()
 
-    components_batch: list[CandidateComponents] = []
-    for _ in range(n):
-        bias = 2.0
-        picks = _pick_materials(df, rng, n=rng.choice([2, 3]), bias=bias)
-        components = _create_candidate_components(picks, proc_df, rng, {})
-        if components:
-            components_batch.append(components)
-
-    candidates: list[dict] = []
-    if components_batch:
-        batch = build_feature_tensor_batch(
-            [comp.picks for comp in components_batch],
-            [comp.weights for comp in components_batch],
-            [comp.process for comp in components_batch],
-            [comp.regolith_pct for comp in components_batch],
-        )
-        features_list = _compute_features_from_batch(batch)
-        for comp, feat in zip(components_batch, features_list):
-            candidate = _finalize_candidate(comp, feat, target, crew_time_low, use_ml)
-            if candidate:
-                candidates.append(candidate)
+    attempts = 0
+    max_attempts = max(n * 2, 4)
+    while len(candidates) < n and attempts < max_attempts:
+        attempts += 1
+        candidate = sampler({})
+        if candidate:
+            candidates.append(candidate)
 
     history = pd.DataFrame()
     if optimizer_evals and optimizer_evals > 0:

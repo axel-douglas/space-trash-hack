@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import numbers
 import random
 import shutil
 import time
@@ -9,11 +10,10 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict
 
-from deltalake import DeltaTable
-
 import pandas as pd
 import pytest
 import numpy as np
+import pyarrow.parquet as pq
 
 from app.modules import generator
 
@@ -301,6 +301,13 @@ def _collect_single_log_dir(root: Path) -> Path:
     return day_dirs[0]
 
 
+def _read_inference_log(day_dir: Path) -> pd.DataFrame:
+    files = sorted(day_dir.glob("*.parquet"))
+    assert files, "Expected at least one Parquet log shard"
+    frames = [pq.read_table(file).to_pandas() for file in files]
+    return pd.concat(frames, ignore_index=True, sort=False)
+
+
 def test_generate_candidates_uses_parallel_backend(monkeypatch):
     monkeypatch.setattr(generator, "_PARALLEL_THRESHOLD", 1)
 
@@ -335,6 +342,23 @@ def test_generate_candidates_uses_parallel_backend(monkeypatch):
         }
     ))
     monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ([], {}))
+                {
+                    "kg": [1.0],
+                    "pct_mass": [100.0],
+                    "pct_volume": [100.0],
+                    "moisture_pct": [0.0],
+                    "difficulty_factor": [1.0],
+                    "density_kg_m3": [1.0],
+                    "category": ["packaging"],
+                    "flags": [""],
+                    "_problematic": [0],
+                    "_source_id": ["A"],
+                    "_source_category": ["packaging"],
+                    "_source_flags": [""],
+                    "material": ["foil"],
+                }
+    ))
+    monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
 
     draws: list[float] = []
 
@@ -378,6 +402,15 @@ def test_generate_candidates_uses_parallel_backend(monkeypatch):
             "crew_min_per_batch": [30.0],
         }
     )
+    proc_df = pd.DataFrame(
+        {
+            "process_id": ["P01"],
+            "name": ["Process"],
+            "energy_kwh_per_kg": [1.0],
+            "water_l_per_kg": [0.5],
+            "crew_min_per_batch": [30.0],
+        }
+    )
 
     candidates, history = generator.generate_candidates(
         waste_df,
@@ -400,6 +433,7 @@ def test_generate_candidates_uses_parallel_backend(monkeypatch):
 
 def test_append_inference_log_appends_without_reads(monkeypatch, tmp_path):
     monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
+    generator._close_inference_log_writer()
 
     log_root = tmp_path / "inference"
     if log_root.exists():
@@ -418,13 +452,16 @@ def test_append_inference_log_appends_without_reads(monkeypatch, tmp_path):
             model_registry=None,
         )
 
+    generator._close_inference_log_writer()
+
     log_dir = _collect_single_log_dir(tmp_path)
-    table = DeltaTable(str(log_dir)).to_pyarrow_table()
-    assert table.num_rows == 2
+    table = _read_inference_log(log_dir)
+    assert len(table) == 2
 
 
 def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
     monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
+    generator._close_inference_log_writer()
 
     log_root = tmp_path / "inference"
     if log_root.exists():
@@ -454,8 +491,10 @@ def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
         model_registry=None,
     )
 
+    generator._close_inference_log_writer()
+
     log_dir = _collect_single_log_dir(tmp_path)
-    log_df = DeltaTable(str(log_dir)).to_pandas()
+    log_df = _read_inference_log(log_dir)
     assert "session_id" in log_df.columns
     assert log_df["session_id"].isna().sum() == 1
     assert set(log_df["session_id"].dropna()) == {"alpha"}
@@ -465,6 +504,7 @@ def test_generate_candidates_appends_inference_log(monkeypatch, tmp_path):
     monkeypatch.setattr(generator, "MODEL_REGISTRY", DummyRegistry())
     monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
     monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
+    generator._close_inference_log_writer()
 
     log_root = tmp_path / "inference"
     if log_root.exists():
@@ -495,8 +535,10 @@ def test_generate_candidates_appends_inference_log(monkeypatch, tmp_path):
     assert candidates, "Expected at least one candidate to be generated"
     assert history.empty
 
+    generator._close_inference_log_writer()
+
     log_dir = _collect_single_log_dir(tmp_path)
-    log_df = DeltaTable(str(log_dir)).to_pandas().sort_values("timestamp")
+    log_df = _read_inference_log(log_dir).sort_values("timestamp")
     for column in ["timestamp", "input_features", "prediction", "uncertainty", "model_hash"]:
         assert column in log_df.columns
 
@@ -539,16 +581,12 @@ def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch, tmp_path):
 
     monkeypatch.setattr(generator, "MODEL_REGISTRY", NoCallRegistry())
     monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
+    generator._close_inference_log_writer()
 
     log_root = tmp_path / "inference"
     if log_root.exists():
         shutil.rmtree(log_root)
     monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
-
-    log_dir = generator.LOGS_ROOT
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"inference_{datetime.utcnow().strftime('%Y%m%d')}.parquet"
-    log_path.unlink(missing_ok=True)
     waste_df = pd.DataFrame(
         {
             "id": ["W1", "W2"],
@@ -690,6 +728,48 @@ def test_compute_feature_vector_keyword_fallback_triggers_polyethylene():
     for candidate in batched:
         assert candidate["polyethylene_frac"] == pytest.approx(features["polyethylene_frac"], rel=1e-6)
         assert candidate["gas_recovery_index"] == pytest.approx(features["gas_recovery_index"], rel=1e-6)
+
+
+def test_compute_feature_vector_dataframe_matches_tensor_batch():
+    waste_df = pd.DataFrame(
+        {
+            "id": ["X", "Y", "Z"],
+            "category": ["Food Packaging", "Food Packaging", "Logistics"],
+            "material": [
+                "Rehydratable Pouch",
+                "Nomex shipping bag",
+                "Polyethylene foam block",
+            ],
+            "kg": [7.0, 2.0, 4.0],
+            "volume_l": [0.0, 1.0, 8.0],
+            "flags": ["", "multilayer", ""],
+        }
+    )
+
+    prepared = generator.prepare_waste_frame(waste_df)
+    process = _dummy_process_series()
+    weights = [0.5, 0.3, 0.2]
+    regolith_pct = 0.15
+
+    dataframe_features = generator.compute_feature_vector(
+        prepared, weights, process, regolith_pct
+    )
+
+    tensor_batch = generator.build_feature_tensor_batch(
+        [prepared], [weights], [process], [regolith_pct]
+    )
+    tensor_features = generator.compute_feature_vector(tensor_batch)
+
+    assert isinstance(tensor_features, list) and tensor_features, "Tensor batch returned no features"
+    tensor_features = tensor_features[0]
+
+    assert set(tensor_features) == set(dataframe_features)
+    for key, value in dataframe_features.items():
+        lhs = tensor_features[key]
+        if isinstance(value, numbers.Real):
+            assert lhs == pytest.approx(value, rel=1e-6, abs=1e-8)
+        else:
+            assert lhs == value
 
 
 def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
