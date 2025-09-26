@@ -123,6 +123,7 @@ _REGOLITH_OXIDE_ITEMS = tuple(REGOLITH_VECTOR.items())
 _REGOLITH_OXIDE_NAMES = tuple(f"oxide_{name}" for name, _ in _REGOLITH_OXIDE_ITEMS)
 _REGOLITH_OXIDE_VALUES = np.asarray([float(value) for _, value in _REGOLITH_OXIDE_ITEMS], dtype=float)
 
+
 @dataclass(slots=True)
 class _InferenceWriterState:
     """Book-keeping for an active Parquet writer."""
@@ -364,6 +365,58 @@ def _close_inference_log_writer() -> None:
     """Close the cached Parquet writer used for inference logs."""
 
     _INFERENCE_LOG_MANAGER.close()
+=======
+def _to_lazy_frame(
+    frame: pd.DataFrame | pl.DataFrame | pl.LazyFrame,
+) -> tuple[pl.LazyFrame, str]:
+    """Return a :class:`polars.LazyFrame` along with the original frame type."""
+
+    if isinstance(frame, pl.LazyFrame):
+        return frame, "lazy"
+    if isinstance(frame, pl.DataFrame):
+        return frame.lazy(), "polars"
+    if isinstance(frame, pd.DataFrame):
+        return pl.from_pandas(frame).lazy(), "pandas"
+    raise TypeError(f"Unsupported frame type: {type(frame)!r}")
+
+
+def _from_lazy_frame(lazy: pl.LazyFrame, frame_kind: str) -> pd.DataFrame | pl.DataFrame | pl.LazyFrame:
+    """Convert *lazy* back to the representation described by *frame_kind*."""
+
+    if frame_kind == "lazy":
+        return lazy
+
+    collected = lazy.collect()
+    if frame_kind == "polars":
+        return collected
+    if frame_kind == "pandas":
+        return collected.to_pandas()
+    raise ValueError(f"Unsupported frame kind: {frame_kind}")
+
+
+def _resolve_dataset_path(name: str) -> Path | None:
+    """Return the first dataset path that exists for *name*.
+
+    The helper checks the canonical ``datasets`` root alongside the ``raw``
+    subdirectory so callers do not need to remember where a file was stored.
+    """
+
+    candidates = (
+        DATASETS_ROOT / name,
+        DATASETS_ROOT / "raw" / name,
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _slugify(value: str) -> str:
+    """Convert *value* into a snake_case identifier safe for feature names."""
+
+    text = re.sub(r"[^0-9a-zA-Z]+", "_", str(value).strip().lower())
+    text = re.sub(r"_+", "_", text).strip("_")
+    return text or "value
 
 
 def _load_regolith_vector() -> Dict[str, float]:
