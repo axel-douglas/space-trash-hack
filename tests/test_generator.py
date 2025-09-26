@@ -15,6 +15,28 @@ from app.modules import generator
 pl = generator.pl
 
 
+def _batched_feature_vectors(
+    picks: pd.DataFrame,
+    weights: list[float],
+    process: pd.Series,
+    regolith_pct: float,
+    repeat: int = 2,
+) -> list[dict]:
+    picks_list = [picks.copy(deep=True) for _ in range(repeat)]
+    weights_list = [list(weights) for _ in range(repeat)]
+    process_list = [process.copy(deep=True) for _ in range(repeat)]
+    regolith_list = [regolith_pct for _ in range(repeat)]
+    tensor_batch = generator.build_feature_tensor_batch(
+        picks_list,
+        weights_list,
+        process_list,
+        regolith_list,
+    )
+    batched = generator.compute_feature_vector(tensor_batch)
+    assert isinstance(batched, list)
+    return batched
+
+
 def test_load_waste_summary_data_polars(tmp_path, monkeypatch):
     summary_path = tmp_path / "nasa_waste_summary.csv"
     summary_path.write_text(
@@ -454,6 +476,13 @@ def test_compute_feature_vector_blends_official_and_keyword_sources():
     assert features["gas_recovery_index"] > 0.0
     assert features["moisture_frac"] == pytest.approx(0.028, rel=1e-6)
 
+    batched = _batched_feature_vectors(prepared, [0.7, 0.3], process, 0.0)
+    assert len(batched) == 2
+    for candidate in batched:
+        assert candidate["polyethylene_frac"] == pytest.approx(features["polyethylene_frac"], rel=1e-6)
+        assert candidate["gas_recovery_index"] == pytest.approx(features["gas_recovery_index"], rel=1e-6)
+        assert candidate["moisture_frac"] == pytest.approx(features["moisture_frac"], rel=1e-6)
+
 
 def test_compute_feature_vector_keyword_fallback_triggers_polyethylene():
     waste_df = pd.DataFrame(
@@ -478,6 +507,12 @@ def test_compute_feature_vector_keyword_fallback_triggers_polyethylene():
 
     assert features["polyethylene_frac"] > 0.5
     assert features["gas_recovery_index"] > 0.0
+
+    batched = _batched_feature_vectors(prepared, [1.0], process, 0.0)
+    assert len(batched) == 2
+    for candidate in batched:
+        assert candidate["polyethylene_frac"] == pytest.approx(features["polyethylene_frac"], rel=1e-6)
+        assert candidate["gas_recovery_index"] == pytest.approx(features["gas_recovery_index"], rel=1e-6)
 
 
 def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
@@ -546,6 +581,19 @@ def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
     assert features["processing_o2_ch4_yield_kg_expected"] == pytest.approx(1.0, rel=1e-6)
     assert features["leo_mass_savings_kg_expected"] == pytest.approx(24.0, rel=1e-6)
     assert features["propellant_delta_v_m_s_expected"] == pytest.approx(7.0, rel=1e-6)
+
+    batched = _batched_feature_vectors(prepared, [1.0], process, 0.0)
+    assert len(batched) == 2
+    for candidate in batched:
+        assert candidate["mission_similarity_gateway_i"] == pytest.approx(features["mission_similarity_gateway_i"], rel=1e-6)
+        assert candidate["mission_reference_mass_gateway_i"] == pytest.approx(features["mission_reference_mass_gateway_i"], rel=1e-6)
+        assert candidate["mission_scaled_mass_gateway_i"] == pytest.approx(features["mission_scaled_mass_gateway_i"], rel=1e-6)
+        assert candidate["mission_official_mass_gateway_i"] == pytest.approx(features["mission_official_mass_gateway_i"], rel=1e-6)
+        assert candidate["mission_similarity_total"] == pytest.approx(features["mission_similarity_total"], rel=1e-6)
+        assert candidate["processing_o2_ch4_yield_kg_gateway_i"] == pytest.approx(features["processing_o2_ch4_yield_kg_gateway_i"], rel=1e-6)
+        assert candidate["processing_o2_ch4_yield_kg_expected"] == pytest.approx(features["processing_o2_ch4_yield_kg_expected"], rel=1e-6)
+        assert candidate["leo_mass_savings_kg_expected"] == pytest.approx(features["leo_mass_savings_kg_expected"], rel=1e-6)
+        assert candidate["propellant_delta_v_m_s_expected"] == pytest.approx(features["propellant_delta_v_m_s_expected"], rel=1e-6)
 
 
 def test_prepare_waste_frame_injects_l2l_features(monkeypatch):
@@ -662,3 +710,11 @@ def test_compute_feature_vector_uses_l2l_packaging_ratio(monkeypatch):
     packaging_term = features.get("packaging_frac", 0.0) + 0.5 * features.get("eva_frac", 0.0)
     expected = min(2.0, packaging_term / 0.2 if 0.2 else 0.0)
     assert features["logistics_reuse_index"] == pytest.approx(expected, rel=1e-6)
+
+    batched = _batched_feature_vectors(prepared, [1.0], process, 0.0)
+    assert len(batched) == 2
+    for candidate in batched:
+        assert candidate["l2l_logistics_packaging_per_goods_ratio"] == pytest.approx(
+            features["l2l_logistics_packaging_per_goods_ratio"], rel=1e-6
+        )
+        assert candidate["logistics_reuse_index"] == pytest.approx(features["logistics_reuse_index"], rel=1e-6)
