@@ -20,6 +20,11 @@ código testeable y comprensible:
 Los tests unitarios apuntan a estos límites para garantizar que cada módulo
 permanezca enfocado en su dominio (ingesta, generación y logging).
 
+> Nota: los helpers legacy `app/modules/branding.py`, `app/modules/charts.py`
+> y `app/modules/embeddings.py` fueron eliminados. La app se apoya en
+> `app/modules/ui_blocks.py` para el layout y en los modelos entrenados para
+> producir incrustaciones latentes reales.
+
 ## Requisitos
 - Python 3.10+
 - `pip install -r requirements.txt`
