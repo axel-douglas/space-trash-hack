@@ -12,11 +12,12 @@ from types import SimpleNamespace
 
 from typing import Any, Dict
 
-import pandas as pd
-import pytest
 import numpy as np
+import pandas as pd
 import pyarrow.parquet as pq
+import pytest
 
+from app.modules import data_sources, generator, label_mapper, logging_utils
 from app.modules import data_sources, execution, generator, label_mapper
 
 pl = generator.pl
@@ -63,10 +64,10 @@ def test_load_regolith_vector_matches_data_sources():
 
 
 def test_append_inference_log_reuses_daily_writer(monkeypatch, tmp_path):
-    generator._INFERENCE_LOG_MANAGER.close()
-    monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
-    manager = generator._InferenceLogWriterManager()
-    monkeypatch.setattr(generator, "_INFERENCE_LOG_MANAGER", manager)
+    logging_utils._INFERENCE_LOG_MANAGER.close()
+    monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
+    manager = logging_utils._InferenceLogWriterManager()
+    monkeypatch.setattr(logging_utils, "_INFERENCE_LOG_MANAGER", manager)
 
     created_paths: list[Path] = []
     write_calls: list[tuple[Path, int]] = []
@@ -89,7 +90,7 @@ def test_append_inference_log_reuses_daily_writer(monkeypatch, tmp_path):
         created_paths.append(writer.path)
         return writer
 
-    monkeypatch.setattr(generator.pq, "ParquetWriter", fake_writer)
+    monkeypatch.setattr(logging_utils.pq, "ParquetWriter", fake_writer)
 
     day = datetime(2024, 5, 4, 12, 0, tzinfo=UTC)
     events = [
@@ -119,7 +120,7 @@ def test_append_inference_log_reuses_daily_writer(monkeypatch, tmp_path):
         ts, payload = events.pop(0)
         return ts, payload
 
-    monkeypatch.setattr(generator, "_prepare_inference_event", fake_prepare)
+    monkeypatch.setattr(logging_utils, "prepare_inference_event", fake_prepare)
 
     generator.append_inference_log({}, {}, {}, None)
     generator.append_inference_log({}, {}, {}, None)
@@ -218,10 +219,10 @@ def test_append_inference_log_skips_parquet_reads(monkeypatch, tmp_path):
 
 
 def test_append_inference_log_rotates_daily(monkeypatch, tmp_path):
-    generator._INFERENCE_LOG_MANAGER.close()
-    monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
-    manager = generator._InferenceLogWriterManager()
-    monkeypatch.setattr(generator, "_INFERENCE_LOG_MANAGER", manager)
+    logging_utils._INFERENCE_LOG_MANAGER.close()
+    monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
+    manager = logging_utils._InferenceLogWriterManager()
+    monkeypatch.setattr(logging_utils, "_INFERENCE_LOG_MANAGER", manager)
 
     created_paths: list[Path] = []
     closed_paths: list[Path] = []
@@ -241,7 +242,7 @@ def test_append_inference_log_rotates_daily(monkeypatch, tmp_path):
         created_paths.append(writer.path)
         return writer
 
-    monkeypatch.setattr(generator.pq, "ParquetWriter", fake_writer)
+    monkeypatch.setattr(logging_utils.pq, "ParquetWriter", fake_writer)
 
     day_one = datetime(2024, 5, 4, 23, 0, tzinfo=UTC)
     day_two = datetime(2024, 5, 5, 0, 5, tzinfo=UTC)
@@ -272,7 +273,7 @@ def test_append_inference_log_rotates_daily(monkeypatch, tmp_path):
         ts, payload = events.pop(0)
         return ts, payload
 
-    monkeypatch.setattr(generator, "_prepare_inference_event", fake_prepare)
+    monkeypatch.setattr(logging_utils, "prepare_inference_event", fake_prepare)
 
     generator.append_inference_log({}, {}, {}, None)
     assert len(created_paths) == 1
@@ -446,10 +447,21 @@ def test_official_features_bundle_polars_pipeline(tmp_path, monkeypatch):
     assert "other packaging|nitrile glove" in bundle.direct_map
 
     generator._official_features_bundle.cache_clear()
-    monkeypatch.setattr(generator, "_OFFICIAL_FEATURES_PATH", official_path)
-    monkeypatch.setattr(generator, "_resolve_dataset_path", lambda name: file_map.get(name))
+    monkeypatch.setattr(generator, "_load_official_features_bundle", data_sources.official_features_bundle)
+    generator._official_features_bundle.cache_clear()
     vector_bundle = generator._official_features_bundle()
-    vector_idx = vector_bundle.direct_map["packaging|foam"]
+    vector_idx = vector_bundle.direct_map.get("packaging|foam")
+    if vector_idx is None:
+        token_entry = vector_bundle.category_tokens.get("packaging")
+        if token_entry:
+            _, key_array, indices_array = token_entry
+            keys_list = key_array.tolist() if hasattr(key_array, "tolist") else list(key_array)
+            idx_list = indices_array.tolist() if hasattr(indices_array, "tolist") else list(indices_array)
+            for key_candidate, idx_candidate in zip(keys_list, idx_list, strict=False):
+                if str(key_candidate) == "packaging|foam":
+                    vector_idx = int(idx_candidate)
+                    break
+    assert vector_idx is not None
     glove_idx = vector_bundle.direct_map["gloves|nitrile glove"]
     payload = generator._build_payload_from_row(
         vector_bundle.value_matrix[vector_idx], vector_bundle.value_columns
@@ -842,8 +854,8 @@ def test_generate_candidates_parallel_is_deterministic(monkeypatch):
 
 
 def test_append_inference_log_appends_without_reads(monkeypatch, tmp_path):
-    monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
-    generator._INFERENCE_LOG_MANAGER.close()
+    monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
+    logging_utils._INFERENCE_LOG_MANAGER.close()
 
     log_root = tmp_path / "inference"
     if log_root.exists():
@@ -857,7 +869,7 @@ def test_append_inference_log_appends_without_reads(monkeypatch, tmp_path):
             model_registry=None,
         )
 
-    generator._INFERENCE_LOG_MANAGER.close()
+    logging_utils._INFERENCE_LOG_MANAGER.close()
 
     log_dir = _collect_single_log_dir(tmp_path)
     table = _read_inference_log(log_dir)
@@ -865,8 +877,8 @@ def test_append_inference_log_appends_without_reads(monkeypatch, tmp_path):
 
 
 def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
-    monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
-    generator._INFERENCE_LOG_MANAGER.close()
+    monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
+    logging_utils._INFERENCE_LOG_MANAGER.close()
 
     log_root = tmp_path / "inference"
     if log_root.exists():
@@ -879,7 +891,7 @@ def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
         model_registry=None,
     )
 
-    original_prepare = generator._prepare_inference_event
+    original_prepare = logging_utils.prepare_inference_event
 
     def prepare_with_session(*args, **kwargs):
         timestamp, payload = original_prepare(*args, **kwargs)
@@ -887,7 +899,7 @@ def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
         updated["session_id"] = "alpha"
         return timestamp, updated
 
-    monkeypatch.setattr(generator, "_prepare_inference_event", prepare_with_session)
+    monkeypatch.setattr(logging_utils, "prepare_inference_event", prepare_with_session)
 
     generator.append_inference_log(
         input_features={"feature": 1},
@@ -896,7 +908,7 @@ def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
         model_registry=None,
     )
 
-    generator._INFERENCE_LOG_MANAGER.close()
+    logging_utils._INFERENCE_LOG_MANAGER.close()
 
     log_dir = _collect_single_log_dir(tmp_path)
     log_df = _read_inference_log(log_dir)
@@ -907,9 +919,9 @@ def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
 
 def test_generate_candidates_appends_inference_log(monkeypatch, tmp_path):
     monkeypatch.setattr(generator, "MODEL_REGISTRY", DummyRegistry())
-    monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
+    monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
     monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
-    generator._INFERENCE_LOG_MANAGER.close()
+    logging_utils._INFERENCE_LOG_MANAGER.close()
 
     log_root = tmp_path / "inference"
     if log_root.exists():
@@ -940,7 +952,7 @@ def test_generate_candidates_appends_inference_log(monkeypatch, tmp_path):
     assert candidates, "Expected at least one candidate to be generated"
     assert history.empty
 
-    generator._INFERENCE_LOG_MANAGER.close()
+    logging_utils._INFERENCE_LOG_MANAGER.close()
 
     log_dir = _collect_single_log_dir(tmp_path)
     log_df = _read_inference_log(log_dir).sort_values("timestamp")
@@ -985,14 +997,14 @@ def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch, tmp_path):
             return []
 
     monkeypatch.setattr(generator, "MODEL_REGISTRY", NoCallRegistry())
-    monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
-    generator._INFERENCE_LOG_MANAGER.close()
+    monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
+    logging_utils._INFERENCE_LOG_MANAGER.close()
 
     log_root = tmp_path / "inference"
     shutil.rmtree(log_root, ignore_errors=True)
     monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
 
-    log_dir = generator.LOGS_ROOT
+    log_dir = logging_utils.LOGS_ROOT
     log_dir.mkdir(parents=True, exist_ok=True)
     waste_df = pd.DataFrame(
         {
@@ -1018,7 +1030,7 @@ def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch, tmp_path):
         waste_df, proc_df, target={}, n=1, use_ml=False
     )
 
-    generator._INFERENCE_LOG_MANAGER.close()
+    logging_utils._INFERENCE_LOG_MANAGER.close()
 
     assert candidates, "Expected heuristic candidate even when ML disabled"
     assert history.empty
@@ -1145,7 +1157,7 @@ def test_prepare_waste_frame_includes_reference_columns(reference_dataset_tables
         for column in table.columns:
             if column in {"category", "subitem"}:
                 continue
-            expected_columns.add(f"{prefix}_{generator._slugify(column)}")
+            expected_columns.add(f"{prefix}_{data_sources.slugify(column)}")
 
     waste_df = pd.DataFrame(
         {

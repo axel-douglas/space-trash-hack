@@ -14,9 +14,7 @@ candidate assembly.
 
 from __future__ import annotations
 
-import atexit
 import itertools
-import json
 import logging
 import math
 import os
@@ -24,14 +22,6 @@ import random
 import re
 import threading
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, NamedTuple, Sequence, Tuple
-
-from functools import lru_cache
-from functools import lru_cache
-from pathlib import Path
-from datetime import UTC, datetime
-from pathlib import Path
 from functools import lru_cache
 from typing import Any, Dict, Iterable, Mapping, NamedTuple, Sequence, Tuple
 
@@ -59,15 +49,17 @@ except Exception:  # pragma: no cover - torch is optional
 
 from app.modules.data_sources import (
     _CATEGORY_SYNONYMS,
+    DATASETS_ROOT,
     GAS_MEAN_YIELD,
     MEAN_REUSE,
     REGOLITH_VECTOR,
     L2LParameters as _L2LParameters,
     load_l2l_parameters as _load_l2l_parameters,
-    OfficialFeaturesBundle,
     normalize_category,
     normalize_item,
+    official_features_bundle as _load_official_features_bundle,
 )
+from app.modules.logging_utils import append_inference_log
 
 # The demo previously collapsed multiple NASA inventory families (Packaging,
 # Other Packaging, Gloves, Foam Packaging, Food Packaging, Structural Elements
@@ -98,12 +90,10 @@ _CATEGORY_FAMILY_FALLBACKS: Dict[str, tuple[str, ...]] = {
     "gloves": ("gloves", "other packaging", "packaging"),
     "other packaging glove": ("other packaging", "gloves", "packaging"),
 }
-try:  # Optional heavy dependencies; gracefully disable logging if missing
+try:  # Optional heavy dependencies; used for fast vectorization
     import pyarrow as pa
-    import pyarrow.parquet as pq
 except Exception:  # pragma: no cover - pyarrow is expected in production
     pa = None  # type: ignore[assignment]
-    pq = None  # type: ignore[assignment]
 
 from app.modules.execution import (
     DEFAULT_PARALLEL_THRESHOLD,
@@ -118,14 +108,9 @@ try:  # Lazy import to avoid circular dependency during training pipelines
 except Exception:  # pragma: no cover - fallback when models are not available
     MODEL_REGISTRY = None
 
-DATASETS_ROOT = Path(__file__).resolve().parents[2] / "datasets"
-LOGS_ROOT = Path(__file__).resolve().parents[2] / "data" / "logs"
-_OFFICIAL_FEATURES_PATH = DATASETS_ROOT / "rexai_nasa_waste_features.csv"
-
 _REGOLITH_OXIDE_ITEMS = tuple(REGOLITH_VECTOR.items())
 _REGOLITH_OXIDE_NAMES = tuple(f"oxide_{name}" for name, _ in _REGOLITH_OXIDE_ITEMS)
 _REGOLITH_OXIDE_VALUES = np.asarray([float(value) for _, value in _REGOLITH_OXIDE_ITEMS], dtype=float)
-
 
 @dataclass(slots=True)
 class _InferenceWriterState:
@@ -461,7 +446,6 @@ def _load_regolith_vector() -> Dict[str, float]:
                         if key and weight is not None and np.isfinite(weight)
                     }
 
-
 _COMPOSITION_DENSITY_MAP = {
     "Aluminum_pct": 2700.0,
     "Carbon_Fiber_pct": 1700.0,
@@ -492,276 +476,6 @@ _CATEGORY_DENSITY_DEFAULTS = {
 }
 
 
-def _merge_reference_dataset(
-    base: pd.DataFrame | pl.DataFrame | pl.LazyFrame, filename: str, prefix: str
-) -> pd.DataFrame | pl.DataFrame | pl.LazyFrame:
-    path = _resolve_dataset_path(filename)
-    if path is None:
-        return base
-
-    base_lazy, base_kind = _to_lazy_frame(base)
-    base_columns = list(base_lazy.columns)
-
-    extra_lazy = pl.scan_csv(path)
-    extra_columns = extra_lazy.columns
-
-    join_cols = [col for col in ("category", "subitem") if col in base_columns and col in extra_columns]
-    if not join_cols:
-        return base
-
-    existing = set(base_columns)
-    rename_map: Dict[str, str] = {}
-    drop_cols: list[str] = []
-    for column in extra_columns:
-        if column in join_cols:
-            continue
-        if column in existing:
-            drop_cols.append(column)
-            continue
-        rename_map[column] = f"{prefix}_{_slugify(column)}"
-
-    if drop_cols:
-        extra_lazy = extra_lazy.drop(drop_cols)
-    if rename_map:
-        extra_lazy = extra_lazy.rename(rename_map)
-
-    added_columns = [rename_map.get(col, col) for col in extra_columns if col not in join_cols and col not in drop_cols]
-
-    merged_lazy = base_lazy.join(extra_lazy, on=join_cols, how="left")
-    if added_columns:
-        projection = base_columns + [col for col in added_columns if col not in base_columns]
-        merged_lazy = merged_lazy.select([pl.col(name) for name in projection])
-
-    result = _from_lazy_frame(merged_lazy, base_kind)
-    if isinstance(result, pd.DataFrame):
-        return result.loc[:, ~result.columns.duplicated()]
-    if isinstance(result, pl.DataFrame):
-        unique_cols = []
-        seen: set[str] = set()
-        for name in result.columns:
-            if name in seen:
-                continue
-            seen.add(name)
-            unique_cols.append(name)
-        return result.select(unique_cols)
-    return result
-
-
-def _mission_slug(column: str) -> str:
-    cleaned = column.lower()
-    cleaned = cleaned.replace("summary_", "")
-    cleaned = cleaned.replace("mass", "")
-    cleaned = cleaned.replace("kg", "")
-    cleaned = cleaned.replace("total", "")
-    cleaned = cleaned.replace("__", "_")
-    return _slugify(cleaned)
-
-
-class _WasteSummary(NamedTuple):
-    mass_by_key: Dict[str, Dict[str, float]]
-    mission_totals: Dict[str, float]
-
-
-def _load_waste_summary_data() -> _WasteSummary:
-    path = _resolve_dataset_path("nasa_waste_summary.csv")
-    if path is None:
-        return _WasteSummary({}, {})
-
-    table = pl.scan_csv(path)
-    if "category" not in table.columns:
-        return _WasteSummary({}, {})
-
-    mass_columns = [
-        column
-        for column in table.columns
-        if column.lower().endswith("mass_kg") and not column.lower().startswith("subitem_")
-    ]
-    if not mass_columns:
-        return _WasteSummary({}, {})
-
-    has_subitem = "subitem" in table.columns
-    subitem_expr = (
-        pl.when(pl.col("subitem").is_not_null())
-        .then(pl.col("subitem").map_elements(_normalize_item, return_dtype=pl.String))
-        .otherwise(pl.lit(""))
-        .alias("subitem_norm")
-        if has_subitem
-        else pl.lit("").alias("subitem_norm")
-    )
-
-    melted = (
-        table.with_columns(
-            pl.col("category")
-            .map_elements(_normalize_category, return_dtype=pl.String)
-            .alias("category_norm"),
-            subitem_expr,
-        )
-        .with_columns(
-            pl.when(pl.col("subitem_norm").str.len_bytes() > 0)
-            .then(pl.col("category_norm") + pl.lit("|") + pl.col("subitem_norm"))
-            .otherwise(pl.col("category_norm"))
-            .alias("item_key"),
-            pl.col("category_norm").alias("category_key"),
-        )
-        .melt(
-            id_vars=["category_key", "item_key"],
-            value_vars=mass_columns,
-            variable_name="mission_column",
-            value_name="mass_value",
-        )
-        .with_columns(
-            pl.col("mission_column")
-            .map_elements(_mission_slug, return_dtype=pl.String)
-            .alias("mission"),
-            pl.col("mass_value").cast(pl.Float64, strict=False).alias("mass"),
-        )
-        .filter(pl.col("mission").is_not_null() & pl.col("mass").is_finite() & (pl.col("mass") > 0))
-    )
-
-    row_count = melted.select(pl.len().alias("rows")).collect().row(0)[0]
-    if row_count == 0:
-        return _WasteSummary({}, {})
-
-    mission_totals_df = melted.group_by("mission").agg(pl.col("mass").sum()).collect()
-    mission_totals: Dict[str, float] = {}
-    if mission_totals_df.height:
-        missions = mission_totals_df.get_column("mission").to_list()
-        masses = mission_totals_df.get_column("mass").to_numpy()
-        for mission, mass in zip(missions, masses, strict=False):
-            if mission and mass is not None and np.isfinite(mass):
-                mission_totals[str(mission)] = float(mass)
-
-    mass_by_key: Dict[str, Dict[str, float]] = {}
-
-    subitem_totals_df = (
-        melted
-        .filter(pl.col("item_key") != pl.col("category_key"))
-        .group_by(["item_key", "mission"])
-        .agg(pl.col("mass").sum())
-        .collect()
-    )
-
-    if subitem_totals_df.height:
-        keys = subitem_totals_df.get_column("item_key").to_list()
-        missions = subitem_totals_df.get_column("mission").to_list()
-        masses = subitem_totals_df.get_column("mass").to_numpy()
-        for key, mission, mass in zip(keys, missions, masses, strict=False):
-            if not key or not mission or mass is None or not np.isfinite(mass):
-                continue
-            entry = mass_by_key.setdefault(str(key), {})
-            entry[str(mission)] = entry.get(str(mission), 0.0) + float(mass)
-
-    category_totals_df = (
-        melted.group_by(["category_key", "mission"]).agg(pl.col("mass").sum()).collect()
-    )
-
-    if category_totals_df.height:
-        keys = category_totals_df.get_column("category_key").to_list()
-        missions = category_totals_df.get_column("mission").to_list()
-        masses = category_totals_df.get_column("mass").to_numpy()
-        for key, mission, mass in zip(keys, missions, masses, strict=False):
-            if not key or not mission or mass is None or not np.isfinite(mass):
-                continue
-            entry = mass_by_key.setdefault(str(key), {})
-            entry[str(mission)] = entry.get(str(mission), 0.0) + float(mass)
-
-    return _WasteSummary(mass_by_key, mission_totals)
-
-
-def _extract_grouped_metrics(filename: str, prefix: str) -> Dict[str, Dict[str, float]]:
-    path = _resolve_dataset_path(filename)
-    if path is None:
-        return {}
-
-    table = pl.scan_csv(path)
-
-    row_count = table.select(pl.len().alias("rows")).collect().row(0)[0]
-    if row_count == 0:
-        return {}
-
-    schema = table.schema
-    numeric_cols = [
-        name
-        for name, dtype in schema.items()
-        if dtype.is_numeric()
-    ]
-    if not numeric_cols:
-        return {}
-
-    group_candidates = {
-        "mission",
-        "scenario",
-        "approach",
-        "vehicle",
-        "propulsion",
-        "architecture",
-    }
-    group_columns = [col for col in table.columns if col.lower() in group_candidates]
-
-    aggregated: Dict[str, Dict[str, float]] = {}
-
-    if not group_columns:
-        summary_df = table.select(
-            [pl.col(col).cast(pl.Float64, strict=False).mean().alias(col) for col in numeric_cols]
-        ).collect()
-        if summary_df.height:
-            metrics: Dict[str, float] = {}
-            for column in numeric_cols:
-                series = summary_df.get_column(column)
-                value = series[0] if series.len() else None
-                if value is None or (isinstance(value, float) and math.isnan(value)):
-                    continue
-                metrics[f"{prefix}_{_slugify(column)}"] = float(value)
-            if metrics:
-                aggregated[prefix] = metrics
-        return aggregated
-
-    combinations: list[tuple[str, ...]] = []
-    for length in range(1, len(group_columns) + 1):
-        combinations.extend(itertools.combinations(group_columns, length))
-
-    for combo in combinations:
-        grouped_df = (
-            table.group_by(list(combo))
-            .agg([pl.col(col).cast(pl.Float64, strict=False).mean().alias(col) for col in numeric_cols])
-            .collect()
-        )
-        if not grouped_df.height:
-            continue
-
-        combo_values = [grouped_df.get_column(column).to_list() for column in combo]
-        metric_arrays = [
-            np.asarray(grouped_df.get_column(column).to_numpy(), dtype=np.float64)
-            for column in numeric_cols
-        ]
-
-        for row_idx in range(grouped_df.height):
-            slug_parts: list[str] = []
-            for values, column in zip(combo_values, combo, strict=False):
-                value = values[row_idx]
-                if isinstance(value, str):
-                    slug_part = _slugify(value)
-                elif value is not None:
-                    slug_part = _slugify(str(value))
-                else:
-                    slug_part = ""
-                if slug_part:
-                    slug_parts.append(slug_part)
-            slug = "_".join(part for part in slug_parts if part)
-            if not slug:
-                continue
-
-            metrics: Dict[str, float] = {}
-            for array, column in zip(metric_arrays, numeric_cols, strict=False):
-                value = array[row_idx]
-                if value is None or not np.isfinite(value):
-                    continue
-                metrics[f"{prefix}_{_slugify(column)}"] = float(value)
-
-            if metrics:
-                aggregated[slug] = metrics
-
-    return aggregated
 
 def _normalize_text(value: Any) -> str:
     text = str(value or "").lower()
@@ -1081,15 +795,36 @@ def _build_mission_reference_tables(
 @lru_cache(maxsize=1)
 def _official_features_bundle() -> _OfficialFeaturesBundle:
     l2l = _get_l2l_parameters()
-    if not isinstance(getattr(l2l, "constants", None), Mapping) or not isinstance(
-        getattr(l2l, "category_features", None), Mapping
-    ):
-        l2l = _L2LParameters({}, {}, {}, {})
-    if sparse is not None:
-        empty_reference = sparse.csr_matrix((0, 0), dtype=np.float64)
+    constants = getattr(l2l, "constants", {}) or {}
+    category_features = getattr(l2l, "category_features", {}) or {}
+    item_features = getattr(l2l, "item_features", {}) or {}
+    hints = getattr(l2l, "hints", {}) or {}
+
+    raw_bundle = _load_official_features_bundle()
+
+    if isinstance(raw_bundle.table, pl.DataFrame):
+        table_df = raw_bundle.table.clone()
+    elif isinstance(raw_bundle.table, pd.DataFrame):
+        table_df = pl.from_pandas(raw_bundle.table)
     else:
-        empty_reference = np.zeros((0, 0), dtype=np.float64)
+        table_df = pl.DataFrame()
+
+    (
+        mission_reference_keys,
+        mission_reference_index,
+        mission_reference_matrix,
+        mission_names,
+        mission_totals_vector,
+    ) = _build_mission_reference_tables(
+        raw_bundle.mission_mass, raw_bundle.mission_totals
+    )
+
+    value_columns = tuple(raw_bundle.value_columns)
+    composition_columns = tuple(raw_bundle.composition_columns)
+
     default = _OfficialFeaturesBundle(
+        value_columns,
+        composition_columns,
         (),
         (),
         {},
@@ -1107,37 +842,28 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
         {},
         {},
         {},
-        l2l.constants,
-        l2l.category_features,
-        l2l.item_features,
-        l2l.hints,
+        table_df,
+        np.empty((0, len(value_columns)), dtype=np.float64),
+        raw_bundle.mission_mass,
+        raw_bundle.mission_totals,
+        mission_reference_keys,
+        mission_reference_index,
+        mission_reference_matrix,
+        mission_names,
+        mission_totals_vector,
+        raw_bundle.processing_metrics,
+        raw_bundle.leo_mass_savings,
+        raw_bundle.propellant_benefits,
+        constants,
+        category_features,
+        item_features,
+        hints,
     )
 
-    if not _OFFICIAL_FEATURES_PATH.exists():
+    if not value_columns or table_df.height == 0:
         return default
 
-    table_lazy = pl.scan_csv(_OFFICIAL_FEATURES_PATH)
-    duplicate_suffixes = [column for column in table_lazy.columns if column.endswith(".1")]
-    if duplicate_suffixes:
-        table_lazy = table_lazy.drop(duplicate_suffixes)
-
-    table_lazy = _merge_reference_dataset(table_lazy, "nasa_waste_summary.csv", "summary")
-    table_lazy = _merge_reference_dataset(table_lazy, "nasa_waste_processing_products.csv", "processing")
-    table_lazy = _merge_reference_dataset(table_lazy, "nasa_leo_mass_savings.csv", "leo")
-    table_lazy = _merge_reference_dataset(table_lazy, "nasa_propellant_benefits.csv", "propellant")
-
-    table_lazy = table_lazy.with_columns(
-        [
-            pl.col("category")
-            .map_elements(_normalize_category, return_dtype=pl.String)
-            .alias("category_norm"),
-            pl.col("subitem")
-            .map_elements(_normalize_item, return_dtype=pl.String)
-            .alias("subitem_norm"),
-        ]
-    )
-
-    table_lazy = table_lazy.with_columns(
+    table_df = table_df.with_columns(
         pl.when(pl.col("category_norm") == "other packaging")
         .then(
             pl.when(pl.col("subitem_norm").str.contains("glove"))
@@ -1148,52 +874,56 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
         .alias("category_norm")
     )
 
-    table_lazy = table_lazy.with_columns(
+    table_df = table_df.with_columns(
         pl.when(pl.col("subitem_norm").str.len_bytes() > 0)
         .then(pl.col("category_norm") + pl.lit("|") + pl.col("subitem_norm"))
         .otherwise(pl.col("category_norm"))
         .alias("key")
     )
 
-    if isinstance(table_lazy, pd.DataFrame):  # pragma: no cover - defensive
-        table_df = pl.from_pandas(table_lazy)
-    elif isinstance(table_lazy, pl.DataFrame):
-        table_df = table_lazy
-    else:
-        table_df = table_lazy.collect()
-
-    if table_df.height == 0:
-        return default
-
-    columns = table_df.columns
-    excluded = {"category", "subitem", "category_norm", "subitem_norm", "token_set", "key"}
-    value_columns = tuple(col for col in columns if col not in excluded)
-    if not value_columns:
-        return default
-    composition_columns = tuple(
-        col for col in value_columns if col.endswith("_pct") and not col.startswith("subitem_")
+    direct_map, category_tokens, value_matrix = _vectorized_feature_maps(
+        table_df, value_columns
     )
 
-    direct_map, category_tokens, value_matrix = _vectorized_feature_maps(table_df, value_columns)
-
-    waste_summary = _load_waste_summary_data()
-    processing_metrics = _extract_grouped_metrics("nasa_waste_processing_products.csv", "processing")
-    leo_savings = _extract_grouped_metrics("nasa_leo_mass_savings.csv", "leo")
-    propellant_metrics = _extract_grouped_metrics("nasa_propellant_benefits.csv", "propellant")
-
-    table_join = table_df.select(
-        ["category_norm", "subitem_norm", *value_columns]
-    ).unique(subset=["category_norm", "subitem_norm"], maintain_order=True)
-
-    (
-        mission_reference_keys,
-        mission_reference_index,
-        mission_reference_matrix,
-        mission_names,
-        mission_totals_vector,
-    ) = _build_mission_reference_tables(
-        waste_summary.mass_by_key, waste_summary.mission_totals
+    keys = table_df.get_column("key").to_list() if "key" in table_df.columns else []
+    categories = (
+        table_df.get_column("category_norm").to_list()
+        if "category_norm" in table_df.columns
+        else []
     )
+    manual_map: Dict[str, int] = {}
+    for idx, key in enumerate(keys):
+        if key:
+            manual_map[str(key)] = idx
+        category = categories[idx] if idx < len(categories) else ""
+        if category and category not in manual_map:
+            manual_map[str(category)] = idx
+    if manual_map:
+        direct_map = manual_map
+
+    category_list = (
+        table_df.get_column("category_norm").to_list()
+        if "category_norm" in table_df.columns
+        else []
+    )
+    subitem_list = (
+        table_df.get_column("subitem_norm").to_list()
+        if "subitem_norm" in table_df.columns
+        else []
+    )
+
+    raw_direct_map = getattr(raw_bundle, "direct_map", {})
+    for key in raw_direct_map.keys():
+        if key in direct_map:
+            continue
+        category, _, subitem = key.partition("|")
+        for idx, (cat_value, sub_value) in enumerate(zip(category_list, subitem_list, strict=False)):
+            if category and cat_value != category:
+                continue
+            if subitem and sub_value != subitem:
+                continue
+            direct_map[key] = idx
+            break
 
     if sparse is not None and sparse.issparse(mission_reference_matrix):
         mission_reference_dense = mission_reference_matrix.toarray()
@@ -1205,27 +935,25 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
         composition_columns,
         direct_map,
         category_tokens,
-        table_join,
+        table_df,
         value_matrix,
-        waste_summary.mass_by_key,
-        waste_summary.mission_totals,
+        raw_bundle.mission_mass,
+        raw_bundle.mission_totals,
         mission_reference_keys,
         mission_reference_index,
         mission_reference_matrix,
         mission_reference_dense,
         mission_names,
         mission_totals_vector,
-        processing_metrics,
-        leo_savings,
-        propellant_metrics,
-        l2l.constants,
-        l2l.category_features,
-        l2l.item_features,
-        l2l.hints,
+        raw_bundle.processing_metrics,
+        raw_bundle.leo_mass_savings,
+        raw_bundle.propellant_benefits,
+        constants,
+        category_features,
+        item_features,
+        hints,
     )
 
-
-official_features_bundle = _official_features_bundle
 def official_features_bundle() -> _OfficialFeaturesBundle:
     """Public accessor for tests and external callers."""
 

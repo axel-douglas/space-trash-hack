@@ -15,10 +15,14 @@ código testeable y comprensible:
 | --- | --- |
 | `app/modules/data_sources.py` | Resuelve rutas dentro de `datasets/`, normaliza taxonomías NASA y expone el bundle cacheado de features oficiales. |
 | `app/modules/generator.py` | Mezcla residuos, selecciona procesos y construye candidatos junto con sus features listos para inferencia. |
-| `app/modules/logging_utils.py` | Serializa eventos de inferencia y los guarda en Delta Lake evitando condiciones de carrera. |
+| `app/modules/logging_utils.py` | Construye payloads JSON serializables y mantiene escritores Parquet rotados para los logs de inferencia. |
 
 Los tests unitarios apuntan a estos límites para garantizar que cada módulo
-permanezca enfocado en su dominio (ingesta, generación y logging).
+permanezca enfocado en su dominio (ingesta, generación y logging). El módulo
+`generator` simplemente importa `official_features_bundle()` desde
+`data_sources` y re-exporta `append_inference_log()` desde `logging_utils`, de
+modo que las pruebas pueden interceptar la ingesta o el logging sin tocar la
+arquitectura de ensamblado de candidatos.
 
 > Nota: los helpers legacy `app/modules/branding.py`, `app/modules/charts.py`
 > y `app/modules/embeddings.py` fueron eliminados. La app se apoya en
