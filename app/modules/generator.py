@@ -371,7 +371,7 @@ def _close_inference_log_writer() -> None:
     """Close the cached Parquet writer used for inference logs."""
 
     _INFERENCE_LOG_MANAGER.close()
-=======
+
 def _to_lazy_frame(
     frame: pd.DataFrame | pl.DataFrame | pl.LazyFrame,
 ) -> tuple[pl.LazyFrame, str]:
@@ -422,7 +422,7 @@ def _slugify(value: str) -> str:
 
     text = re.sub(r"[^0-9a-zA-Z]+", "_", str(value).strip().lower())
     text = re.sub(r"_+", "_", text).strip("_")
-    return text or "value
+    return text or "value"
 
 
 def _load_regolith_vector() -> Dict[str, float]:
@@ -669,7 +669,6 @@ class _OfficialFeaturesBundle(NamedTuple):
     mission_reference_keys: tuple[str, ...]
     mission_reference_index: Dict[str, int]
     mission_reference_matrix: Any
-    mission_reference_dense: np.ndarray
     mission_names: tuple[str, ...]
     mission_totals_vector: np.ndarray
     processing_metrics: Dict[str, Dict[str, float]]
@@ -679,6 +678,7 @@ class _OfficialFeaturesBundle(NamedTuple):
     l2l_category_features: Dict[str, Dict[str, float]]
     l2l_item_features: Dict[str, Dict[str, float]]
     l2l_hints: Dict[str, str]
+    mission_reference_dense: np.ndarray = np.zeros((0, 0), dtype=np.float64)
 
 
 def official_features_bundle() -> _OfficialFeaturesBundle:
@@ -870,27 +870,27 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
         mission_reference_dense = np.asarray(mission_reference_matrix, dtype=np.float64)
 
     default = _OfficialFeaturesBundle(
-        value_columns,
-        composition_columns,
-        {},
-        {},
-        table_df,
-        np.empty((0, len(value_columns)), dtype=np.float64),
-        raw_bundle.mission_mass,
-        raw_bundle.mission_totals,
-        mission_reference_keys,
-        mission_reference_index,
-        mission_reference_matrix,
-        mission_reference_dense,
-        mission_names,
-        mission_totals_vector,
-        raw_bundle.processing_metrics,
-        raw_bundle.leo_mass_savings,
-        raw_bundle.propellant_benefits,
-        constants,
-        category_features,
-        item_features,
-        hints,
+        value_columns=value_columns,
+        composition_columns=composition_columns,
+        direct_map={},
+        category_tokens={},
+        table=table_df,
+        value_matrix=np.empty((0, len(value_columns)), dtype=np.float64),
+        mission_mass=raw_bundle.mission_mass,
+        mission_totals=raw_bundle.mission_totals,
+        mission_reference_keys=mission_reference_keys,
+        mission_reference_index=mission_reference_index,
+        mission_reference_matrix=mission_reference_matrix,
+        mission_names=mission_names,
+        mission_totals_vector=mission_totals_vector,
+        processing_metrics=raw_bundle.processing_metrics,
+        leo_mass_savings=raw_bundle.leo_mass_savings,
+        propellant_benefits=raw_bundle.propellant_benefits,
+        l2l_constants=constants,
+        l2l_category_features=category_features,
+        l2l_item_features=item_features,
+        l2l_hints=hints,
+        mission_reference_dense=mission_reference_dense,
     )
 
     if not value_columns or table_df.height == 0:
@@ -959,27 +959,27 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
             break
 
     return _OfficialFeaturesBundle(
-        value_columns,
-        composition_columns,
-        direct_map,
-        category_tokens,
-        table_df,
-        value_matrix,
-        raw_bundle.mission_mass,
-        raw_bundle.mission_totals,
-        mission_reference_keys,
-        mission_reference_index,
-        mission_reference_matrix,
-        mission_reference_dense,
-        mission_names,
-        mission_totals_vector,
-        raw_bundle.processing_metrics,
-        raw_bundle.leo_mass_savings,
-        raw_bundle.propellant_benefits,
-        constants,
-        category_features,
-        item_features,
-        hints,
+        value_columns=value_columns,
+        composition_columns=composition_columns,
+        direct_map=direct_map,
+        category_tokens=category_tokens,
+        table=table_df,
+        value_matrix=value_matrix,
+        mission_mass=raw_bundle.mission_mass,
+        mission_totals=raw_bundle.mission_totals,
+        mission_reference_keys=mission_reference_keys,
+        mission_reference_index=mission_reference_index,
+        mission_reference_matrix=mission_reference_matrix,
+        mission_names=mission_names,
+        mission_totals_vector=mission_totals_vector,
+        processing_metrics=raw_bundle.processing_metrics,
+        leo_mass_savings=raw_bundle.leo_mass_savings,
+        propellant_benefits=raw_bundle.propellant_benefits,
+        l2l_constants=constants,
+        l2l_category_features=category_features,
+        l2l_item_features=item_features,
+        l2l_hints=hints,
+        mission_reference_dense=mission_reference_dense,
     )
 
 def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], str]:
