@@ -103,6 +103,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--heuristic", action="store_true", help="Forzar modo heurístico (sin ML)")
     parser.add_argument("--top", type=int, default=20, help="Recortar top-N recetas")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="Archivo JSON de salida")
+    parser.add_argument("--seed", type=int, help="Semilla RNG opcional para reproducibilidad")
     return parser.parse_args()
 
 
@@ -121,6 +122,7 @@ def main() -> None:
         crew_time_low=target.get("crew_time_low", False),
         optimizer_evals=args.optimizer_evals,
         use_ml=not args.heuristic,
+        seed=args.seed,
     )
 
     ranked = rank_candidates(
@@ -135,6 +137,7 @@ def main() -> None:
         "use_ml": not args.heuristic,
         "n_requested": args.n,
         "optimizer_evals": args.optimizer_evals,
+        "seed": args.seed,
         "candidates": [_serialize_candidate(c) for c in ranked],
         "history": history.to_dict(orient="records") if isinstance(history, pd.DataFrame) else [],
     }
