@@ -109,11 +109,19 @@ class AsyncioBackend(ExecutionBackend):
             results.append(await task)
         return results
 
-    def map(self, func: Callable[[Any], Any], iterable: Iterable[Any]) -> list[Any]:
+    def map(
+        self, func: Callable[[Any], Any], iterable: Iterable[Any]
+    ) -> list[Any] | asyncio.Task[list[Any]]:
         items = list(iterable)
         if not items:
             return []
-        return asyncio.run(self._run_map(func, items))
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(self._run_map(func, items))
+
+        return loop.create_task(self._run_map(func, items))
 
     def submit(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Future:
         return self._executor.submit(func, *args, **kwargs)
