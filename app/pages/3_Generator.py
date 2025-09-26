@@ -144,6 +144,21 @@ with col_control:
     if not use_ml:
         st.info("Modo heurístico activo: las métricas se basan en reglas físicas y no en ML.")
 
+    if isinstance(proc_filtered, pd.DataFrame) and not proc_filtered.empty:
+        preview_map = [
+            ("process_id", "ID"),
+            ("name", "Proceso"),
+            ("match_score", "Score"),
+            ("crew_min_per_batch", "Crew (min)"),
+            ("match_reason", "Por qué")
+        ]
+        cols_present = [col for col, _ in preview_map if col in proc_filtered.columns]
+        if cols_present:
+            st.markdown("#### Procesos sugeridos")
+            st.caption("Filtrado según residuo/flags y escenario seleccionado.")
+            preview_df = proc_filtered[cols_present].head(5).rename(columns=dict(preview_map))
+            st.dataframe(preview_df, hide_index=True, use_container_width=True)
+
 with col_ai:
     st.markdown("### 🧠 Modelo Rex-AI")
     trained_at = MODEL_REGISTRY.metadata.get("trained_at", "—")

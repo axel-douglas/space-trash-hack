@@ -18,6 +18,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from app.modules import data_sources, execution, generator, label_mapper, logging_utils
+from app.modules.process_planner import choose_process
 
 pl = generator.pl
 
@@ -60,6 +61,53 @@ def test_load_regolith_vector_matches_data_sources():
         assert polars_vector[key] == pytest.approx(expected, rel=1e-9, abs=1e-9)
 
     assert sum(polars_vector.values()) == pytest.approx(1.0, rel=1e-9)
+
+
+def test_choose_process_filters_and_scores():
+    catalog = pd.DataFrame(
+        [
+            {
+                "process_id": "P01",
+                "name": "Shredder (low RPM)",
+                "crew_min_per_batch": 6,
+                "energy_kwh_per_kg": 0.12,
+                "water_l_per_kg": 0.0,
+            },
+            {
+                "process_id": "P02",
+                "name": "Press & Heat Lamination",
+                "crew_min_per_batch": 18,
+                "energy_kwh_per_kg": 0.55,
+                "water_l_per_kg": 0.0,
+            },
+            {
+                "process_id": "P03",
+                "name": "Sinter with MGS-1",
+                "crew_min_per_batch": 25,
+                "energy_kwh_per_kg": 0.70,
+                "water_l_per_kg": 0.1,
+            },
+            {
+                "process_id": "P04",
+                "name": "CTB Kit Reconfig",
+                "crew_min_per_batch": 12,
+                "energy_kwh_per_kg": 0.05,
+                "water_l_per_kg": 0.0,
+            },
+        ]
+    )
+
+    result = choose_process(
+        "EVA bag foam",
+        catalog,
+        scenario="Residence Renovations",
+        crew_time_low=True,
+    )
+
+    assert list(result["process_id"]) == ["P04", "P02", "P03"]
+    assert result["match_score"].is_monotonic_decreasing
+    assert result.iloc[0]["process_id"] == "P04"
+    assert isinstance(result.iloc[0]["match_reason"], str) and result.iloc[0]["match_reason"]
 
 
 def test_append_inference_log_reuses_daily_writer(monkeypatch, tmp_path):
@@ -1905,6 +1953,7 @@ def test_prepare_waste_frame_density_missing_volume(monkeypatch):
         mission_reference_keys=(),
         mission_reference_index={},
         mission_reference_matrix=np.zeros((0, 0), dtype=np.float64),
+        mission_reference_dense=np.zeros((0, 0), dtype=np.float64),
         mission_names=(),
         mission_totals_vector=np.zeros(0, dtype=np.float64),
         processing_metrics={},
