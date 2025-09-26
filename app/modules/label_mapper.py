@@ -48,31 +48,26 @@ def _load_labels_table(path: Path | None = None) -> pd.DataFrame:
     global _LABELS_CACHE, _LABELS_CACHE_PATH
     target_path = Path(path) if path is not None else GOLD_LABELS_PATH
 
-    if path is None and not target_path.exists():
-        try:
-            from app.modules import data_build
-
-            data_build.ensure_gold_dataset()
-        except Exception:  # pragma: no cover - visibility of bootstrap errors
-            LOGGER.exception(
-                "Failed to ensure gold dataset at %s", target_path.parent
-            )
-            _LABELS_CACHE = pd.DataFrame()
-            _LABELS_CACHE_PATH = target_path
-            return _LABELS_CACHE
-
     if _LABELS_CACHE is not None and _LABELS_CACHE_PATH == target_path:
         return _LABELS_CACHE
 
-    if not target_path.exists():
+    try:
+        if path is None and not target_path.exists():
+            from app.modules import data_build
+
+            data_build.ensure_gold_dataset()
+
+        if target_path.exists():
+            table = pd.read_parquet(target_path)
+        else:
+            table = pd.DataFrame()
+    except Exception:  # pragma: no cover - visibility of bootstrap/IO errors
+        LOGGER.warning(
+            "Failed to load curated labels from %s", target_path, exc_info=True
+        )
         _LABELS_CACHE = pd.DataFrame()
         _LABELS_CACHE_PATH = target_path
         return _LABELS_CACHE
-
-    try:
-        table = pd.read_parquet(target_path)
-    except Exception as exc:  # pragma: no cover - visibility of IO errors
-        raise RuntimeError(f"No se pudo leer parquet {target_path}: {exc}") from exc
 
     if table.empty:
         _LABELS_CACHE = pd.DataFrame()

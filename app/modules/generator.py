@@ -2913,8 +2913,10 @@ def _finalize_candidate(
         str(proc.get("process_id")),
         {"recipe_id": recipe_id, "materials": used_ids},
     )
-    features["curated_label_targets"] = curated_targets or {}
-    features["curated_label_metadata"] = curated_meta or {}
+    curated_targets = curated_targets or {}
+    curated_meta = curated_meta or {}
+    features["curated_label_targets"] = curated_targets
+    features["curated_label_metadata"] = curated_meta
 
     provenance = str(
         curated_meta.get("provenance")

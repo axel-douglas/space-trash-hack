@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import numbers
 import random
 import shutil
@@ -903,6 +904,94 @@ def test_generate_candidates_handles_missing_curated_labels(monkeypatch, tmp_pat
     assert features.get("curated_label_targets") == {}
     assert features.get("prediction_mode") == "heuristic"
     assert history.empty
+
+    cache = label_mapper._LABELS_CACHE
+    assert isinstance(cache, pd.DataFrame)
+    assert cache.empty
+    assert label_mapper._LABELS_CACHE_PATH == missing_labels_path
+
+
+def test_generate_candidates_warns_when_curated_labels_fail(
+    monkeypatch, tmp_path, caplog
+):
+    caplog.set_level(logging.WARNING, logger="app.modules.label_mapper")
+    monkeypatch.setattr(label_mapper, "_LABELS_CACHE", None, raising=False)
+    monkeypatch.setattr(label_mapper, "_LABELS_CACHE_PATH", None, raising=False)
+
+    missing_labels_path = tmp_path / "missing" / "labels.parquet"
+    monkeypatch.setattr(label_mapper, "GOLD_LABELS_PATH", missing_labels_path, raising=False)
+
+    calls: list[tuple[str, tuple, dict]] = []
+
+    def boom(*args, **kwargs):
+        calls.append(("ensure", args, kwargs))
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        "app.modules.data_build.ensure_gold_dataset",
+        boom,
+    )
+
+    picks_template = pd.DataFrame(
+        {
+            "kg": [1.0, 0.5],
+            "_source_id": ["A", "B"],
+            "_source_category": ["packaging", "eva"],
+            "_source_flags": ["", ""],
+            "_problematic": [0, 0],
+            "material": ["aluminum foil", "eva foam"],
+            "category": ["packaging", "eva"],
+            "flags": ["", ""],
+            "moisture_pct": [5.0, 10.0],
+            "difficulty_factor": [1.0, 2.0],
+        }
+    )
+
+    monkeypatch.setattr(generator, "prepare_waste_frame", lambda df: df)
+    monkeypatch.setattr(
+        generator,
+        "_pick_materials",
+        lambda df, rng, n=2, bias=2.0: picks_template.copy(),
+    )
+    monkeypatch.setattr(
+        generator,
+        "build_feature_tensor_batch",
+        lambda *args, **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        generator,
+        "_compute_features_from_batch",
+        lambda batch: [{"process_id": "P01"}],
+    )
+    monkeypatch.setattr(generator, "MODEL_REGISTRY", None)
+
+    waste_df = picks_template.copy()
+    proc_df = pd.DataFrame(
+        {
+            "process_id": ["P01"],
+            "name": ["Process"],
+            "energy_kwh_per_kg": [1.0],
+            "water_l_per_kg": [0.5],
+            "crew_min_per_batch": [30.0],
+        }
+    )
+
+    candidates, history = generator.generate_candidates(waste_df, proc_df, target={}, n=1)
+
+    assert calls, "ensure_gold_dataset should have been invoked"
+    assert candidates, "Expected heuristic candidates even when gold labels fail"
+
+    features = candidates[0].get("features", {})
+    assert features.get("curated_label_targets") == {}
+    assert features.get("curated_label_metadata") == {}
+    assert features.get("prediction_mode") == "heuristic"
+    assert history.empty
+
+    assert any(
+        record.levelno == logging.WARNING
+        and "Failed to load curated labels" in record.getMessage()
+        for record in caplog.records
+    ), "Expected warning about curated label loading failure"
 
     cache = label_mapper._LABELS_CACHE
     assert isinstance(cache, pd.DataFrame)
