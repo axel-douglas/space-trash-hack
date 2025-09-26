@@ -14,6 +14,7 @@ candidate assembly.
 
 from __future__ import annotations
 
+import atexit
 import itertools
 import logging
 import math
@@ -21,9 +22,13 @@ import os
 import random
 import re
 import threading
+from datetime import UTC, datetime
+from pathlib import Path
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Dict, Iterable, Mapping, NamedTuple, Sequence, Tuple
+
+import json
 
 try:
     import jax.numpy as jnp
@@ -54,12 +59,16 @@ from app.modules.data_sources import (
     MEAN_REUSE,
     REGOLITH_VECTOR,
     L2LParameters as _L2LParameters,
+    from_lazy_frame,
     load_l2l_parameters as _load_l2l_parameters,
     normalize_category,
     normalize_item,
     official_features_bundle as _load_official_features_bundle,
+    resolve_dataset_path,
+    slugify,
+    to_lazy_frame,
 )
-from app.modules.logging_utils import append_inference_log
+from app.modules import logging_utils
 
 # The demo previously collapsed multiple NASA inventory families (Packaging,
 # Other Packaging, Gloves, Foam Packaging, Food Packaging, Structural Elements
@@ -92,8 +101,10 @@ _CATEGORY_FAMILY_FALLBACKS: Dict[str, tuple[str, ...]] = {
 }
 try:  # Optional heavy dependencies; used for fast vectorization
     import pyarrow as pa
+    import pyarrow.parquet as pq
 except Exception:  # pragma: no cover - pyarrow is expected in production
     pa = None  # type: ignore[assignment]
+    pq = None  # type: ignore[assignment]
 
 from app.modules.execution import (
     DEFAULT_PARALLEL_THRESHOLD,
@@ -241,66 +252,15 @@ class _InferenceLogWriterManager:
 
 _INFERENCE_LOG_MANAGER = _InferenceLogWriterManager()
 
+LOGS_ROOT: Path | None = None
+
+_ORIGINAL_INFERENCE_LOG_MANAGER = _INFERENCE_LOG_MANAGER
+
 
 def _close_inference_log_writer() -> None:
     """Expose a test hook to close the shared inference writer."""
 
     _INFERENCE_LOG_MANAGER.close()
-
-
-def _to_lazy_frame(
-    frame: pd.DataFrame | pl.DataFrame | pl.LazyFrame,
-) -> tuple[pl.LazyFrame, str]:
-    """Return a :class:`polars.LazyFrame` along with the original frame type."""
-
-    if isinstance(frame, pl.LazyFrame):
-        return frame, "lazy"
-    if isinstance(frame, pl.DataFrame):
-        return frame.lazy(), "polars"
-    if isinstance(frame, pd.DataFrame):
-        return pl.from_pandas(frame).lazy(), "pandas"
-    raise TypeError(f"Unsupported frame type: {type(frame)!r}")
-
-
-def _from_lazy_frame(lazy: pl.LazyFrame, frame_kind: str) -> pd.DataFrame | pl.DataFrame | pl.LazyFrame:
-    """Convert *lazy* back to the representation described by *frame_kind*."""
-
-    if frame_kind == "lazy":
-        return lazy
-
-    collected = lazy.collect()
-    if frame_kind == "polars":
-        return collected
-    if frame_kind == "pandas":
-        return collected.to_pandas()
-    raise ValueError(f"Unsupported frame kind: {frame_kind}")
-
-
-def _resolve_dataset_path(name: str) -> Path | None:
-    """Return the first dataset path that exists for *name*.
-
-    The helper checks the canonical ``datasets`` root alongside the ``raw``
-    subdirectory so callers do not need to remember where a file was stored.
-    """
-
-    candidates = (
-        DATASETS_ROOT / name,
-        DATASETS_ROOT / "raw" / name,
-    )
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return None
-
-
-def _slugify(value: str) -> str:
-    """Convert *value* into a snake_case identifier safe for feature names."""
-
-    text = re.sub(r"[^0-9a-zA-Z]+", "_", str(value).strip().lower())
-    text = re.sub(r"_+", "_", text).strip("_")
-    return text or "value"
-
-
 def _to_serializable(value: Any) -> Any:
     """Convert *value* into a JSON-serializable structure."""
 
@@ -320,7 +280,8 @@ def _to_serializable(value: Any) -> Any:
 def _resolve_inference_log_dir(timestamp: datetime) -> Path:
     """Return the directory backing inference logs for *timestamp*."""
 
-    return LOGS_ROOT / "inference" / timestamp.strftime("%Y%m%d")
+    root = LOGS_ROOT if LOGS_ROOT is not None else logging_utils.LOGS_ROOT
+    return root / "inference" / timestamp.strftime("%Y%m%d")
 
 
 if pq is not None:  # pragma: no branch - guard for optional dependency
@@ -361,6 +322,9 @@ def _prepare_inference_event(
     return now, payload
 
 
+_ORIGINAL_PREPARE_INFERENCE_EVENT = _prepare_inference_event
+
+
 def append_inference_log(
     input_features: Dict[str, Any],
     prediction: Dict[str, Any] | None,
@@ -372,14 +336,28 @@ def append_inference_log(
     if pa is None or pq is None:  # pragma: no cover - dependencies should exist
         return
 
-    event_time, event_payload = _prepare_inference_event(
+    prepare_fn = globals().get("_prepare_inference_event", _prepare_inference_event)
+    if (
+        prepare_fn is _ORIGINAL_PREPARE_INFERENCE_EVENT
+        and hasattr(logging_utils, "prepare_inference_event")
+    ):
+        prepare_fn = logging_utils.prepare_inference_event
+
+    event_time, event_payload = prepare_fn(
         input_features=input_features,
         prediction=prediction,
         uncertainty=uncertainty,
         model_registry=model_registry,
     )
 
-    _INFERENCE_LOG_MANAGER.write_event(event_time, event_payload)
+    manager = globals().get("_INFERENCE_LOG_MANAGER", _INFERENCE_LOG_MANAGER)
+    if (
+        manager is _ORIGINAL_INFERENCE_LOG_MANAGER
+        and hasattr(logging_utils, "_INFERENCE_LOG_MANAGER")
+    ):
+        manager = logging_utils._INFERENCE_LOG_MANAGER
+
+    manager.write_event(event_time, event_payload)
 
 
 def _close_inference_log_writer() -> None:
@@ -389,7 +367,7 @@ def _close_inference_log_writer() -> None:
 
 
 def _load_regolith_vector() -> Dict[str, float]:
-    path = _resolve_dataset_path("MGS-1_Martian_Regolith_Simulant_Recipe.csv")
+    path = resolve_dataset_path("MGS-1_Martian_Regolith_Simulant_Recipe.csv")
     if path is None:
         path = DATASETS_ROOT / "raw" / "mgs1_oxides.csv"
 
@@ -822,24 +800,14 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
     value_columns = tuple(raw_bundle.value_columns)
     composition_columns = tuple(raw_bundle.composition_columns)
 
+    if sparse is not None and sparse.issparse(mission_reference_matrix):
+        mission_reference_dense = mission_reference_matrix.toarray()
+    else:
+        mission_reference_dense = np.asarray(mission_reference_matrix, dtype=np.float64)
+
     default = _OfficialFeaturesBundle(
         value_columns,
         composition_columns,
-        (),
-        (),
-        {},
-        pl.DataFrame(),
-        np.empty((0, 0), dtype=np.float64),
-        {},
-        {},
-        (),
-        {},
-        empty_reference,
-        np.zeros((0, 0), dtype=np.float64),
-        (),
-        np.zeros(0, dtype=np.float64),
-        {},
-        {},
         {},
         {},
         table_df,
@@ -849,6 +817,7 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
         mission_reference_keys,
         mission_reference_index,
         mission_reference_matrix,
+        mission_reference_dense,
         mission_names,
         mission_totals_vector,
         raw_bundle.processing_metrics,
@@ -924,11 +893,6 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
                 continue
             direct_map[key] = idx
             break
-
-    if sparse is not None and sparse.issparse(mission_reference_matrix):
-        mission_reference_dense = mission_reference_matrix.toarray()
-    else:
-        mission_reference_dense = np.asarray(mission_reference_matrix, dtype=np.float64)
 
     return _OfficialFeaturesBundle(
         value_columns,
