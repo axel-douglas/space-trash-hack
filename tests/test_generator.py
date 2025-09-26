@@ -962,9 +962,25 @@ def test_prepare_waste_frame_includes_reference_columns(reference_dataset_tables
     ]
     assert not clothing_row.empty
     expected_total = float(clothing_row["total_mass_kg"].iloc[0])
+    expected_gateway = float(clothing_row["gateway_phase_i_mass_kg"].iloc[0])
+    expected_mars = float(clothing_row["mars_transit_mass_kg"].iloc[0])
 
     assert prepared.loc[0, "summary_total_mass_kg"] == pytest.approx(
         expected_total, rel=1e-6
+    )
+    assert prepared.loc[0, "summary_gateway_phase_i_mass_kg"] == pytest.approx(
+        expected_gateway, rel=1e-6
+    )
+    assert prepared.loc[0, "summary_mars_transit_mass_kg"] == pytest.approx(
+        expected_mars, rel=1e-6
+    )
+
+    l2l_params = data_sources.load_l2l_parameters()
+    constant_name = "l2l_geometry_ctb_small_volume_value"
+    assert constant_name in l2l_params.constants
+    assert constant_name in prepared.columns
+    assert prepared.loc[0, constant_name] == pytest.approx(
+        l2l_params.constants[constant_name], rel=1e-6
     )
 
 

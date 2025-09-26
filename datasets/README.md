@@ -6,6 +6,20 @@ into `rexai_nasa_waste_features.csv` via the helper
 exports that used text ranges have been archived under `datasets/raw/` with a
 `*_raw.csv` suffix so the preprocessing can be reproduced.
 
+## Source material
+
+| Processed file | NASA reference | Notes |
+| -------------- | -------------- | ----- |
+| `nasa_waste_summary.csv` | Logistics Reduction & Repurposing (LRR) – Logistics-to-Living Phase I/II non-metabolic waste inventory | Ranges such as `15-58 kg` are converted to numeric midpoints and mapped onto the canonical waste categories used by the demo (e.g. Foam Packaging → `Zotek F30`). |
+| `nasa_waste_processing_products.csv` | LRR Trash-to-Gas architecture study | Provides propellant and water yields for the Trash-to-Gas (TtG) and Trash-to-Supply-Gas (TtSG) flows. |
+| `nasa_leo_mass_savings.csv` | LRR delivery trade study for TtG/TtSG logistics | Captures chemical vs. solar-electric propulsion savings and their gear ratios. |
+| `nasa_propellant_benefits.csv` | LRR mission delta-V budget summary | Lists vehicle concepts and the propellant required to exploit trash-derived propellants. |
+| `l2l_parameters.csv` | NASA/TM-2021002072 "Logistics to Living" appendix A1b | Bag geometries, volumetric ratios, and other Logistics-to-Living constants; the `feature` column mirrors the terminology used in the report. |
+
+The raw CSVs under `datasets/raw/` contain the literal values transcribed from
+the NASA PDFs and slide decks so the preprocessing logic below remains
+reproducible.
+
 ## Regeneration steps
 
 Use the following Python snippet to rebuild the processed CSVs from the raw
@@ -44,8 +58,10 @@ summary_map = {
     "Clothing": ("Fabrics", "Clothing"),
     "Wipes/Tissues": ("Fabrics", "Cleaning Wipes"),
     "Towels and Hygiene": ("Fabrics", "Towels/Wash Cloths"),
-    "Packaging": ("Other Packaging/Gloves (A)", "Bubble wrap filler"),
-    "Food Packaging": ("Food Packaging", "Overwrap"),
+    "Foam Packaging for Launch": ("Foam Packaging", "Zotek F30 (PVDF foam)"),
+    "Other Crew Supplies": ("Other Packaging/Gloves (B)", "Nitrile gloves"),
+    "Food & Packaging": ("Food Packaging", "Overwrap"),
+    "EVA Supplies": ("EVA Waste", "Cargo Transfer Bags (CTB)"),
 }
 summary_rows = []
 for row in pd.read_csv(RAW_DIR / "nasa_waste_summary_raw.csv").to_dict(orient="records"):
@@ -133,3 +149,8 @@ Running the script will refresh the processed tables in place, ensuring the
 merged feature columns such as `summary_total_mass_kg`,
 `processing_o2_ch4_yield_kg`, `leo_mass_savings_kg`, and
 `propellant_propellant_mass_kg` stay in sync with NASA's published values.
+
+Because the Logistics-to-Living loader expects descriptor names, the processed
+`l2l_parameters.csv` also renames the raw `variable` header to `feature`. This
+ensures constants such as `l2l_geometry_ctb_small_volume_value` are materialized
+as distinct columns during feature engineering.
