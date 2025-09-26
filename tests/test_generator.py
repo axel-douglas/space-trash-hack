@@ -51,6 +51,17 @@ def reference_dataset_tables(monkeypatch):
         generator._official_features_bundle.cache_clear()
 
 
+def test_load_regolith_vector_matches_data_sources():
+    polars_vector = generator._load_regolith_vector()
+    pandas_vector = data_sources._load_regolith_vector()
+
+    assert set(polars_vector) == set(pandas_vector)
+    for key, expected in pandas_vector.items():
+        assert polars_vector[key] == pytest.approx(expected, rel=1e-9, abs=1e-9)
+
+    assert sum(polars_vector.values()) == pytest.approx(1.0, rel=1e-9)
+
+
 def test_append_inference_log_reuses_daily_writer(monkeypatch, tmp_path):
     generator._INFERENCE_LOG_MANAGER.close()
     monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)

@@ -405,15 +405,17 @@ def _load_regolith_vector() -> Dict[str, float]:
         path = DATASETS_ROOT / "raw" / "mgs1_oxides.csv"
 
     if path and path.exists():
-        table = pd.read_csv(path)
+        table_lazy = pl.scan_csv(path)
+        columns = table_lazy.columns
+
         key_cols = [
             col
-            for col in table.columns
+            for col in columns
             if col.lower() in {"oxide", "component", "phase", "mineral"}
         ]
         value_cols = [
             col
-            for col in table.columns
+            for col in columns
             if any(token in col.lower() for token in ("wt", "weight", "percent"))
         ]
 
@@ -421,7 +423,6 @@ def _load_regolith_vector() -> Dict[str, float]:
         value_col = value_cols[0] if value_cols else None
 
         if key_col and value_col:
-            working = table[[key_col, value_col]].dropna()
 
             def _clean_label(value: Any) -> str:
                 text = str(value or "").lower()
@@ -429,16 +430,32 @@ def _load_regolith_vector() -> Dict[str, float]:
                 text = re.sub(r"_+", "_", text).strip("_")
                 return text
 
-            working[key_col] = working[key_col].map(_clean_label)
-            weights = pd.to_numeric(working[value_col], errors="coerce")
-            total = float(weights.sum())
-            if total > 0:
-                normalised = weights.div(total)
-                return {
-                    str(key): float(normalised.iloc[idx])
-                    for idx, key in enumerate(working[key_col])
-                    if pd.notna(normalised.iloc[idx])
-                }
+            working_lazy = (
+                table_lazy.select(
+                    pl.col(key_col).alias("key"),
+                    pl.col(value_col).cast(pl.Float64, strict=False).alias("value"),
+                )
+                .drop_nulls()
+                .with_columns(
+                    pl.col("key").map_elements(_clean_label, return_dtype=pl.String)
+                )
+            )
+
+            working = working_lazy.collect()
+            if working.height:
+                values = working.get_column("value")
+                total = float(values.sum())
+                if total > 0:
+                    normalised = working.with_columns(
+                        (pl.col("value") / pl.lit(total)).alias("weight")
+                    )
+                    keys = normalised.get_column("key").to_list()
+                    weights = normalised.get_column("weight").to_numpy()
+                    return {
+                        str(key): float(weight)
+                        for key, weight in zip(keys, weights, strict=False)
+                        if key and weight is not None and np.isfinite(weight)
+                    }
 
 
 _COMPOSITION_DENSITY_MAP = {
