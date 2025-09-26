@@ -971,12 +971,6 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
         hints,
     )
 
-def official_features_bundle() -> _OfficialFeaturesBundle:
-    """Public accessor for tests and external callers."""
-
-    return _official_features_bundle()
-
-
 def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], str]:
     """Resolve NASA reference features with packaging-aware fallbacks."""
 
