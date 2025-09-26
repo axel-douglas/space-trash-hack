@@ -241,8 +241,8 @@ def test_load_waste_summary_data_polars(tmp_path, monkeypatch):
 
     assert summary.mission_totals["artemis"] == pytest.approx(13.0)
     assert summary.mission_totals["gateway"] == pytest.approx(7.0)
-    assert summary.mass_by_key["other packaging glove"]["artemis"] == pytest.approx(13.0)
-    assert summary.mass_by_key["other packaging glove|foam"]["gateway"] == pytest.approx(5.0)
+    assert summary.mass_by_key["packaging"]["artemis"] == pytest.approx(13.0)
+    assert summary.mass_by_key["packaging|foam"]["gateway"] == pytest.approx(5.0)
 
 
 def test_extract_grouped_metrics_polars(tmp_path, monkeypatch):
@@ -281,6 +281,7 @@ def test_official_features_bundle_polars_pipeline(tmp_path, monkeypatch):
                 "category,subitem,value_kg",
                 "Packaging,Foam,2.5",
                 "Packaging,,1.0",
+                "Other Packaging/Gloves (B),Nitrile Gloves,4.5",
             ]
         )
         + "\n"
@@ -349,13 +350,15 @@ def test_official_features_bundle_polars_pipeline(tmp_path, monkeypatch):
     assert "processing_output_kg" in bundle.value_columns
     assert "leo_savings_pct" in bundle.value_columns
     assert "propellant_benefit" in bundle.value_columns
-    idx = bundle.direct_map["other packaging glove|foam"]
+    idx = bundle.direct_map["packaging|foam"]
+    assert "other packaging|nitrile glove" in bundle.direct_map
 
     generator._official_features_bundle.cache_clear()
     monkeypatch.setattr(generator, "_OFFICIAL_FEATURES_PATH", official_path)
     monkeypatch.setattr(generator, "_resolve_dataset_path", lambda name: file_map.get(name))
     vector_bundle = generator._official_features_bundle()
-    vector_idx = vector_bundle.direct_map["other packaging glove|foam"]
+    vector_idx = vector_bundle.direct_map["packaging|foam"]
+    glove_idx = vector_bundle.direct_map["gloves|nitrile glove"]
     payload = generator._build_payload_from_row(
         vector_bundle.value_matrix[vector_idx], vector_bundle.value_columns
     )
@@ -364,11 +367,21 @@ def test_official_features_bundle_polars_pipeline(tmp_path, monkeypatch):
     assert "subitem_norm" in bundle.table.columns
     assert bundle.mission_totals["artemis"] == pytest.approx(13.0)
     assert bundle.processing_metrics["processing"]["processing_output_kg"] == pytest.approx(3.0)
-    tokens, match_keys, indices = vector_bundle.category_tokens["other packaging glove"]
+    tokens, match_keys, indices = vector_bundle.category_tokens["packaging"]
     match_keys_array = match_keys.tolist() if hasattr(match_keys, "tolist") else list(match_keys)
-    assert "other packaging glove|foam" in match_keys_array
+    assert "packaging|foam" in match_keys_array
     indices_array = indices.tolist() if hasattr(indices, "tolist") else list(indices)
     assert vector_idx in indices_array
+
+    glove_tokens, glove_match_keys, glove_indices = vector_bundle.category_tokens["gloves"]
+    glove_match_array = (
+        glove_match_keys.tolist() if hasattr(glove_match_keys, "tolist") else list(glove_match_keys)
+    )
+    assert "gloves|nitrile glove" in glove_match_array
+    glove_indices_array = (
+        glove_indices.tolist() if hasattr(glove_indices, "tolist") else list(glove_indices)
+    )
+    assert glove_idx in glove_indices_array
 
     data_sources.official_features_bundle.cache_clear()
     generator._official_features_bundle.cache_clear()
@@ -1004,6 +1017,64 @@ def test_compute_feature_vector_dataframe_matches_tensor_batch():
             assert lhs == value
 
 
+def test_compute_feature_vector_sequence_matches_batch():
+    waste_a = pd.DataFrame(
+        {
+            "id": ["A1", "A2"],
+            "category": ["Packaging", "Tools"],
+            "material": ["Polyethylene wrap", "Aluminum wrench"],
+            "kg": [4.0, 1.0],
+            "volume_l": [6.0, 0.5],
+            "flags": ["", ""],
+        }
+    )
+    waste_b = pd.DataFrame(
+        {
+            "id": ["B1"],
+            "category": ["Logistics"],
+            "material": ["Nomex bag"],
+            "kg": [2.5],
+            "volume_l": [3.0],
+            "flags": ["multilayer"],
+        }
+    )
+
+    prepared_a = generator.prepare_waste_frame(waste_a)
+    prepared_b = generator.prepare_waste_frame(waste_b)
+    process_a = _dummy_process_series()
+    process_b = _dummy_process_series().copy(deep=True)
+    process_b["process_id"] = "P02"
+
+    weights_a = [0.7, 0.3]
+    weights_b = [1.0]
+    regolith_a = 0.1
+    regolith_b = 0.05
+
+    vectorized = generator.compute_feature_vector(
+        [prepared_a, prepared_b],
+        weights=[weights_a, weights_b],
+        process=[process_a, process_b],
+        regolith_pct=[regolith_a, regolith_b],
+    )
+    assert isinstance(vectorized, list)
+    assert len(vectorized) == 2
+
+    expected = generator.compute_feature_vectors_batch(
+        [prepared_a, prepared_b],
+        [weights_a, weights_b],
+        [process_a, process_b],
+        [regolith_a, regolith_b],
+    )
+
+    for combined, batch_expected in zip(vectorized, expected, strict=True):
+        assert set(combined) == set(batch_expected)
+        for key, value in batch_expected.items():
+            if isinstance(value, numbers.Real):
+                assert combined[key] == pytest.approx(value, rel=1e-6, abs=1e-8)
+            else:
+                assert combined[key] == value
+
+
 def test_compute_feature_vector_accepts_polars_dataframe():
     waste_df = pd.DataFrame(
         {
@@ -1390,7 +1461,7 @@ def test_prepare_waste_frame_vectorized_large_inventory():
         expected_density.loc[missing] = fallback
 
     default_density = float(
-        generator._CATEGORY_DENSITY_DEFAULTS.get("other packaging glove", 500.0)
+        generator._CATEGORY_DENSITY_DEFAULTS.get("packaging", 500.0)
     )
     expected_density = expected_density.fillna(default_density).clip(lower=20.0, upper=4000.0)
 

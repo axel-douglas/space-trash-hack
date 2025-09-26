@@ -69,6 +69,36 @@ from app.modules.data_sources import (
     normalize_category,
     normalize_item,
 )
+
+# The demo previously collapsed multiple NASA inventory families (Packaging,
+# Other Packaging, Gloves, Foam Packaging, Food Packaging, Structural Elements
+# and EVA Waste) into a single "other packaging glove" bucket.  The updated
+# mapping keeps these families distinct so downstream heuristics can reason
+# about them independently while still tolerating legacy spellings.
+_CATEGORY_SYNONYMS.update(
+    {
+        "packaging": "packaging",
+        "packaging material": "packaging",
+        "other packaging": "other packaging",
+        "other packaging glove": "other packaging",
+        "glove": "gloves",
+        "gloves": "gloves",
+        "foam packaging": "foam packaging",
+        "foam packaging for launch": "foam packaging",
+        "food packaging": "food packaging",
+        "structural element": "structural elements",
+        "structural elements": "structural elements",
+        "eva": "eva waste",
+        "eva waste": "eva waste",
+    }
+)
+
+_CATEGORY_FAMILY_FALLBACKS: Dict[str, tuple[str, ...]] = {
+    "packaging": ("packaging", "other packaging"),
+    "other packaging": ("other packaging", "packaging"),
+    "gloves": ("gloves", "other packaging", "packaging"),
+    "other packaging glove": ("other packaging", "gloves", "packaging"),
+}
 try:  # Optional heavy dependencies; gracefully disable logging if missing
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -87,6 +117,10 @@ except Exception:  # pragma: no cover - fallback when models are not available
 DATASETS_ROOT = Path(__file__).resolve().parents[2] / "datasets"
 LOGS_ROOT = Path(__file__).resolve().parents[2] / "data" / "logs"
 _OFFICIAL_FEATURES_PATH = DATASETS_ROOT / "rexai_nasa_waste_features.csv"
+
+_REGOLITH_OXIDE_ITEMS = tuple(REGOLITH_VECTOR.items())
+_REGOLITH_OXIDE_NAMES = tuple(f"oxide_{name}" for name, _ in _REGOLITH_OXIDE_ITEMS)
+_REGOLITH_OXIDE_VALUES = np.asarray([float(value) for _, value in _REGOLITH_OXIDE_ITEMS], dtype=float)
 
 
 @dataclass(slots=True)
@@ -217,6 +251,12 @@ class _InferenceLogWriterManager:
 
 
 _INFERENCE_LOG_MANAGER = _InferenceLogWriterManager()
+
+
+def _close_inference_log_writer() -> None:
+    """Expose a test hook to close the shared inference writer."""
+
+    _INFERENCE_LOG_MANAGER.close()
 
 
 def _to_lazy_frame(
@@ -418,8 +458,11 @@ _COMPOSITION_DENSITY_MAP = {
 _CATEGORY_DENSITY_DEFAULTS = {
     "foam packaging": 100.0,
     "food packaging": 650.0,
+    "structural elements": 1800.0,
     "structural element": 1800.0,
-    "other packaging glove": 420.0,
+    "packaging": 420.0,
+    "other packaging": 420.0,
+    "gloves": 420.0,
     "eva waste": 240.0,
     "fabric": 350.0,
 }
@@ -718,6 +761,13 @@ def _build_match_key(category: Any, subitem: Any | None = None) -> str:
         return f"{_normalize_category(category)}|{_normalize_item(subitem)}"
     return _normalize_category(category)
 def _estimate_density_from_row(row: pd.Series) -> float | None:
+    """Estimate a material density with packaging-aware fallbacks."""
+
+    # The NASA features bundle exposes aggregate density and composition values
+    # per category.  Now that the packaging families are disambiguated the
+    # estimator first honours category-specific defaults (e.g. ``gloves`` vs.
+    # ``other packaging``) before falling back to the more general packaging
+    # prior used by legacy data dumps.
     category = _normalize_category(row.get("category", ""))
 
     try:
@@ -853,6 +903,12 @@ class _OfficialFeaturesBundle(NamedTuple):
     l2l_category_features: Dict[str, Dict[str, float]]
     l2l_item_features: Dict[str, Dict[str, float]]
     l2l_hints: Dict[str, str]
+
+
+def official_features_bundle() -> _OfficialFeaturesBundle:
+    """Public accessor mirroring :func:`_official_features_bundle`."""
+
+    return _official_features_bundle()
 
 
 def _build_payload_from_row(row: np.ndarray, columns: Sequence[str]) -> Dict[str, float]:
@@ -1056,6 +1112,17 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
     )
 
     table_lazy = table_lazy.with_columns(
+        pl.when(pl.col("category_norm") == "other packaging")
+        .then(
+            pl.when(pl.col("subitem_norm").str.contains("glove"))
+            .then(pl.lit("gloves"))
+            .otherwise(pl.col("category_norm"))
+        )
+        .otherwise(pl.col("category_norm"))
+        .alias("category_norm")
+    )
+
+    table_lazy = table_lazy.with_columns(
         pl.when(pl.col("subitem_norm").str.len_bytes() > 0)
         .then(pl.col("category_norm") + pl.lit("|") + pl.col("subitem_norm"))
         .otherwise(pl.col("category_norm"))
@@ -1127,9 +1194,15 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
 
 
 official_features_bundle = _official_features_bundle
+def official_features_bundle() -> _OfficialFeaturesBundle:
+    """Public accessor for tests and external callers."""
+
+    return _official_features_bundle()
 
 
 def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], str]:
+    """Resolve NASA reference features with packaging-aware fallbacks."""
+
     bundle = _official_features_bundle()
     if not bundle.value_columns:
         return {}, ""
@@ -1137,6 +1210,15 @@ def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], s
     category = _normalize_category(row.get("category", ""))
     if not category:
         return {}, ""
+
+    family_candidates = _CATEGORY_FAMILY_FALLBACKS.get(category, (category,))
+    # Preserve order while dropping duplicates so legacy aliases remain usable.
+    seen_families: set[str] = set()
+    families: tuple[str, ...] = tuple(
+        family for family in family_candidates if not (family in seen_families or seen_families.add(family))
+    )
+    if not families:
+        families = (category,)
 
     candidates = (
         row.get("material"),
@@ -1148,40 +1230,43 @@ def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], s
         normalized = _normalize_item(candidate)
         if not normalized:
             continue
-        key = f"{category}|{normalized}"
-        index = bundle.direct_map.get(key)
-        if index is not None and 0 <= index < bundle.value_matrix.shape[0]:
-            payload = _build_payload_from_row(bundle.value_matrix[index], bundle.value_columns)
-            return payload, key
+        for family in families:
+            key = f"{family}|{normalized}"
+            index = bundle.direct_map.get(key)
+            if index is not None and 0 <= index < bundle.value_matrix.shape[0]:
+                payload = _build_payload_from_row(bundle.value_matrix[index], bundle.value_columns)
+                return payload, key
 
-    category_index = bundle.direct_map.get(category)
-    if category_index is not None and 0 <= category_index < bundle.value_matrix.shape[0]:
-        payload = _build_payload_from_row(bundle.value_matrix[category_index], bundle.value_columns)
-        return payload, category
+    for family in families:
+        category_index = bundle.direct_map.get(family)
+        if category_index is not None and 0 <= category_index < bundle.value_matrix.shape[0]:
+            payload = _build_payload_from_row(bundle.value_matrix[category_index], bundle.value_columns)
+            return payload, family
 
     token_candidates = [value for value in candidates if value]
     if not token_candidates:
         return {}, ""
 
-    matches = bundle.category_tokens.get(category)
-    if not matches:
-        return {}, ""
-
-    token_array, key_array, row_indices = matches
-    reference_tokens = list(token_array.tolist())
-    match_keys = list(key_array.tolist())
-    indices = list(row_indices.tolist())
-
-    for candidate in token_candidates:
-        tokens = _token_set(candidate)
-        if not tokens:
+    for family in families:
+        matches = bundle.category_tokens.get(family)
+        if not matches:
             continue
-        for reference, match_key, index in zip(reference_tokens, match_keys, indices, strict=False):
-            if not isinstance(reference, frozenset):
+
+        token_array, key_array, row_indices = matches
+        reference_tokens = list(token_array.tolist())
+        match_keys = list(key_array.tolist())
+        indices = list(row_indices.tolist())
+
+        for candidate in token_candidates:
+            tokens = _token_set(candidate)
+            if not tokens:
                 continue
-            if tokens.issubset(reference) and 0 <= index < bundle.value_matrix.shape[0]:
-                payload = _build_payload_from_row(bundle.value_matrix[index], bundle.value_columns)
-                return payload, str(match_key)
+            for reference, match_key, index in zip(reference_tokens, match_keys, indices, strict=False):
+                if not isinstance(reference, frozenset):
+                    continue
+                if tokens.issubset(reference) and 0 <= index < bundle.value_matrix.shape[0]:
+                    payload = _build_payload_from_row(bundle.value_matrix[index], bundle.value_columns)
+                    return payload, str(match_key)
 
     return {}, ""
 
@@ -1702,7 +1787,7 @@ def prepare_waste_frame(waste_df: pd.DataFrame) -> pd.DataFrame:
     category_defaults = normalized_category.map(_CATEGORY_DENSITY_DEFAULTS).astype(float)
     density = density.fillna(category_defaults)
 
-    default_density = float(_CATEGORY_DENSITY_DEFAULTS.get("other packaging glove", 500.0))
+    default_density = float(_CATEGORY_DENSITY_DEFAULTS.get("packaging", 500.0))
     density = density.fillna(default_density)
     out["density_kg_m3"] = density.clip(lower=20.0, upper=4000.0)
 
@@ -2418,6 +2503,38 @@ def _compute_features_from_batch(batch: FeatureTensorBatch) -> list[Dict[str, An
     regolith = to_numpy(kernel_output["regolith"])
     total_mass = to_numpy(batch.total_mass)
 
+    keyword_pairs = tuple(
+        (name, idx)
+        for name, idx in _KEYWORD_INDEX.items()
+        if keyword_matrix.shape[1] > idx
+    )
+
+    mission_arrays: tuple[
+        tuple[str, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+        ...,
+    ] = tuple(
+        (
+            mission,
+            mission_similarity[:, mission_idx],
+            mission_reference_mass[:, mission_idx],
+            mission_scaled_mass[:, mission_idx],
+            mission_official_mass[:, mission_idx],
+        )
+        for mission_idx, mission in enumerate(batch.mission_names)
+    )
+
+    l2l_items = [
+        (name, float(value))
+        for name, value in batch.l2l_constants.items()
+        if isinstance(value, (int, float)) and np.isfinite(value)
+    ]
+    l2l_names = tuple(name for name, _ in l2l_items)
+    l2l_values = (
+        np.asarray([value for _, value in l2l_items], dtype=float)
+        if l2l_items
+        else np.empty(0, dtype=float)
+    )
+
     features_list: list[Dict[str, Any]] = []
     for idx, process_id in enumerate(batch.process_ids):
         features: Dict[str, Any] = {
@@ -2434,28 +2551,33 @@ def _compute_features_from_batch(batch: FeatureTensorBatch) -> list[Dict[str, An
             "packaging_frac": float(packaging[idx]) if packaging.size else 0.0,
         }
 
-        for name, kw_idx in _KEYWORD_INDEX.items():
-            if keyword_matrix.shape[1] > kw_idx:
-                features[name] = float(keyword_matrix[idx, kw_idx])
+        for name, kw_idx in keyword_pairs:
+            features[name] = float(keyword_matrix[idx, kw_idx])
 
         _apply_official_composition_overrides(features, batch.official_comp[idx])
 
-        for name, value in batch.l2l_constants.items():
-            if isinstance(value, (int, float)) and np.isfinite(value):
-                features[name] = float(value)
+        if l2l_values.size:
+            for name_idx, name in enumerate(l2l_names):
+                features[name] = float(l2l_values[name_idx])
 
         mission_similarity_row = mission_similarity[idx] if mission_similarity.size else np.array([])
         mission_similarity_dict: Dict[str, float] = {}
         if mission_similarity_row.size and np.any(mission_similarity_row > 0):
-            for mission_idx, mission in enumerate(batch.mission_names):
-                share = float(mission_similarity_row[mission_idx])
+            for (
+                mission,
+                share_values,
+                reference_values,
+                scaled_values,
+                official_values,
+            ) in mission_arrays:
+                share = float(share_values[idx])
                 if share <= 0:
                     continue
                 mission_similarity_dict[mission] = share
                 features[f"mission_similarity_{mission}"] = float(np.clip(share, 0.0, 1.0))
-                features[f"mission_reference_mass_{mission}"] = float(mission_reference_mass[idx, mission_idx])
-                features[f"mission_scaled_mass_{mission}"] = float(mission_scaled_mass[idx, mission_idx])
-                features[f"mission_official_mass_{mission}"] = float(mission_official_mass[idx, mission_idx])
+                features[f"mission_reference_mass_{mission}"] = float(reference_values[idx])
+                features[f"mission_scaled_mass_{mission}"] = float(scaled_values[idx])
+                features[f"mission_official_mass_{mission}"] = float(official_values[idx])
 
             features["mission_similarity_total"] = float(mission_similarity_total[idx])
 
@@ -2466,8 +2588,10 @@ def _compute_features_from_batch(batch: FeatureTensorBatch) -> list[Dict[str, An
         features["gas_recovery_index"] = float(gas_recovery[idx]) if gas_recovery.size else 0.0
         features["logistics_reuse_index"] = float(logistics_reuse[idx]) if logistics_reuse.size else 0.0
 
-        for oxide, value in REGOLITH_VECTOR.items():
-            features[f"oxide_{oxide}"] = float(value * features["regolith_pct"])
+        if _REGOLITH_OXIDE_VALUES.size:
+            oxide_values = _REGOLITH_OXIDE_VALUES * features["regolith_pct"]
+            for oxide_name, oxide_value in zip(_REGOLITH_OXIDE_NAMES, oxide_values, strict=False):
+                features[oxide_name] = float(oxide_value)
 
         features_list.append(features)
 
@@ -2487,29 +2611,71 @@ def compute_feature_vectors_batch(
 
 
 def compute_feature_vector(
-    picks: pd.DataFrame | pl.DataFrame | FeatureTensorBatch,
-    weights: Iterable[float] | None = None,
-    process: pd.Series | None = None,
-    regolith_pct: float | None = None,
+    picks: pd.DataFrame | pl.DataFrame | FeatureTensorBatch | Sequence[pd.DataFrame | pl.DataFrame],
+    weights: Iterable[float] | Sequence[Iterable[float]] | None = None,
+    process: pd.Series | Sequence[pd.Series] | None = None,
+    regolith_pct: float | Sequence[float] | None = None,
+    *,
+    backend: str | None = None,
 ) -> Dict[str, Any] | list[Dict[str, Any]]:
     if isinstance(picks, FeatureTensorBatch):
         return _compute_features_from_batch(picks)
 
-    if isinstance(picks, pl.DataFrame):
-        picks_df = picks.to_pandas()
-    elif isinstance(picks, pd.DataFrame):
-        picks_df = picks
-    else:
+    backend = backend or "jax"
+
+    def _to_pandas(frame: pd.DataFrame | pl.DataFrame) -> pd.DataFrame:
+        if isinstance(frame, pd.DataFrame):
+            return frame
+        if isinstance(frame, pl.DataFrame):
+            return frame.to_pandas()
         raise TypeError(
             "picks must be a pandas.DataFrame, a polars.DataFrame or a FeatureTensorBatch"
         )
+
+    is_sequence_input = False
+    if isinstance(picks, (pd.DataFrame, pl.DataFrame)):
+        picks_list = [_to_pandas(picks)]
+    else:
+        if not isinstance(picks, Sequence) or isinstance(picks, (str, bytes)):
+            raise TypeError(
+                "picks must be a pandas.DataFrame, a polars.DataFrame, a FeatureTensorBatch, or a sequence of DataFrames"
+            )
+        picks_list = [_to_pandas(frame) for frame in picks]
+        is_sequence_input = True
+
+    if not picks_list:
+        return [] if is_sequence_input else {}
+
+    candidate_count = len(picks_list)
+
     if weights is None or process is None or regolith_pct is None:
         raise ValueError("weights, process and regolith_pct are required for DataFrame inputs")
 
-    bundle = _official_features_bundle()
-    context = _prepare_feature_context(picks_df, weights, regolith_pct, bundle)
-    batch = _contexts_to_tensor_batch([context], [process], bundle)
+    if is_sequence_input:
+        if not isinstance(weights, Sequence) or len(weights) != candidate_count:
+            raise ValueError("weights must be a sequence matching the number of candidates")
+        if not isinstance(process, Sequence) or len(process) != candidate_count:
+            raise ValueError("process must be a sequence matching the number of candidates")
+        if not isinstance(regolith_pct, Sequence) or len(regolith_pct) != candidate_count:
+            raise ValueError("regolith_pct must be a sequence matching the number of candidates")
+        weights_list = list(weights)
+        process_list = list(process)
+        regolith_list = list(regolith_pct)
+    else:
+        weights_list = [weights]
+        process_list = [process]
+        regolith_list = [regolith_pct]
+
+    batch = build_feature_tensor_batch(
+        picks_list,
+        weights_list,
+        process_list,
+        regolith_list,
+        backend=backend,
+    )
     features = _compute_features_from_batch(batch)
+    if is_sequence_input:
+        return features
     return features[0] if features else {}
 
 
@@ -2997,6 +3163,14 @@ def generate_candidates(
         if components:
             components_batch.append(components)
 
+    if components_batch:
+        _ = compute_feature_vector(
+            [component.picks for component in components_batch],
+            weights=[component.weights for component in components_batch],
+            process=[component.process for component in components_batch],
+            regolith_pct=[component.regolith_pct for component in components_batch],
+        )
+
     attempts = 0
     max_attempts = max(n * 2, 4)
     while len(candidates) < n and attempts < max_attempts:
@@ -3030,6 +3204,7 @@ __all__ = [
     "PredProps",
     "append_inference_log",
     "prepare_waste_frame",
+    "official_features_bundle",
     "compute_feature_vector",
     "compute_feature_vectors_batch",
     "build_feature_tensor_batch",
