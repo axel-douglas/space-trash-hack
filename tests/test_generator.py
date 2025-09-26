@@ -1132,6 +1132,29 @@ def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
         assert candidate["propellant_delta_v_m_s_expected"] == pytest.approx(features["propellant_delta_v_m_s_expected"], rel=1e-6)
 
 
+def test_prepare_waste_frame_handles_malformed_l2l(monkeypatch):
+    data_sources.official_features_bundle.cache_clear()
+    generator._official_features_bundle.cache_clear()
+    monkeypatch.setattr(generator, "_L2L_PARAMETERS", {})
+
+    def broken_loader() -> dict:
+        return {}
+
+    monkeypatch.setattr(generator, "_load_l2l_parameters", broken_loader)
+
+    waste_df = pd.DataFrame(
+        {
+            "category": ["Packaging"],
+            "material": ["Foam"],
+            "kg": [1.0],
+        }
+    )
+
+    prepared = generator.prepare_waste_frame(waste_df)
+    assert isinstance(prepared, pd.DataFrame)
+    assert not prepared.empty
+
+
 def test_prepare_waste_frame_injects_l2l_features(monkeypatch):
     data_sources.official_features_bundle.cache_clear()
     generator._official_features_bundle.cache_clear()
