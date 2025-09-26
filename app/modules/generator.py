@@ -15,14 +15,15 @@ candidate assembly.
 from __future__ import annotations
 
 import atexit
+import itertools
+import json
 import logging
 import math
 import os
 import random
 import re
-import threading
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from functools import lru_cache
 from typing import Any, Dict, Iterable, Mapping, NamedTuple, Sequence, Tuple
@@ -54,6 +55,26 @@ try:  # Torch tensors may appear when the caller works in PyTorch land.
 except Exception:  # pragma: no cover - torch is optional
     torch = None  # type: ignore[assignment]
 
+from app.modules import data_sources as ds
+
+_CATEGORY_SYNONYMS = ds._CATEGORY_SYNONYMS
+DATASETS_ROOT = ds.DATASETS_ROOT
+GAS_MEAN_YIELD = ds.GAS_MEAN_YIELD
+MEAN_REUSE = ds.MEAN_REUSE
+REGOLITH_VECTOR = ds.REGOLITH_VECTOR
+_L2LParameters = ds.L2LParameters
+_load_l2l_parameters = ds.load_l2l_parameters
+_load_official_features_bundle = ds.official_features_bundle
+normalize_category = ds.normalize_category
+normalize_item = ds.normalize_item
+token_set = ds.token_set
+to_lazy_frame = ds.to_lazy_frame
+from_lazy_frame = ds.from_lazy_frame
+resolve_dataset_path = ds.resolve_dataset_path
+slugify = ds.slugify
+_load_regolith_vector = ds._load_regolith_vector
+from app.modules import logging_utils
+from app.modules.logging_utils import append_inference_log
 from app.modules.data_sources import (
     _CATEGORY_SYNONYMS,
     DATASETS_ROOT,
@@ -71,7 +92,7 @@ from app.modules.data_sources import (
     to_lazy_frame,
     token_set,
 )
-from app.modules.logging_utils import append_inference_log
+import app.modules.logging_utils as logging_utils
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +134,11 @@ except Exception:  # pragma: no cover - pyarrow is expected in production
     pa = None  # type: ignore[assignment]
     pq = None  # type: ignore[assignment]
 
+try:
+    import pyarrow.parquet as pq
+except Exception:  # pragma: no cover - pyarrow is expected in production
+    pq = None  # type: ignore[assignment]
+
 from app.modules.execution import (
     DEFAULT_PARALLEL_THRESHOLD,
     ExecutionBackend,
@@ -131,169 +157,7 @@ _REGOLITH_OXIDE_NAMES = tuple(f"oxide_{name}" for name, _ in _REGOLITH_OXIDE_ITE
 _REGOLITH_OXIDE_VALUES = np.asarray([float(value) for _, value in _REGOLITH_OXIDE_ITEMS], dtype=float)
 
 
-@dataclass(slots=True)
-class _InferenceWriterState:
-    """Book-keeping for an active Parquet writer."""
-
-    date_token: str
-    path: Path
-    schema: "pa.Schema"
-    writer: Any
-
-
-class _InferenceLogWriterManager:
-    """Manage a single append-only Parquet writer with daily rotation."""
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._state: _InferenceWriterState | None = None
-
-    def close(self) -> None:
-        """Close the active writer, if any."""
-
-        if pq is None:
-            return
-        with self._lock:
-            self._close_locked()
-
-    def _close_locked(self) -> None:
-        state = self._state
-        if state is None:
-            return
-        try:
-            state.writer.close()
-        except Exception:  # pragma: no cover - best effort cleanup
-            pass
-        self._state = None
-
-    def _open_locked(
-        self, timestamp: datetime, field_names: Iterable[str]
-    ) -> _InferenceWriterState | None:
-        if pa is None or pq is None:
-            return None
-
-        desired_fields = sorted(set(str(name) for name in field_names))
-        if not desired_fields:
-            return None
-
-        log_dir = _resolve_inference_log_dir(timestamp)
-        try:
-            log_dir.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            return None
-
-        date_token = timestamp.strftime("%Y%m%d")
-        path = self._resolve_log_path(log_dir, date_token)
-        schema = pa.schema(pa.field(name, pa.string()) for name in desired_fields)
-
-        try:
-            writer = pq.ParquetWriter(str(path), schema=schema)
-        except Exception:
-            return None
-
-        state = _InferenceWriterState(
-            date_token=date_token,
-            path=path,
-            schema=schema,
-            writer=writer,
-        )
-        self._state = state
-        return state
-
-    def _resolve_log_path(self, log_dir: Path, date_token: str) -> Path:
-        """Return a Parquet path for *date_token* avoiding overwriting shards."""
-
-        base = log_dir / f"inference_{date_token}.parquet"
-        if not base.exists():
-            return base
-
-        counter = 1
-        while True:
-            candidate = log_dir / f"inference_{date_token}_{counter:04d}.parquet"
-            if not candidate.exists():
-                return candidate
-            counter += 1
-
-    def _ensure_state_locked(
-        self, timestamp: datetime, field_names: Iterable[str]
-    ) -> _InferenceWriterState | None:
-        state = self._state
-        desired_fields = sorted(set(str(name) for name in field_names))
-        if not desired_fields:
-            return None
-
-        date_token = timestamp.strftime("%Y%m%d")
-        if state is not None:
-            if state.date_token != date_token or set(state.schema.names) != set(
-                desired_fields
-            ):
-                self._close_locked()
-                state = None
-
-        if state is None:
-            state = self._open_locked(timestamp, desired_fields)
-
-        return state
-
-    def write_event(
-        self, timestamp: datetime, payload: Mapping[str, str | None]
-    ) -> None:
-        if pa is None or pq is None:
-            return
-
-        with self._lock:
-            state = self._ensure_state_locked(timestamp, payload.keys())
-            if state is None:
-                return
-
-            arrays = []
-            for field in state.schema:
-                arrays.append(pa.array([payload.get(field.name)], type=field.type))
-
-            table = pa.Table.from_arrays(arrays, schema=state.schema)
-
-            try:
-                state.writer.write_table(table)
-            except Exception:
-                self._close_locked()
-
-
-_INFERENCE_LOG_MANAGER = _InferenceLogWriterManager()
-
-LOGS_ROOT: Path | None = None
-
-_ORIGINAL_INFERENCE_LOG_MANAGER = _INFERENCE_LOG_MANAGER
-
-
-def _close_inference_log_writer() -> None:
-    """Expose a test hook to close the shared inference writer."""
-
-    _INFERENCE_LOG_MANAGER.close()
-def _to_serializable(value: Any) -> Any:
-    """Convert *value* into a JSON-serializable structure."""
-
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, np.generic):
-        return value.item()
-    if isinstance(value, (list, tuple, set)):
-        return [_to_serializable(v) for v in value]
-    if isinstance(value, dict):
-        return {str(k): _to_serializable(v) for k, v in value.items()}
-    if isinstance(value, np.ndarray):
-        return [_to_serializable(v) for v in value.tolist()]
-    return str(value)
-
-
-def _resolve_inference_log_dir(timestamp: datetime) -> Path:
-    """Return the directory backing inference logs for *timestamp*."""
-
-    root = LOGS_ROOT if LOGS_ROOT is not None else logging_utils.LOGS_ROOT
-    return root / "inference" / timestamp.strftime("%Y%m%d")
-
-
-if pq is not None:  # pragma: no branch - guard for optional dependency
-    atexit.register(_INFERENCE_LOG_MANAGER.close)
+_INFERENCE_LOG_MANAGER = logging_utils._INFERENCE_LOG_MANAGER
 
 
 def _prepare_inference_event(
@@ -303,34 +167,15 @@ def _prepare_inference_event(
     model_registry: Any | None,
     timestamp: datetime | None = None,
 ) -> tuple[datetime, Dict[str, str | None]]:
-    """Build the serializable payload for an inference log event."""
+    """Thin wrapper around :func:`logging_utils.prepare_inference_event`."""
 
-    now = timestamp or datetime.now(UTC)
-
-    model_hash = ""
-    if model_registry is not None:
-        metadata = getattr(model_registry, "metadata", {}) or {}
-        if isinstance(metadata, dict):
-            model_hash = str(metadata.get("model_hash") or metadata.get("checksum") or "")
-        if not model_hash:
-            for attr in ("model_hash", "checksum", "pipeline_checksum", "pipeline_hash"):
-                value = getattr(model_registry, attr, None)
-                if value:
-                    model_hash = str(value)
-                    break
-
-    payload: Dict[str, str | None] = {
-        "timestamp": now.isoformat(timespec="microseconds"),
-        "input_features": json.dumps(_to_serializable(input_features or {}), sort_keys=True),
-        "prediction": json.dumps(_to_serializable(prediction or {}), sort_keys=True),
-        "uncertainty": json.dumps(_to_serializable(uncertainty or {}), sort_keys=True),
-        "model_hash": model_hash or None,
-    }
-
-    return now, payload
-
-
-_ORIGINAL_PREPARE_INFERENCE_EVENT = _prepare_inference_event
+    return logging_utils.prepare_inference_event(
+        input_features=input_features,
+        prediction=prediction,
+        uncertainty=uncertainty,
+        model_registry=model_registry,
+        timestamp=timestamp,
+    )
 
 
 def append_inference_log(
@@ -339,150 +184,24 @@ def append_inference_log(
     uncertainty: Dict[str, Any] | None,
     model_registry: Any | None,
 ) -> None:
-    """Persist an inference event using a streaming Parquet writer."""
+    """Proxy :func:`logging_utils.append_inference_log` for backward compatibility."""
 
-    if pa is None or pq is None:  # pragma: no cover - dependencies should exist
-        return
-
-    prepare_fn = globals().get("_prepare_inference_event", _prepare_inference_event)
-    if (
-        prepare_fn is _ORIGINAL_PREPARE_INFERENCE_EVENT
-        and hasattr(logging_utils, "prepare_inference_event")
-    ):
-        prepare_fn = logging_utils.prepare_inference_event
-
-    event_time, event_payload = prepare_fn(
+    logging_utils.append_inference_log(
         input_features=input_features,
         prediction=prediction,
         uncertainty=uncertainty,
         model_registry=model_registry,
     )
 
-    manager = globals().get("_INFERENCE_LOG_MANAGER", _INFERENCE_LOG_MANAGER)
-    if (
-        manager is _ORIGINAL_INFERENCE_LOG_MANAGER
-        and hasattr(logging_utils, "_INFERENCE_LOG_MANAGER")
-    ):
-        manager = logging_utils._INFERENCE_LOG_MANAGER
-
-    manager.write_event(event_time, event_payload)
-
 
 def _close_inference_log_writer() -> None:
     """Close the cached Parquet writer used for inference logs."""
 
-    _INFERENCE_LOG_MANAGER.close()
-
-def _to_lazy_frame(
-    frame: pd.DataFrame | pl.DataFrame | pl.LazyFrame,
-) -> tuple[pl.LazyFrame, str]:
-    """Return a :class:`polars.LazyFrame` along with the original frame type."""
-
-    if isinstance(frame, pl.LazyFrame):
-        return frame, "lazy"
-    if isinstance(frame, pl.DataFrame):
-        return frame.lazy(), "polars"
-    if isinstance(frame, pd.DataFrame):
-        return pl.from_pandas(frame).lazy(), "pandas"
-    raise TypeError(f"Unsupported frame type: {type(frame)!r}")
+    logging_utils._INFERENCE_LOG_MANAGER.close()
 
 
-def _from_lazy_frame(lazy: pl.LazyFrame, frame_kind: str) -> pd.DataFrame | pl.DataFrame | pl.LazyFrame:
-    """Convert *lazy* back to the representation described by *frame_kind*."""
-
-    if frame_kind == "lazy":
-        return lazy
-
-    collected = lazy.collect()
-    if frame_kind == "polars":
-        return collected
-    if frame_kind == "pandas":
-        return collected.to_pandas()
-    raise ValueError(f"Unsupported frame kind: {frame_kind}")
-
-
-def _resolve_dataset_path(name: str) -> Path | None:
-    """Return the first dataset path that exists for *name*.
-
-    The helper checks the canonical ``datasets`` root alongside the ``raw``
-    subdirectory so callers do not need to remember where a file was stored.
-    """
-
-    candidates = (
-        DATASETS_ROOT / name,
-        DATASETS_ROOT / "raw" / name,
-    )
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return None
-
-
-def _slugify(value: str) -> str:
-    """Convert *value* into a snake_case identifier safe for feature names."""
-
-    text = re.sub(r"[^0-9a-zA-Z]+", "_", str(value).strip().lower())
-    text = re.sub(r"_+", "_", text).strip("_")
-    return text or "value"
-
-
-def _load_regolith_vector() -> Dict[str, float]:
-    path = resolve_dataset_path("MGS-1_Martian_Regolith_Simulant_Recipe.csv")
-    if path is None:
-        path = DATASETS_ROOT / "raw" / "mgs1_oxides.csv"
-
-    if path and path.exists():
-        table_lazy = pl.scan_csv(path)
-        columns = table_lazy.columns
-
-        key_cols = [
-            col
-            for col in columns
-            if col.lower() in {"oxide", "component", "phase", "mineral"}
-        ]
-        value_cols = [
-            col
-            for col in columns
-            if any(token in col.lower() for token in ("wt", "weight", "percent"))
-        ]
-
-        key_col = key_cols[0] if key_cols else None
-        value_col = value_cols[0] if value_cols else None
-
-        if key_col and value_col:
-
-            def _clean_label(value: Any) -> str:
-                text = str(value or "").lower()
-                text = re.sub(r"[^0-9a-z]+", "_", text)
-                text = re.sub(r"_+", "_", text).strip("_")
-                return text
-
-            working_lazy = (
-                table_lazy.select(
-                    pl.col(key_col).alias("key"),
-                    pl.col(value_col).cast(pl.Float64, strict=False).alias("value"),
-                )
-                .drop_nulls()
-                .with_columns(
-                    pl.col("key").map_elements(_clean_label, return_dtype=pl.String)
-                )
-            )
-
-            working = working_lazy.collect()
-            if working.height:
-                values = working.get_column("value")
-                total = float(values.sum())
-                if total > 0:
-                    normalised = working.with_columns(
-                        (pl.col("value") / pl.lit(total)).alias("weight")
-                    )
-                    keys = normalised.get_column("key").to_list()
-                    weights = normalised.get_column("weight").to_numpy()
-                    return {
-                        str(key): float(weight)
-                        for key, weight in zip(keys, weights, strict=False)
-                        if key and weight is not None and np.isfinite(weight)
-                    }
+if logging_utils.pq is not None:  # pragma: no branch - guard for optional dependency
+    atexit.register(logging_utils._INFERENCE_LOG_MANAGER.close)
 
 _COMPOSITION_DENSITY_MAP = {
     "Aluminum_pct": 2700.0,
@@ -512,12 +231,6 @@ _CATEGORY_DENSITY_DEFAULTS = {
     "eva waste": 240.0,
     "fabric": 350.0,
 }
-
-
-def _load_regolith_vector() -> Dict[str, float]:
-    """Return a copy of the shared regolith composition vector."""
-
-    return dict(REGOLITH_VECTOR)
 
 
 def _normalize_category(value: Any) -> str:
