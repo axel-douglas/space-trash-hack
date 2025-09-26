@@ -28,7 +28,15 @@ import threading
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, NamedTuple, Sequence, Tuple
-from typing import Any, Dict, Iterable, Mapping, NamedTuple, Tuple
+
+try:
+    import jax.numpy as jnp
+    from jax import jit
+except Exception:  # pragma: no cover - JAX is optional during inference
+    jnp = None  # type: ignore[assignment]
+
+    def jit(fn):  # type: ignore[override]
+        return fn
 
 import numpy as np
 import pandas as pd
@@ -832,6 +840,7 @@ class _OfficialFeaturesBundle(NamedTuple):
     composition_columns: tuple[str, ...]
     direct_map: Dict[str, Dict[str, float]]
     category_tokens: Dict[str, list[tuple[frozenset[str], Dict[str, float], str]]]
+    table: pl.DataFrame
     mission_mass: Dict[str, Dict[str, float]]
     mission_totals: Dict[str, float]
     processing_metrics: Dict[str, Dict[str, float]]
@@ -850,6 +859,7 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
         (),
         (),
         {},
+        pl.DataFrame(),
         {},
         {},
         {},
@@ -874,6 +884,24 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
     table_lazy = _merge_reference_dataset(table_lazy, "nasa_waste_processing_products.csv", "processing")
     table_lazy = _merge_reference_dataset(table_lazy, "nasa_leo_mass_savings.csv", "leo")
     table_lazy = _merge_reference_dataset(table_lazy, "nasa_propellant_benefits.csv", "propellant")
+
+    table_lazy = table_lazy.with_columns(
+        [
+            pl.col("category")
+            .map_elements(_normalize_category)
+            .alias("category_norm"),
+            pl.col("subitem")
+            .map_elements(_normalize_item)
+            .alias("subitem_norm"),
+        ]
+    )
+
+    table_lazy = table_lazy.with_columns(
+        pl.when(pl.col("subitem_norm").str.len_bytes() > 0)
+        .then(pl.col("category_norm") + pl.lit("|") + pl.col("subitem_norm"))
+        .otherwise(pl.col("category_norm"))
+        .alias("key")
+    )
 
     if isinstance(table_lazy, pd.DataFrame):  # pragma: no cover - defensive
         table_df = pl.from_pandas(table_lazy)
@@ -928,11 +956,16 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
     leo_savings = _extract_grouped_metrics("nasa_leo_mass_savings.csv", "leo")
     propellant_metrics = _extract_grouped_metrics("nasa_propellant_benefits.csv", "propellant")
 
+    table_join = table_df.select(
+        ["category_norm", "subitem_norm", *value_columns]
+    ).unique(subset=["category_norm", "subitem_norm"], maintain_order=True)
+
     return _OfficialFeaturesBundle(
         value_columns,
         composition_columns,
         direct_map,
         category_tokens,
+        table_join,
         waste_summary.mass_by_key,
         waste_summary.mission_totals,
         processing_metrics,
@@ -993,90 +1026,182 @@ def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
     if not bundle.value_columns or frame.empty:
         return frame
 
-    records: list[Dict[str, float]] = []
-    match_keys: list[str] = []
-    for _, row in frame.iterrows():
-        payload, match_key = _lookup_official_feature_values(row)
-        records.append(payload)
-        match_keys.append(match_key)
+    working = frame.copy()
+    working["__row_id__"] = np.arange(len(working))
 
-    has_payload = any(payload for payload in records)
-    official_df = (
-        pd.DataFrame.from_records(records, index=frame.index)
-        if has_payload
-        else pd.DataFrame(index=frame.index)
+    inventory_pl = pl.from_pandas(working)
+    existing_columns = set(inventory_pl.columns)
+
+    norm_exprs: list[pl.Expr] = []
+    if "category" in existing_columns:
+        norm_exprs.append(
+            pl.col("category").map_elements(_normalize_category).alias("category_norm")
+        )
+    else:
+        norm_exprs.append(pl.lit("").alias("category_norm"))
+
+    for source, alias in (
+        ("material", "material_norm"),
+        ("material_family", "material_family_norm"),
+        ("key_materials", "key_materials_norm"),
+    ):
+        if source in existing_columns:
+            norm_exprs.append(
+                pl.col(source).map_elements(_normalize_item).alias(alias)
+            )
+        else:
+            norm_exprs.append(pl.lit("").alias(alias))
+
+    inventory_lazy = inventory_pl.lazy().with_columns(norm_exprs)
+
+    inventory_lazy = inventory_lazy.with_columns(
+        pl.when(pl.col("material_norm").str.len_bytes() > 0)
+        .then(pl.col("material_norm"))
+        .when(pl.col("material_family_norm").str.len_bytes() > 0)
+        .then(pl.col("material_family_norm"))
+        .when(pl.col("key_materials_norm").str.len_bytes() > 0)
+        .then(pl.col("key_materials_norm"))
+        .otherwise(pl.lit(""))
+        .alias("subitem_norm")
     )
 
-    if not official_df.empty:
-        for column in official_df.columns:
-            if column not in frame.columns:
-                frame[column] = official_df[column]
-            else:
-                mask = official_df[column].notna()
-                if mask.any():
-                    frame.loc[mask, column] = official_df.loc[mask, column]
+    inventory_lazy = inventory_lazy.with_columns(
+        pl.when(pl.col("subitem_norm").str.len_bytes() > 0)
+        .then(pl.col("category_norm") + pl.lit("|") + pl.col("subitem_norm"))
+        .otherwise(pl.col("category_norm"))
+        .alias("_official_match_key")
+    )
 
-    frame["_official_match_key"] = match_keys
+    official_lazy = bundle.table.lazy()
+    official_columns = ["category_norm", "subitem_norm", *bundle.value_columns]
+    official_lazy = official_lazy.select(official_columns)
 
-    if bundle.l2l_category_features or bundle.l2l_item_features:
-        index_labels = list(frame.index)
-        hint_payload: list[str] = []
-        any_hints = False
+    joined_lazy = inventory_lazy.join(
+        official_lazy,
+        on=["category_norm", "subitem_norm"],
+        how="left",
+        suffix="_official",
+    )
 
-        for idx, index in enumerate(index_labels):
-            aggregated: Dict[str, float] = {}
-            hints: set[str] = set()
-            match_key = match_keys[idx] if idx < len(match_keys) else ""
-            if match_key:
-                entry = bundle.l2l_item_features.get(match_key)
-                if entry:
-                    aggregated.update(entry)
-                    for name in entry:
-                        hint = bundle.l2l_hints.get(name)
-                        if hint:
-                            hints.add(hint)
+    combine_exprs: list[pl.Expr] = []
+    drop_official: list[str] = []
+    left_columns = set(inventory_pl.columns)
+    for column in bundle.value_columns:
+        official_name = f"{column}_official"
+        if official_name not in joined_lazy.columns:
+            continue
+        if column in left_columns:
+            combine_exprs.append(
+                pl.when(pl.col(official_name).is_not_null())
+                .then(pl.col(official_name))
+                .otherwise(pl.col(column))
+                .alias(column)
+            )
+        else:
+            combine_exprs.append(pl.col(official_name).alias(column))
+        drop_official.append(official_name)
 
-            row = frame.loc[index]
-            category_key = _normalize_category(row.get("category", ""))
-            if category_key:
-                entry = bundle.l2l_category_features.get(category_key)
-                if entry:
-                    for name, value in entry.items():
-                        aggregated.setdefault(name, value)
-                        hint = bundle.l2l_hints.get(name)
-                        if hint:
-                            hints.add(hint)
+    if combine_exprs:
+        joined_lazy = joined_lazy.with_columns(combine_exprs)
+    if drop_official:
+        joined_lazy = joined_lazy.drop(drop_official)
 
-            for name, value in aggregated.items():
-                if name not in frame.columns or pd.isna(frame.at[index, name]):
-                    frame.at[index, name] = value
+    match_checks = [
+        pl.col(column).is_not_null() for column in bundle.value_columns if column in joined_lazy.columns
+    ]
+    if match_checks:
+        joined_lazy = joined_lazy.with_columns(
+            pl.when(pl.any_horizontal(match_checks))
+            .then(pl.col("_official_match_key"))
+            .otherwise(pl.lit(""))
+            .alias("_official_match_key")
+        )
 
-            hint_text = "; ".join(sorted(hints)) if hints else ""
-            any_hints = any_hints or bool(hint_text)
-            hint_payload.append(hint_text)
+    if bundle.l2l_category_features:
+        category_rows = [
+            {"category_norm": key, **{name: float(value) for name, value in values.items()}}
+            for key, values in bundle.l2l_category_features.items()
+        ]
+        if category_rows:
+            category_df = pl.DataFrame(category_rows)
+            joined_lazy = joined_lazy.join(category_df.lazy(), on="category_norm", how="left")
 
-        if any_hints:
-            frame["_l2l_page_hints"] = hint_payload
+    if bundle.l2l_item_features:
+        item_rows = []
+        for key, values in bundle.l2l_item_features.items():
+            row = {"_official_match_key": key}
+            row.update({name: float(value) for name, value in values.items()})
+            item_rows.append(row)
+        if item_rows:
+            item_df = pl.DataFrame(item_rows)
+            joined_lazy = joined_lazy.join(
+                item_df.lazy(), on="_official_match_key", how="left"
+            )
 
-    if not official_df.empty:
+    if bundle.l2l_constants:
+        const_exprs = []
+        for name, value in bundle.l2l_constants.items():
+            if isinstance(value, (int, float)) and np.isfinite(value):
+                const_exprs.append(pl.lit(float(value)).alias(name))
+        if const_exprs:
+            joined_lazy = joined_lazy.with_columns(const_exprs)
+
+    result_pl = joined_lazy.sort("__row_id__").collect()
+    result_df = result_pl.to_pandas()
+
+    helper_columns = {
+        "__row_id__",
+        "category_norm",
+        "subitem_norm",
+        "material_norm",
+        "material_family_norm",
+        "key_materials_norm",
+    }
+    result_df = result_df.drop(columns=[col for col in helper_columns if col in result_df.columns])
+    result_df.index = frame.index
+
+    hint_columns = [
+        column for column in bundle.l2l_hints if column in result_df.columns
+    ]
+    if hint_columns:
+        hint_map: Dict[str, list[str]] = {}
+        for column in hint_columns:
+            hint = bundle.l2l_hints[column]
+            if hint:
+                hint_map.setdefault(hint, []).append(column)
+
+        if hint_map:
+            hints_df = pd.DataFrame(index=result_df.index)
+            for hint, columns in hint_map.items():
+                mask = result_df[columns].notna().any(axis=1)
+                hints_df[hint] = np.where(mask, hint, "")
+
+            if not hints_df.empty:
+                result_df["_l2l_page_hints"] = (
+                    hints_df.apply(
+                        lambda row: "; ".join(sorted(filter(None, row.tolist()))), axis=1
+                    )
+                )
+
+    if bundle.value_columns:
         numeric_candidates = [
             column
-            for column in official_df.columns
+            for column in bundle.value_columns
             if column.endswith(("_kg", "_pct"))
             or column.startswith("category_total")
             or column in {"difficulty_factor", "approx_moisture_pct"}
         ]
 
         for column in numeric_candidates:
-            if column in frame.columns:
-                frame[column] = pd.to_numeric(frame[column], errors="coerce")
+            if column in result_df.columns:
+                result_df[column] = pd.to_numeric(result_df[column], errors="coerce")
 
-    if "approx_moisture_pct" in frame.columns:
-        mask = frame["approx_moisture_pct"].notna()
+    if "approx_moisture_pct" in result_df.columns:
+        mask = result_df["approx_moisture_pct"].notna()
         if mask.any():
-            frame.loc[mask, "moisture_pct"] = frame.loc[mask, "approx_moisture_pct"]
+            result_df.loc[mask, "moisture_pct"] = result_df.loc[mask, "approx_moisture_pct"]
 
-    return frame
+    return result_df
 @dataclass(slots=True)
 class PredProps:
     """Structured container for predicted (or heuristic) properties."""
@@ -1318,6 +1443,22 @@ def _is_problematic(row: pd.Series) -> bool:
 # ---------------------------------------------------------------------------
 
 
+_KEYWORD_FEATURES: Dict[str, Tuple[str, ...]] = {
+    "aluminum_frac": ("aluminum", " alloy", " al "),
+    "foam_frac": ("foam", "zotek", "closed cell"),
+    "eva_frac": ("eva", "ctb", "nomex"),
+    "textile_frac": ("textile", "cloth", "fabric", "wipe"),
+    "multilayer_frac": ("multilayer", "pe-pet-al", "pouch"),
+    "glove_frac": ("glove", "nitrile"),
+    "polyethylene_frac": ("polyethylene", "pvdf", "ldpe"),
+    "carbon_fiber_frac": ("carbon fiber", "composite"),
+    "hydrogen_rich_frac": ("polyethylene", "cotton", "pvdf"),
+}
+
+_KEYWORD_INDEX = {name: idx for idx, name in enumerate(_KEYWORD_FEATURES)}
+_PACKAGING_TARGETS = ("packaging", "food packaging")
+
+
 def _material_tokens(row: pd.Series) -> str:
     parts = [
         str(row.get("material", "")),
@@ -1345,17 +1486,68 @@ def _category_fraction(categories: Iterable[str], weights: Iterable[float], targ
     return float(np.clip(score, 0.0, 1.0))
 
 
-def compute_feature_vector(
+@dataclass
+class CandidateFeatureContext:
+    total_mass: float
+    weights: np.ndarray
+    densities: np.ndarray
+    moisture: np.ndarray
+    difficulty: np.ndarray
+    pct_mass: np.ndarray
+    pct_volume: np.ndarray
+    tokens: Tuple[str, ...]
+    categories: Tuple[str, ...]
+    regolith_pct: float
+    mission_share: Dict[str, float]
+    mission_scaled_mass: Dict[str, float]
+    mission_official_mass: Dict[str, float]
+    official_composition: Dict[str, float]
+    num_items: int
+
+
+@dataclass
+class FeatureTensorBatch:
+    weights: Any
+    densities: Any
+    moisture: Any
+    difficulty: Any
+    pct_mass: Any
+    pct_volume: Any
+    keyword_hits: Any
+    packaging_hits: Any
+    mission_share: Any
+    mission_scaled_mass: Any
+    mission_official_mass: Any
+    mission_totals: Any
+    total_mass: Any
+    regolith: Any
+    keyword_names: Tuple[str, ...]
+    mission_names: Tuple[str, ...]
+    process_ids: Tuple[str, ...]
+    num_items: Tuple[int, ...]
+    official_comp: Tuple[Dict[str, float], ...]
+    l2l_constants: Dict[str, float]
+    bundle_processing_metrics: Dict[str, Dict[str, float]]
+    bundle_leo_mass_savings: Dict[str, Dict[str, float]]
+    bundle_propellant_benefits: Dict[str, Dict[str, float]]
+    logistics_ratio: float
+
+
+def _prepare_feature_context(
     picks: pd.DataFrame,
     weights: Iterable[float],
-    process: pd.Series,
     regolith_pct: float,
-) -> Dict[str, Any]:
+    bundle: "_OfficialFeaturesBundle",
+) -> CandidateFeatureContext:
     total_kg = max(0.001, float(picks["kg"].sum()))
-    base_weights = np.asarray(list(weights), dtype=float)
+    raw_weights = np.asarray(list(weights), dtype=float)
+    if len(raw_weights) < len(picks):
+        raw_weights = np.pad(raw_weights, (0, len(picks) - len(raw_weights)), constant_values=0.0)
+    elif len(raw_weights) > len(picks):
+        raw_weights = raw_weights[: len(picks)]
 
-    tokens = [_material_tokens(row) for _, row in picks.iterrows()]
-    categories = [str(row.get("category", "")).lower() for _, row in picks.iterrows()]
+    tokens = tuple(_material_tokens(row) for _, row in picks.iterrows())
+    categories = tuple(str(row.get("category", "")).lower() for _, row in picks.iterrows())
 
     pct_mass = picks.get("pct_mass", 0).to_numpy(dtype=float) / 100.0
     pct_volume = picks.get("pct_volume", 0).to_numpy(dtype=float) / 100.0
@@ -1363,99 +1555,23 @@ def compute_feature_vector(
     difficulty = picks.get("difficulty_factor", 1).to_numpy(dtype=float) / 3.0
     densities = picks.get("density_kg_m3", 0).to_numpy(dtype=float)
 
-    features: Dict[str, Any] = {
-        "process_id": str(process["process_id"]),
-        "total_mass_kg": total_kg,
-        "mass_input_kg": total_kg,
-        "num_items": int(len(picks)),
-        "density_kg_m3": float(np.dot(base_weights, densities)),
-        "moisture_frac": float(np.clip(np.dot(base_weights, moisture), 0.0, 1.0)),
-        "difficulty_index": float(np.clip(np.dot(base_weights, difficulty), 0.0, 1.0)),
-        "problematic_mass_frac": float(np.clip(np.dot(base_weights, pct_mass), 0.0, 1.0)),
-        "problematic_item_frac": float(np.clip(np.dot(base_weights, pct_volume), 0.0, 1.0)),
-        "regolith_pct": float(np.clip(regolith_pct, 0.0, 1.0)),
-        "packaging_frac": _category_fraction(tuple(categories), base_weights, ("packaging", "food packaging")),
-    }
-
-    keyword_map: Dict[str, Tuple[str, ...]] = {
-        "aluminum_frac": ("aluminum", " alloy", " al "),
-        "foam_frac": ("foam", "zotek", "closed cell"),
-        "eva_frac": ("eva", "ctb", "nomex"),
-        "textile_frac": ("textile", "cloth", "fabric", "wipe"),
-        "multilayer_frac": ("multilayer", "pe-pet-al", "pouch"),
-        "glove_frac": ("glove", "nitrile"),
-        "polyethylene_frac": ("polyethylene", "pvdf", "ldpe"),
-        "carbon_fiber_frac": ("carbon fiber", "composite"),
-        "hydrogen_rich_frac": ("polyethylene", "cotton", "pvdf"),
-    }
-
-    for name, keywords in keyword_map.items():
-        features[name] = _keyword_fraction(tuple(tokens), base_weights, keywords)
-
-    bundle = _official_features_bundle()
     official_comp: Dict[str, float] = {}
     if bundle.composition_columns:
         for column in bundle.composition_columns:
             if column not in picks.columns:
                 continue
-            values = pd.to_numeric(picks[column], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+            series = picks[column]
+            if not series.notna().any():
+                continue
+            values = pd.to_numeric(series, errors="coerce").fillna(0.0).to_numpy(dtype=float)
             if not len(values):
                 continue
-            frac = float(np.dot(base_weights, values / 100.0))
+            frac = float(np.dot(raw_weights[: len(values)], values / 100.0))
             official_comp[column] = frac
 
-    if official_comp:
-        clipped = {key: max(0.0, float(value)) for key, value in official_comp.items()}
-        total = sum(clipped.values())
-        if total > 1.0 + 1e-6:
-            official_comp = {key: value / total for key, value in clipped.items() if total > 0}
-        else:
-            official_comp = clipped
-            official_comp[column] = float(np.clip(frac, 0.0, 1.0))
-
-    def _set_official_fraction(name: str, *columns: str) -> None:
-        total = 0.0
-        found = False
-        for column in columns:
-            if column in official_comp:
-                total += official_comp[column]
-                found = True
-        if not found:
-            return
-        features[name] = float(np.clip(total, 0.0, 1.0))
-
-    if official_comp:
-        _set_official_fraction("aluminum_frac", "Aluminum_pct")
-        _set_official_fraction("carbon_fiber_frac", "Carbon_Fiber_pct")
-        _set_official_fraction("polyethylene_frac", "Polyethylene_pct")
-        _set_official_fraction("glove_frac", "Nitrile_pct")
-        _set_official_fraction("eva_frac", "Nomex_pct")
-        _set_official_fraction("foam_frac", "PVDF_pct")
-        _set_official_fraction("multilayer_frac", "EVOH_pct", "PET_pct")
-
-        textile_total = sum(
-            official_comp.get(column, 0.0)
-            for column in ("Cotton_Cellulose_pct", "Polyester_pct", "Nylon_pct")
-        )
-        if textile_total > 0:
-            features["textile_frac"] = float(np.clip(textile_total, 0.0, 1.0))
-
-        hydrogen_total = sum(
-            official_comp.get(column, 0.0)
-            for column in ("Polyethylene_pct", "Cotton_Cellulose_pct", "PVDF_pct")
-        )
-        if hydrogen_total > 0:
-            features["hydrogen_rich_frac"] = float(np.clip(hydrogen_total, 0.0, 1.0))
-
-    mission_similarity: Dict[str, float] = {}
+    mission_share: Dict[str, float] = {}
     mission_scaled_mass: Dict[str, float] = {}
     mission_official_mass: Dict[str, float] = {}
-    mission_similarity_clipped: Dict[str, float] = {}
-
-    l2l_constants = bundle.l2l_constants if bundle.l2l_constants else {}
-    for name, value in l2l_constants.items():
-        if isinstance(value, (int, float)) and np.isfinite(value):
-            features[name] = float(value)
 
     if bundle.mission_mass and bundle.mission_totals:
         match_keys_col = picks.get("_official_match_key")
@@ -1465,7 +1581,7 @@ def compute_feature_vector(
             match_keys_list = [""] * len(picks)
 
         for idx, (_, row) in enumerate(picks.iterrows()):
-            weight = float(base_weights[idx]) if idx < len(base_weights) else 0.0
+            weight = float(raw_weights[idx]) if idx < len(raw_weights) else 0.0
             if weight <= 0:
                 continue
 
@@ -1493,68 +1609,514 @@ def compute_feature_vector(
                     if not total_reference or total_reference <= 0:
                         continue
                     share = (reference_mass / total_reference) * weight
-                    mission_similarity[mission] = mission_similarity.get(mission, 0.0) + share
-                    mission_official_mass[mission] = mission_official_mass.get(mission, 0.0) + weight * reference_mass
+                    mission_share[mission] = mission_share.get(mission, 0.0) + share
+                    mission_official_mass[mission] = mission_official_mass.get(mission, 0.0) + weight * float(reference_mass)
                     mission_scaled_mass[mission] = mission_scaled_mass.get(mission, 0.0) + share * total_kg
 
-        if mission_similarity:
-            for mission, share in mission_similarity.items():
-                clipped = float(np.clip(share, 0.0, 1.0))
-                mission_similarity_clipped[mission] = clipped
-                features[f"mission_similarity_{mission}"] = clipped
-                total_reference = float(bundle.mission_totals.get(mission, 0.0))
-                features[f"mission_reference_mass_{mission}"] = float(max(0.0, clipped * total_reference))
-                features[f"mission_scaled_mass_{mission}"] = float(max(0.0, mission_scaled_mass.get(mission, 0.0)))
-                features[f"mission_official_mass_{mission}"] = float(max(0.0, mission_official_mass.get(mission, 0.0)))
+    return CandidateFeatureContext(
+        total_mass=total_kg,
+        weights=raw_weights,
+        densities=densities,
+        moisture=moisture,
+        difficulty=difficulty,
+        pct_mass=pct_mass,
+        pct_volume=pct_volume,
+        tokens=tokens,
+        categories=categories,
+        regolith_pct=float(regolith_pct),
+        mission_share=mission_share,
+        mission_scaled_mass=mission_scaled_mass,
+        mission_official_mass=mission_official_mass,
+        official_composition=official_comp,
+        num_items=int(len(picks)),
+    )
 
-            features["mission_similarity_total"] = float(
-                np.clip(sum(mission_similarity_clipped.values()), 0.0, 1.0)
-            )
 
-            def _apply_weighted_metrics(source: Dict[str, Dict[str, float]]) -> None:
-                if not source:
-                    return
-                weighted: Dict[str, float] = {}
-                for mission, share in mission_similarity_clipped.items():
-                    metrics = source.get(mission)
-                    if not metrics:
-                        continue
-                    for metric_name, value in metrics.items():
-                        expected_name = (
-                            metric_name
-                            if metric_name.endswith("_expected")
-                            else f"{metric_name}_expected"
-                        )
-                        weighted[expected_name] = weighted.get(expected_name, 0.0) + share * float(value)
-                        features[f"{metric_name}_{mission}"] = float(value)
+def _contexts_to_tensor_batch(
+    contexts: Sequence[CandidateFeatureContext],
+    processes: Sequence[pd.Series],
+    bundle: "_OfficialFeaturesBundle",
+    *,
+    backend: str = "jax",
+) -> FeatureTensorBatch:
+    if len(contexts) != len(processes):
+        raise ValueError("Number of contexts must match number of processes")
 
-                for metric_name, value in weighted.items():
-                    features[metric_name] = float(value)
+    batch = len(contexts)
+    max_items = max((ctx.num_items for ctx in contexts), default=0)
+    keyword_names = tuple(_KEYWORD_FEATURES.keys())
+    mission_names = tuple(sorted(bundle.mission_totals.keys())) if bundle.mission_totals else tuple()
 
-            _apply_weighted_metrics(bundle.processing_metrics)
-            _apply_weighted_metrics(bundle.leo_mass_savings)
-            _apply_weighted_metrics(bundle.propellant_benefits)
+    def _alloc(shape: tuple[int, ...]) -> np.ndarray:
+        return np.zeros(shape, dtype=float)
+
+    weights = _alloc((batch, max_items))
+    densities = _alloc((batch, max_items))
+    moisture = _alloc((batch, max_items))
+    difficulty = _alloc((batch, max_items))
+    pct_mass = _alloc((batch, max_items))
+    pct_volume = _alloc((batch, max_items))
+    keyword_hits = _alloc((batch, max_items, len(keyword_names)))
+    packaging_hits = _alloc((batch, max_items))
+    mission_share = _alloc((batch, len(mission_names)))
+    mission_scaled_mass = _alloc((batch, len(mission_names)))
+    mission_official_mass = _alloc((batch, len(mission_names)))
+
+    total_mass = np.zeros(batch, dtype=float)
+    regolith = np.zeros(batch, dtype=float)
+    num_items: list[int] = []
+    official_comp: list[Dict[str, float]] = []
+
+    mission_totals = np.array([float(bundle.mission_totals.get(name, 0.0)) for name in mission_names], dtype=float)
+
+    for idx, ctx in enumerate(contexts):
+        count = ctx.num_items
+        num_items.append(count)
+        official_comp.append(dict(ctx.official_composition))
+
+        if count:
+            weights[idx, :count] = ctx.weights[:count]
+            densities[idx, :count] = ctx.densities[:count]
+            moisture[idx, :count] = ctx.moisture[:count]
+            difficulty[idx, :count] = ctx.difficulty[:count]
+            pct_mass[idx, :count] = ctx.pct_mass[:count]
+            pct_volume[idx, :count] = ctx.pct_volume[:count]
+
+            for item_idx in range(count):
+                token = ctx.tokens[item_idx]
+                category = ctx.categories[item_idx]
+                for kw_idx, keywords in enumerate(keyword_names):
+                    patterns = _KEYWORD_FEATURES[keywords]
+                    if any(pattern in token for pattern in patterns):
+                        keyword_hits[idx, item_idx, kw_idx] = 1.0
+                if any(target in category for target in _PACKAGING_TARGETS):
+                    packaging_hits[idx, item_idx] = 1.0
+
+        for mission_idx, mission in enumerate(mission_names):
+            mission_share[idx, mission_idx] = ctx.mission_share.get(mission, 0.0)
+            mission_scaled_mass[idx, mission_idx] = ctx.mission_scaled_mass.get(mission, 0.0)
+            mission_official_mass[idx, mission_idx] = ctx.mission_official_mass.get(mission, 0.0)
+
+        total_mass[idx] = ctx.total_mass
+        regolith[idx] = ctx.regolith_pct
+
+    process_ids = tuple(str(proc.get("process_id")) for proc in processes)
+    l2l_constants = dict(bundle.l2l_constants or {})
+    logistics_ratio = float(l2l_constants.get("l2l_logistics_packaging_per_goods_ratio", float("nan")))
+
+    def _to_backend_array(array: np.ndarray) -> Any:
+        if backend == "jax" and jnp is not None:
+            return jnp.asarray(array)
+        return array
+
+    return FeatureTensorBatch(
+        weights=_to_backend_array(weights),
+        densities=_to_backend_array(densities),
+        moisture=_to_backend_array(moisture),
+        difficulty=_to_backend_array(difficulty),
+        pct_mass=_to_backend_array(pct_mass),
+        pct_volume=_to_backend_array(pct_volume),
+        keyword_hits=_to_backend_array(keyword_hits),
+        packaging_hits=_to_backend_array(packaging_hits),
+        mission_share=_to_backend_array(mission_share),
+        mission_scaled_mass=_to_backend_array(mission_scaled_mass),
+        mission_official_mass=_to_backend_array(mission_official_mass),
+        mission_totals=_to_backend_array(mission_totals),
+        total_mass=_to_backend_array(total_mass),
+        regolith=_to_backend_array(regolith),
+        keyword_names=keyword_names,
+        mission_names=mission_names,
+        process_ids=process_ids,
+        num_items=tuple(num_items),
+        official_comp=tuple(official_comp),
+        l2l_constants=l2l_constants,
+        bundle_processing_metrics=dict(bundle.processing_metrics or {}),
+        bundle_leo_mass_savings=dict(bundle.leo_mass_savings or {}),
+        bundle_propellant_benefits=dict(bundle.propellant_benefits or {}),
+        logistics_ratio=logistics_ratio,
+    )
+
+
+def build_feature_tensor_batch(
+    picks: Sequence[pd.DataFrame],
+    weights: Sequence[Iterable[float]],
+    processes: Sequence[pd.Series],
+    regolith_pct: Sequence[float],
+    *,
+    backend: str = "jax",
+) -> FeatureTensorBatch:
+    if not picks:
+        raise ValueError("picks must contain at least one candidate")
+
+    if not (len(picks) == len(weights) == len(processes) == len(regolith_pct)):
+        raise ValueError("picks, weights, processes and regolith_pct must share the same length")
+
+    bundle = _official_features_bundle()
+    contexts = [
+        _prepare_feature_context(p, w, r, bundle)
+        for p, w, r in zip(picks, weights, regolith_pct)
+    ]
+    return _contexts_to_tensor_batch(contexts, processes, bundle, backend=backend)
+
+
+def _feature_kernel_body(
+    xp: Any,
+    weights: Any,
+    densities: Any,
+    moisture: Any,
+    difficulty: Any,
+    pct_mass: Any,
+    pct_volume: Any,
+    keyword_hits: Any,
+    packaging_hits: Any,
+    mission_share: Any,
+    mission_scaled_mass: Any,
+    mission_official_mass: Any,
+    mission_totals: Any,
+    regolith: Any,
+    logistics_ratio: float,
+) -> Dict[str, Any]:
+    w = xp.asarray(weights)
+    densities = xp.asarray(densities)
+    moisture = xp.asarray(moisture)
+    difficulty = xp.asarray(difficulty)
+    pct_mass = xp.asarray(pct_mass)
+    pct_volume = xp.asarray(pct_volume)
+    keyword_hits = xp.asarray(keyword_hits)
+    packaging_hits = xp.asarray(packaging_hits)
+    mission_share = xp.asarray(mission_share)
+    mission_scaled_mass = xp.asarray(mission_scaled_mass)
+    mission_official_mass = xp.asarray(mission_official_mass)
+    mission_totals = xp.asarray(mission_totals)
+    regolith = xp.asarray(regolith)
+
+    density = xp.sum(w * densities, axis=1)
+    moisture_frac = xp.clip(xp.sum(w * moisture, axis=1), 0.0, 1.0)
+    difficulty_index = xp.clip(xp.sum(w * difficulty, axis=1), 0.0, 1.0)
+    problematic_mass_frac = xp.clip(xp.sum(w * pct_mass, axis=1), 0.0, 1.0)
+    problematic_item_frac = xp.clip(xp.sum(w * pct_volume, axis=1), 0.0, 1.0)
+
+    keyword = xp.clip(xp.sum(w[:, :, None] * keyword_hits, axis=1), 0.0, 1.0)
+    packaging = xp.clip(xp.sum(w * packaging_hits, axis=1), 0.0, 1.0)
+
+    mission_share_clipped = xp.clip(mission_share, 0.0, 1.0)
+    mission_similarity_total = xp.clip(xp.sum(mission_share_clipped, axis=1), 0.0, 1.0)
+    mission_reference_mass = xp.maximum(0.0, mission_share_clipped * mission_totals)
+    mission_scaled_mass = xp.maximum(0.0, mission_scaled_mass)
+    mission_official_mass = xp.maximum(0.0, mission_official_mass)
+
+    polyethylene = keyword[:, _KEYWORD_INDEX["polyethylene_frac"]] if keyword.shape[1] else xp.zeros(keyword.shape[0])
+    foam = keyword[:, _KEYWORD_INDEX["foam_frac"]] if keyword.shape[1] else xp.zeros(keyword.shape[0])
+    eva = keyword[:, _KEYWORD_INDEX["eva_frac"]] if keyword.shape[1] else xp.zeros(keyword.shape[0])
+    textile = keyword[:, _KEYWORD_INDEX["textile_frac"]] if keyword.shape[1] else xp.zeros(keyword.shape[0])
 
     gas_index = _GAS_MEAN_YIELD * (
-        0.7 * features.get("polyethylene_frac", 0.0)
-        + 0.4 * features.get("foam_frac", 0.0)
-        + 0.5 * features.get("eva_frac", 0.0)
-        + 0.2 * features.get("textile_frac", 0.0)
+        0.7 * polyethylene
+        + 0.4 * foam
+        + 0.5 * eva
+        + 0.2 * textile
     )
-    features["gas_recovery_index"] = float(np.clip(gas_index / 10.0, 0.0, 1.0))
+    gas_recovery_index = xp.clip(gas_index / 10.0, 0.0, 1.0)
 
-    packaging_term = features.get("packaging_frac", 0.0) + 0.5 * features.get("eva_frac", 0.0)
-    packaging_ratio = l2l_constants.get("l2l_logistics_packaging_per_goods_ratio")
-    if packaging_ratio and np.isfinite(packaging_ratio) and packaging_ratio > 0:
-        logistics_index = packaging_term / float(packaging_ratio)
+    ratio = xp.asarray(logistics_ratio)
+    ratio = xp.where(xp.isfinite(ratio), ratio, xp.asarray(float("nan")))
+    packaging_term = packaging + 0.5 * eva
+    ratio_broadcast = xp.broadcast_to(ratio, packaging_term.shape)
+    valid_ratio = xp.logical_and(xp.isfinite(ratio_broadcast), ratio_broadcast > 0)
+    reuse_term = packaging_term * _MEAN_REUSE
+    logistics_index = xp.where(valid_ratio, packaging_term / ratio_broadcast, reuse_term)
+    logistics_index = xp.clip(logistics_index, 0.0, 2.0)
+
+    regolith = xp.clip(regolith, 0.0, 1.0)
+
+    return {
+        "density": density,
+        "moisture": moisture_frac,
+        "difficulty": difficulty_index,
+        "problematic_mass": problematic_mass_frac,
+        "problematic_item": problematic_item_frac,
+        "keyword": keyword,
+        "packaging": packaging,
+        "mission_similarity": mission_share_clipped,
+        "mission_reference_mass": mission_reference_mass,
+        "mission_scaled_mass": mission_scaled_mass,
+        "mission_official_mass": mission_official_mass,
+        "mission_similarity_total": mission_similarity_total,
+        "gas_recovery_index": gas_recovery_index,
+        "logistics_reuse_index": logistics_index,
+        "regolith": regolith,
+    }
+
+
+if jnp is not None:
+
+    @jit
+    def _feature_kernel(
+        weights: Any,
+        densities: Any,
+        moisture: Any,
+        difficulty: Any,
+        pct_mass: Any,
+        pct_volume: Any,
+        keyword_hits: Any,
+        packaging_hits: Any,
+        mission_share: Any,
+        mission_scaled_mass: Any,
+        mission_official_mass: Any,
+        mission_totals: Any,
+        regolith: Any,
+        logistics_ratio: float,
+    ) -> Dict[str, Any]:
+        return _feature_kernel_body(
+            jnp,
+            weights,
+            densities,
+            moisture,
+            difficulty,
+            pct_mass,
+            pct_volume,
+            keyword_hits,
+            packaging_hits,
+            mission_share,
+            mission_scaled_mass,
+            mission_official_mass,
+            mission_totals,
+            regolith,
+            logistics_ratio,
+        )
+
+else:
+
+    def _feature_kernel(
+        weights: Any,
+        densities: Any,
+        moisture: Any,
+        difficulty: Any,
+        pct_mass: Any,
+        pct_volume: Any,
+        keyword_hits: Any,
+        packaging_hits: Any,
+        mission_share: Any,
+        mission_scaled_mass: Any,
+        mission_official_mass: Any,
+        mission_totals: Any,
+        regolith: Any,
+        logistics_ratio: float,
+    ) -> Dict[str, Any]:
+        return _feature_kernel_body(
+            np,
+            weights,
+            densities,
+            moisture,
+            difficulty,
+            pct_mass,
+            pct_volume,
+            keyword_hits,
+            packaging_hits,
+            mission_share,
+            mission_scaled_mass,
+            mission_official_mass,
+            mission_totals,
+            regolith,
+            logistics_ratio,
+        )
+
+
+def _apply_official_composition_overrides(
+    features: Dict[str, Any], official_comp: Mapping[str, float]
+) -> None:
+    if not official_comp:
+        return
+
+    clipped = {key: max(0.0, float(value)) for key, value in official_comp.items()}
+    total = sum(clipped.values())
+    if total > 1.0 + 1e-6 and total > 0:
+        normalized = {key: value / total for key, value in clipped.items()}
     else:
-        logistics_index = _MEAN_REUSE * packaging_term
-    features["logistics_reuse_index"] = float(np.clip(logistics_index, 0.0, 2.0))
+        normalized = {key: float(np.clip(value, 0.0, 1.0)) for key, value in clipped.items()}
 
-    for oxide, value in _REGOLITH_VECTOR.items():
-        features[f"oxide_{oxide}"] = float(value * regolith_pct)
+    def _set_official_fraction(name: str, *columns: str) -> None:
+        total_value = 0.0
+        found = False
+        for column in columns:
+            if column in normalized:
+                total_value += normalized[column]
+                found = True
+        if not found:
+            return
+        features[name] = float(np.clip(total_value, 0.0, 1.0))
 
-    return features
+    _set_official_fraction("aluminum_frac", "Aluminum_pct")
+    _set_official_fraction("carbon_fiber_frac", "Carbon_Fiber_pct")
+    _set_official_fraction("polyethylene_frac", "Polyethylene_pct")
+    _set_official_fraction("glove_frac", "Nitrile_pct")
+    _set_official_fraction("eva_frac", "Nomex_pct")
+    _set_official_fraction("foam_frac", "PVDF_pct")
+    _set_official_fraction("multilayer_frac", "EVOH_pct", "PET_pct")
+
+    textile_total = sum(
+        normalized.get(column, 0.0)
+        for column in ("Cotton_Cellulose_pct", "Polyester_pct", "Nylon_pct")
+    )
+    if textile_total > 0:
+        features["textile_frac"] = float(np.clip(textile_total, 0.0, 1.0))
+
+    hydrogen_total = sum(
+        normalized.get(column, 0.0)
+        for column in ("Polyethylene_pct", "Cotton_Cellulose_pct", "PVDF_pct")
+    )
+    if hydrogen_total > 0:
+        features["hydrogen_rich_frac"] = float(np.clip(hydrogen_total, 0.0, 1.0))
+
+
+def _apply_weighted_metrics(
+    features: Dict[str, Any],
+    mission_similarity_clipped: Mapping[str, float],
+    source: Mapping[str, Mapping[str, float]],
+) -> None:
+    if not source or not mission_similarity_clipped:
+        return
+    weighted: Dict[str, float] = {}
+    for mission, share in mission_similarity_clipped.items():
+        metrics = source.get(mission)
+        if not metrics:
+            continue
+        for metric_name, value in metrics.items():
+            expected_name = (
+                metric_name if metric_name.endswith("_expected") else f"{metric_name}_expected"
+            )
+            weighted[expected_name] = weighted.get(expected_name, 0.0) + share * float(value)
+            features[f"{metric_name}_{mission}"] = float(value)
+    for metric_name, value in weighted.items():
+        features[metric_name] = float(value)
+
+
+def _compute_features_from_batch(batch: FeatureTensorBatch) -> list[Dict[str, Any]]:
+    if not batch.process_ids:
+        return []
+
+    kernel_output = _feature_kernel(
+        batch.weights,
+        batch.densities,
+        batch.moisture,
+        batch.difficulty,
+        batch.pct_mass,
+        batch.pct_volume,
+        batch.keyword_hits,
+        batch.packaging_hits,
+        batch.mission_share,
+        batch.mission_scaled_mass,
+        batch.mission_official_mass,
+        batch.mission_totals,
+        batch.regolith,
+        batch.logistics_ratio,
+    )
+
+    to_numpy = np.asarray
+    density = to_numpy(kernel_output["density"])
+    moisture = to_numpy(kernel_output["moisture"])
+    difficulty = to_numpy(kernel_output["difficulty"])
+    problematic_mass = to_numpy(kernel_output["problematic_mass"])
+    problematic_item = to_numpy(kernel_output["problematic_item"])
+    keyword_matrix = to_numpy(kernel_output["keyword"])
+    packaging = to_numpy(kernel_output["packaging"])
+    mission_similarity = to_numpy(kernel_output["mission_similarity"])
+    mission_reference_mass = to_numpy(kernel_output["mission_reference_mass"])
+    mission_scaled_mass = to_numpy(kernel_output["mission_scaled_mass"])
+    mission_official_mass = to_numpy(kernel_output["mission_official_mass"])
+    mission_similarity_total = to_numpy(kernel_output["mission_similarity_total"])
+    gas_recovery = to_numpy(kernel_output["gas_recovery_index"])
+    logistics_reuse = to_numpy(kernel_output["logistics_reuse_index"])
+    regolith = to_numpy(kernel_output["regolith"])
+    total_mass = to_numpy(batch.total_mass)
+
+    features_list: list[Dict[str, Any]] = []
+    for idx, process_id in enumerate(batch.process_ids):
+        features: Dict[str, Any] = {
+            "process_id": str(process_id),
+            "total_mass_kg": float(total_mass[idx]),
+            "mass_input_kg": float(total_mass[idx]),
+            "num_items": int(batch.num_items[idx]),
+            "density_kg_m3": float(density[idx]) if density.size else 0.0,
+            "moisture_frac": float(moisture[idx]) if moisture.size else 0.0,
+            "difficulty_index": float(difficulty[idx]) if difficulty.size else 0.0,
+            "problematic_mass_frac": float(problematic_mass[idx]) if problematic_mass.size else 0.0,
+            "problematic_item_frac": float(problematic_item[idx]) if problematic_item.size else 0.0,
+            "regolith_pct": float(regolith[idx]) if regolith.size else 0.0,
+            "packaging_frac": float(packaging[idx]) if packaging.size else 0.0,
+        }
+
+        for name, kw_idx in _KEYWORD_INDEX.items():
+            if keyword_matrix.shape[1] > kw_idx:
+                features[name] = float(keyword_matrix[idx, kw_idx])
+
+        _apply_official_composition_overrides(features, batch.official_comp[idx])
+
+        for name, value in batch.l2l_constants.items():
+            if isinstance(value, (int, float)) and np.isfinite(value):
+                features[name] = float(value)
+
+        mission_similarity_row = mission_similarity[idx] if mission_similarity.size else np.array([])
+        mission_similarity_dict: Dict[str, float] = {}
+        if mission_similarity_row.size and np.any(mission_similarity_row > 0):
+            for mission_idx, mission in enumerate(batch.mission_names):
+                share = float(mission_similarity_row[mission_idx])
+                if share <= 0:
+                    continue
+                mission_similarity_dict[mission] = share
+                features[f"mission_similarity_{mission}"] = float(np.clip(share, 0.0, 1.0))
+                features[f"mission_reference_mass_{mission}"] = float(mission_reference_mass[idx, mission_idx])
+                features[f"mission_scaled_mass_{mission}"] = float(mission_scaled_mass[idx, mission_idx])
+                features[f"mission_official_mass_{mission}"] = float(mission_official_mass[idx, mission_idx])
+
+            features["mission_similarity_total"] = float(mission_similarity_total[idx])
+
+            _apply_weighted_metrics(features, mission_similarity_dict, batch.bundle_processing_metrics)
+            _apply_weighted_metrics(features, mission_similarity_dict, batch.bundle_leo_mass_savings)
+            _apply_weighted_metrics(features, mission_similarity_dict, batch.bundle_propellant_benefits)
+
+        features["gas_recovery_index"] = float(gas_recovery[idx]) if gas_recovery.size else 0.0
+        features["logistics_reuse_index"] = float(logistics_reuse[idx]) if logistics_reuse.size else 0.0
+
+        for oxide, value in _REGOLITH_VECTOR.items():
+            features[f"oxide_{oxide}"] = float(value * features["regolith_pct"])
+
+        features_list.append(features)
+
+    return features_list
+
+
+def compute_feature_vectors_batch(
+    picks: Sequence[pd.DataFrame],
+    weights: Sequence[Iterable[float]],
+    processes: Sequence[pd.Series],
+    regolith_pct: Sequence[float],
+    *,
+    backend: str = "jax",
+) -> list[Dict[str, Any]]:
+    batch = build_feature_tensor_batch(picks, weights, processes, regolith_pct, backend=backend)
+    return _compute_features_from_batch(batch)
+
+
+def compute_feature_vector(
+    picks: pd.DataFrame | FeatureTensorBatch,
+    weights: Iterable[float] | None = None,
+    process: pd.Series | None = None,
+    regolith_pct: float | None = None,
+) -> Dict[str, Any] | list[Dict[str, Any]]:
+    if isinstance(picks, FeatureTensorBatch):
+        return _compute_features_from_batch(picks)
+
+    if not isinstance(picks, pd.DataFrame):
+        raise TypeError("picks must be a pandas.DataFrame or a FeatureTensorBatch")
+    if weights is None or process is None or regolith_pct is None:
+        raise ValueError("weights, process and regolith_pct are required for DataFrame inputs")
+
+    bundle = _official_features_bundle()
+    context = _prepare_feature_context(picks, weights, regolith_pct, bundle)
+    batch = _contexts_to_tensor_batch([context], [process], bundle)
+    features = _compute_features_from_batch(batch)
+    return features[0] if features else {}
 
 
 def heuristic_props(
@@ -1670,15 +2232,27 @@ def _score_candidate(
     return float(score), breakdown, auxiliary
 
 
-def _build_candidate(
+@dataclass
+class CandidateComponents:
+    picks: pd.DataFrame
+    process: pd.Series
+    weights: list[float]
+    regolith_pct: float
+    total_mass: float
+    materials_for_plan: list[str]
+    weights_for_plan: list[float]
+    used_ids: list[str]
+    used_cats: list[str]
+    used_flags: list[str]
+    used_mats: list[str]
+
+
+def _create_candidate_components(
     picks: pd.DataFrame,
     proc_df: pd.DataFrame,
     rng: random.Random,
-    target: dict,
-    crew_time_low: bool,
-    use_ml: bool,
     tuning: dict[str, Any] | None,
-) -> dict | None:
+) -> CandidateComponents | None:
     if picks.empty or proc_df is None or proc_df.empty:
         return None
 
@@ -1709,7 +2283,41 @@ def _build_candidate(
         if total > 0:
             weights_for_plan = [round(w / total, 3) for w in weights_for_plan]
 
-    features = compute_feature_vector(picks, weights, proc, regolith_pct)
+    return CandidateComponents(
+        picks=picks,
+        process=proc,
+        weights=weights,
+        regolith_pct=regolith_pct,
+        total_mass=total_kg,
+        materials_for_plan=materials_for_plan,
+        weights_for_plan=weights_for_plan,
+        used_ids=used_ids,
+        used_cats=used_cats,
+        used_flags=used_flags,
+        used_mats=used_mats,
+    )
+
+
+def _finalize_candidate(
+    components: CandidateComponents,
+    features: Dict[str, Any],
+    target: dict,
+    crew_time_low: bool,
+    use_ml: bool,
+) -> dict | None:
+    picks = components.picks
+    proc = components.process
+    weights = components.weights
+    regolith_pct = components.regolith_pct
+    total_kg = components.total_mass
+    materials_for_plan = components.materials_for_plan
+    weights_for_plan = components.weights_for_plan
+    used_ids = components.used_ids
+    used_cats = components.used_cats
+    used_flags = components.used_flags
+    used_mats = components.used_mats
+
+    features = dict(features)
     recipe_id = derive_recipe_id(picks, proc, features)
     if recipe_id:
         features["recipe_id"] = recipe_id
@@ -1865,6 +2473,32 @@ def _build_candidate(
     }
 
 
+def _build_candidate(
+    picks: pd.DataFrame,
+    proc_df: pd.DataFrame,
+    rng: random.Random,
+    target: dict,
+    crew_time_low: bool,
+    use_ml: bool,
+    tuning: dict[str, Any] | None,
+) -> dict | None:
+    components = _create_candidate_components(picks, proc_df, rng, tuning)
+    if components is None:
+        return None
+
+    batch = build_feature_tensor_batch(
+        [components.picks],
+        [components.weights],
+        [components.process],
+        [components.regolith_pct],
+    )
+    features_batch = _compute_features_from_batch(batch)
+    if not features_batch:
+        return None
+
+    return _finalize_candidate(components, features_batch[0], target, crew_time_low, use_ml)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -1936,6 +2570,42 @@ def generate_candidates(
     finally:
         if executor is not None:
             executor.shutdown()
+        picks = _pick_materials(df, rng, n=rng.choice([2, 3]), bias=bias)
+        components = _create_candidate_components(picks, proc_df, rng, override)
+        if components is None:
+            return None
+        batch = build_feature_tensor_batch(
+            [components.picks],
+            [components.weights],
+            [components.process],
+            [components.regolith_pct],
+        )
+        features = _compute_features_from_batch(batch)
+        if not features:
+            return None
+        return _finalize_candidate(components, features[0], target, crew_time_low, use_ml)
+
+    components_batch: list[CandidateComponents] = []
+    for _ in range(n):
+        bias = 2.0
+        picks = _pick_materials(df, rng, n=rng.choice([2, 3]), bias=bias)
+        components = _create_candidate_components(picks, proc_df, rng, {})
+        if components:
+            components_batch.append(components)
+
+    candidates: list[dict] = []
+    if components_batch:
+        batch = build_feature_tensor_batch(
+            [comp.picks for comp in components_batch],
+            [comp.weights for comp in components_batch],
+            [comp.process for comp in components_batch],
+            [comp.regolith_pct for comp in components_batch],
+        )
+        features_list = _compute_features_from_batch(batch)
+        for comp, feat in zip(components_batch, features_list):
+            candidate = _finalize_candidate(comp, feat, target, crew_time_low, use_ml)
+            if candidate:
+                candidates.append(candidate)
 
     history = pd.DataFrame()
     if optimizer_evals and optimizer_evals > 0:
@@ -1962,5 +2632,8 @@ __all__ = [
     "PredProps",
     "prepare_waste_frame",
     "compute_feature_vector",
+    "compute_feature_vectors_batch",
+    "build_feature_tensor_batch",
+    "FeatureTensorBatch",
     "heuristic_props",
 ]

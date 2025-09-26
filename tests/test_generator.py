@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import random
 import shutil
+from datetime import datetime
 from pathlib import Path
 from datetime import datetime
 
@@ -12,6 +13,30 @@ import pandas as pd
 import pytest
 
 from app.modules import generator
+
+pl = generator.pl
+
+
+def _batched_feature_vectors(
+    picks: pd.DataFrame,
+    weights: list[float],
+    process: pd.Series,
+    regolith_pct: float,
+    repeat: int = 2,
+) -> list[dict]:
+    picks_list = [picks.copy(deep=True) for _ in range(repeat)]
+    weights_list = [list(weights) for _ in range(repeat)]
+    process_list = [process.copy(deep=True) for _ in range(repeat)]
+    regolith_list = [regolith_pct for _ in range(repeat)]
+    tensor_batch = generator.build_feature_tensor_batch(
+        picks_list,
+        weights_list,
+        process_list,
+        regolith_list,
+    )
+    batched = generator.compute_feature_vector(tensor_batch)
+    assert isinstance(batched, list)
+    return batched
 
 
 def test_load_waste_summary_data_polars(tmp_path, monkeypatch):
@@ -146,6 +171,8 @@ def test_official_features_bundle_polars_pipeline(tmp_path, monkeypatch):
     assert "leo_savings_pct" in bundle.value_columns
     assert "propellant_benefit" in bundle.value_columns
     assert bundle.direct_map["other packaging glove|foam"]["value_kg"] == pytest.approx(2.5)
+    assert "category_norm" in bundle.table.columns
+    assert "subitem_norm" in bundle.table.columns
     assert bundle.mission_totals["artemis"] == pytest.approx(13.0)
     assert bundle.processing_metrics["processing"]["processing_output_kg"] == pytest.approx(3.0)
 
@@ -535,6 +562,13 @@ def test_compute_feature_vector_blends_official_and_keyword_sources():
     assert features["gas_recovery_index"] > 0.0
     assert features["moisture_frac"] == pytest.approx(0.028, rel=1e-6)
 
+    batched = _batched_feature_vectors(prepared, [0.7, 0.3], process, 0.0)
+    assert len(batched) == 2
+    for candidate in batched:
+        assert candidate["polyethylene_frac"] == pytest.approx(features["polyethylene_frac"], rel=1e-6)
+        assert candidate["gas_recovery_index"] == pytest.approx(features["gas_recovery_index"], rel=1e-6)
+        assert candidate["moisture_frac"] == pytest.approx(features["moisture_frac"], rel=1e-6)
+
 
 def test_compute_feature_vector_keyword_fallback_triggers_polyethylene():
     waste_df = pd.DataFrame(
@@ -560,6 +594,12 @@ def test_compute_feature_vector_keyword_fallback_triggers_polyethylene():
     assert features["polyethylene_frac"] > 0.5
     assert features["gas_recovery_index"] > 0.0
 
+    batched = _batched_feature_vectors(prepared, [1.0], process, 0.0)
+    assert len(batched) == 2
+    for candidate in batched:
+        assert candidate["polyethylene_frac"] == pytest.approx(features["polyethylene_frac"], rel=1e-6)
+        assert candidate["gas_recovery_index"] == pytest.approx(features["gas_recovery_index"], rel=1e-6)
+
 
 def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
     # Ensure cached bundles from other tests do not leak.
@@ -575,6 +615,13 @@ def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
                 (frozenset({"rehydratable", "pouch"}), {"dummy_col": 1.0}, match_key)
             ]
         },
+        table=pl.DataFrame(
+            {
+                "category_norm": ["food packaging"],
+                "subitem_norm": ["rehydratable pouch"],
+                "dummy_col": [1.0],
+            }
+        ),
         mission_mass={
             match_key: {"gateway_i": 200.0},
             "food packaging": {"gateway_i": 300.0},
@@ -621,6 +668,19 @@ def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
     assert features["leo_mass_savings_kg_expected"] == pytest.approx(24.0, rel=1e-6)
     assert features["propellant_delta_v_m_s_expected"] == pytest.approx(7.0, rel=1e-6)
 
+    batched = _batched_feature_vectors(prepared, [1.0], process, 0.0)
+    assert len(batched) == 2
+    for candidate in batched:
+        assert candidate["mission_similarity_gateway_i"] == pytest.approx(features["mission_similarity_gateway_i"], rel=1e-6)
+        assert candidate["mission_reference_mass_gateway_i"] == pytest.approx(features["mission_reference_mass_gateway_i"], rel=1e-6)
+        assert candidate["mission_scaled_mass_gateway_i"] == pytest.approx(features["mission_scaled_mass_gateway_i"], rel=1e-6)
+        assert candidate["mission_official_mass_gateway_i"] == pytest.approx(features["mission_official_mass_gateway_i"], rel=1e-6)
+        assert candidate["mission_similarity_total"] == pytest.approx(features["mission_similarity_total"], rel=1e-6)
+        assert candidate["processing_o2_ch4_yield_kg_gateway_i"] == pytest.approx(features["processing_o2_ch4_yield_kg_gateway_i"], rel=1e-6)
+        assert candidate["processing_o2_ch4_yield_kg_expected"] == pytest.approx(features["processing_o2_ch4_yield_kg_expected"], rel=1e-6)
+        assert candidate["leo_mass_savings_kg_expected"] == pytest.approx(features["leo_mass_savings_kg_expected"], rel=1e-6)
+        assert candidate["propellant_delta_v_m_s_expected"] == pytest.approx(features["propellant_delta_v_m_s_expected"], rel=1e-6)
+
 
 def test_prepare_waste_frame_injects_l2l_features(monkeypatch):
     generator._official_features_bundle.cache_clear()
@@ -635,6 +695,13 @@ def test_prepare_waste_frame_injects_l2l_features(monkeypatch):
                 (frozenset({"rehydratable", "pouch"}), {"dummy_col": 1.0}, match_key)
             ]
         },
+        table=pl.DataFrame(
+            {
+                "category_norm": ["food packaging"],
+                "subitem_norm": ["rehydratable pouch"],
+                "dummy_col": [1.0],
+            }
+        ),
         mission_mass={},
         mission_totals={},
         processing_metrics={},
@@ -668,6 +735,8 @@ def test_prepare_waste_frame_injects_l2l_features(monkeypatch):
     prepared = generator.prepare_waste_frame(waste_df)
     row = prepared.iloc[0]
 
+    assert "dummy_col" in row.index
+    assert pytest.approx(row["dummy_col"], rel=1e-6) == 1.0
     assert pytest.approx(row["l2l_geometry_panel_area_m2"], rel=1e-6) == 5.0
     assert pytest.approx(row["l2l_ops_random_access_required"], rel=1e-6) == 1.0
     assert "_l2l_page_hints" in row.index
@@ -683,6 +752,14 @@ def test_compute_feature_vector_uses_l2l_packaging_ratio(monkeypatch):
         composition_columns=(),
         direct_map={},
         category_tokens={},
+        table=pl.DataFrame(
+            schema={
+                "category_norm": pl.Utf8,
+                "subitem_norm": pl.Utf8,
+                "dummy_col": pl.Float64,
+            },
+            data=[],
+        ),
         mission_mass={},
         mission_totals={},
         processing_metrics={},
@@ -719,3 +796,11 @@ def test_compute_feature_vector_uses_l2l_packaging_ratio(monkeypatch):
     packaging_term = features.get("packaging_frac", 0.0) + 0.5 * features.get("eva_frac", 0.0)
     expected = min(2.0, packaging_term / 0.2 if 0.2 else 0.0)
     assert features["logistics_reuse_index"] == pytest.approx(expected, rel=1e-6)
+
+    batched = _batched_feature_vectors(prepared, [1.0], process, 0.0)
+    assert len(batched) == 2
+    for candidate in batched:
+        assert candidate["l2l_logistics_packaging_per_goods_ratio"] == pytest.approx(
+            features["l2l_logistics_packaging_per_goods_ratio"], rel=1e-6
+        )
+        assert candidate["logistics_reuse_index"] == pytest.approx(features["logistics_reuse_index"], rel=1e-6)
