@@ -40,7 +40,7 @@ Este documento mapea los datos existentes en el repositorio a los *features*, *t
 | Tipo | Columna objetivo | Fuente | Transformación |
 | --- | --- | --- | --- |
 | Feature numérico | `regolith_pct` | Control de receta (UI / generador) | Porcentaje de MGS-1 mezclado (derivado de inputs de usuario). |
-| Feature categórico | `process_id` | `process_catalog.csv` / receta | Codificar como categoría (one-hot o embedding). |
+| Feature categórico | `process_id` | `process_catalog.csv` / receta | Codificar como categoría (one-hot). |
 | Feature numérico | `mass_input_kg`, `total_mass_kg` | `nasa_waste_inventory.csv` + cantidades de receta | Suma ponderada de masas de cada residuo. |
 | Feature numérico | `density_kg_m3` | `mgs1_properties.csv` + mezcla | Usar `density_bulk` ajustado por humedad. |
 | Feature numérico | `moisture_frac` | `nasa_waste_inventory.csv` (`moisture_pct`) | Normalizar a 0–1 según composición de la receta. |

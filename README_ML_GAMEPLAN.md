@@ -34,10 +34,10 @@ Formato de datasets:
 ## 3) Entrenamiento reproducible y medible
 
 * **Modelo base**: `RandomForestRegressor` multisalida (scikit-learn). Calcular incertidumbre mediante varianza entre árboles + residuales.
-* **Alternativas**: modelos XGBoost por target y autoencoder tabular para embeddings (opcional si PyTorch está disponible; la app ya trata a Torch como dependencia opcional).
+* **Alternativas**: modelos XGBoost por target y autoencoder tabular opcional (si PyTorch está disponible; la app ya trata a Torch como dependencia opcional).
 * **Ponderación**: `sample_weight` según `label_source` (p.ej., measured = 1.0, sim = 0.7, weak = 0.4).
 * **Métricas**: MAE/RMSE y cobertura de intervalos al 95 % por target y por `label_source`.
-* **Compresión + optimización** (opcional): guardar PCA/UMAP o embeddings del autoencoder y habilitar un optimizador de proporciones en ese espacio comprimido (patrón "feature compression + optimizer" para encontrar fórmulas objetivo).
+* **Compresión + optimización** (opcional): guardar PCA/UMAP o vectores latentes del autoencoder y habilitar un optimizador de proporciones en ese espacio comprimido (patrón "feature compression + optimizer" para encontrar fórmulas objetivo).
 
 Comando sugerido:
 
@@ -85,7 +85,7 @@ Crear `notebooks/validate_model.ipynb` con:
 **Sprint 2 (próximo)**
 
 1. Añadir modelos XGBoost por target y comparar en la UI.
-2. Incorporar autoencoder para embeddings (si Torch disponible).
+2. Incorporar autoencoder tabular (si Torch disponible).
 3. Sustituir reglas de energía/agua/tiempo por simuladores dedicados.
 4. Activar el optimizador sobre el espacio comprimido para sugerir formulaciones con límites de recursos.
 

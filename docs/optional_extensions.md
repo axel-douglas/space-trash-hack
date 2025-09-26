@@ -20,7 +20,7 @@ sin almacenar binarios en la repo. Todos los artefactos se generan bajo
   El log mostrará MAE/RMSE por target y la metadata consolida ambos
   resultados para dashboards o reportes.
 
-## Autoencoder tabular para embeddings
+## Autoencoder tabular opcional
 
 * El entrenamiento opcional crea `data/models/rexai_autoencoder.pt`
   (no versionado). Su configuración queda registrada en la metadata
