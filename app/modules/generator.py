@@ -77,7 +77,6 @@ except Exception:  # pragma: no cover - pyarrow is expected in production
     pq = None  # type: ignore[assignment]
 
 from app.modules.label_mapper import derive_recipe_id, lookup_labels
-from app.modules.logging_utils import append_inference_log
 from app.modules.ranking import derive_auxiliary_signals, score_recipe
 
 try:  # Lazy import to avoid circular dependency during training pipelines
@@ -142,7 +141,7 @@ class _InferenceLogWriterManager:
             return None
 
         date_token = timestamp.strftime("%Y%m%d")
-        path = log_dir / f"inference_{date_token}.parquet"
+        path = self._resolve_log_path(log_dir, date_token)
         schema = pa.schema(pa.field(name, pa.string()) for name in desired_fields)
 
         try:
@@ -158,6 +157,20 @@ class _InferenceLogWriterManager:
         )
         self._state = state
         return state
+
+    def _resolve_log_path(self, log_dir: Path, date_token: str) -> Path:
+        """Return a Parquet path for *date_token* avoiding overwriting shards."""
+
+        base = log_dir / f"inference_{date_token}.parquet"
+        if not base.exists():
+            return base
+
+        counter = 1
+        while True:
+            candidate = log_dir / f"inference_{date_token}_{counter:04d}.parquet"
+            if not candidate.exists():
+                return candidate
+            counter += 1
 
     def _ensure_state_locked(
         self, timestamp: datetime, field_names: Iterable[str]
@@ -319,7 +332,7 @@ def _prepare_inference_event(
     return now, payload
 
 
-def _append_inference_log(
+def append_inference_log(
     input_features: Dict[str, Any],
     prediction: Dict[str, Any] | None,
     uncertainty: Dict[str, Any] | None,
@@ -338,6 +351,12 @@ def _append_inference_log(
     )
 
     _INFERENCE_LOG_MANAGER.write_event(event_time, event_payload)
+
+
+def _close_inference_log_writer() -> None:
+    """Close the cached Parquet writer used for inference logs."""
+
+    _INFERENCE_LOG_MANAGER.close()
 
 
 def _load_regolith_vector() -> Dict[str, float]:
@@ -1105,6 +1124,9 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
         l2l.item_features,
         l2l.hints,
     )
+
+
+official_features_bundle = _official_features_bundle
 
 
 def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], str]:
@@ -3006,6 +3028,7 @@ def generate_candidates(
 __all__ = [
     "generate_candidates",
     "PredProps",
+    "append_inference_log",
     "prepare_waste_frame",
     "compute_feature_vector",
     "compute_feature_vectors_batch",

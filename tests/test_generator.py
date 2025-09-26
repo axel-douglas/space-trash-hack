@@ -9,7 +9,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
-from deltalake import DeltaTable
 from typing import Any, Dict
 
 import pandas as pd
@@ -17,7 +16,7 @@ import pytest
 import numpy as np
 import pyarrow.parquet as pq
 
-from app.modules import data_sources, generator, logging_utils
+from app.modules import data_sources, generator
 
 pl = generator.pl
 
@@ -110,8 +109,8 @@ def test_append_inference_log_reuses_daily_writer(monkeypatch, tmp_path):
 
     monkeypatch.setattr(generator, "_prepare_inference_event", fake_prepare)
 
-    generator._append_inference_log({}, {}, {}, None)
-    generator._append_inference_log({}, {}, {}, None)
+    generator.append_inference_log({}, {}, {}, None)
+    generator.append_inference_log({}, {}, {}, None)
 
     assert len(created_paths) == 1
     expected_path = (
@@ -183,11 +182,11 @@ def test_append_inference_log_rotates_daily(monkeypatch, tmp_path):
 
     monkeypatch.setattr(generator, "_prepare_inference_event", fake_prepare)
 
-    generator._append_inference_log({}, {}, {}, None)
+    generator.append_inference_log({}, {}, {}, None)
     assert len(created_paths) == 1
     assert closed_paths == []
 
-    generator._append_inference_log({}, {}, {}, None)
+    generator.append_inference_log({}, {}, {}, None)
     assert len(created_paths) == 2
     assert closed_paths == [
         tmp_path / "inference" / "20240504" / "inference_20240504.parquet"
@@ -628,7 +627,6 @@ def test_generate_candidates_uses_parallel_backend(monkeypatch):
 
 
 def test_append_inference_log_appends_without_reads(monkeypatch, tmp_path):
-    monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
     monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
     generator._close_inference_log_writer()
 
@@ -637,7 +635,7 @@ def test_append_inference_log_appends_without_reads(monkeypatch, tmp_path):
         shutil.rmtree(log_root)
 
     for idx in range(2):
-        logging_utils.append_inference_log(
+        generator.append_inference_log(
             input_features={"feature": idx},
             prediction={"score": idx},
             uncertainty=None,
@@ -652,7 +650,6 @@ def test_append_inference_log_appends_without_reads(monkeypatch, tmp_path):
 
 
 def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
-    monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
     monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
     generator._close_inference_log_writer()
 
@@ -660,14 +657,14 @@ def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
     if log_root.exists():
         shutil.rmtree(log_root)
 
-    logging_utils.append_inference_log(
+    generator.append_inference_log(
         input_features={"feature": 0},
         prediction={"score": 0},
         uncertainty=None,
         model_registry=None,
     )
 
-    original_prepare = logging_utils.prepare_inference_event
+    original_prepare = generator._prepare_inference_event
 
     def prepare_with_session(*args, **kwargs):
         timestamp, payload = original_prepare(*args, **kwargs)
@@ -675,9 +672,9 @@ def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
         updated["session_id"] = "alpha"
         return timestamp, updated
 
-    monkeypatch.setattr(logging_utils, "prepare_inference_event", prepare_with_session)
+    monkeypatch.setattr(generator, "_prepare_inference_event", prepare_with_session)
 
-    logging_utils.append_inference_log(
+    generator.append_inference_log(
         input_features={"feature": 1},
         prediction={"score": 1},
         uncertainty=None,
@@ -695,7 +692,7 @@ def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
 
 def test_generate_candidates_appends_inference_log(monkeypatch, tmp_path):
     monkeypatch.setattr(generator, "MODEL_REGISTRY", DummyRegistry())
-    monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
+    monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
     monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
     generator._close_inference_log_writer()
 
@@ -773,7 +770,6 @@ def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch, tmp_path):
             return []
 
     monkeypatch.setattr(generator, "MODEL_REGISTRY", NoCallRegistry())
-    monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
     monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
     generator._close_inference_log_writer()
 
@@ -782,7 +778,7 @@ def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch, tmp_path):
         shutil.rmtree(log_root)
     monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
 
-    log_dir = logging_utils.LOGS_ROOT
+    log_dir = generator.LOGS_ROOT
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"inference_{datetime.utcnow().strftime('%Y%m%d')}.parquet"
     log_path.unlink(missing_ok=True)
