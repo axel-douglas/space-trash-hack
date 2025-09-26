@@ -22,9 +22,13 @@ import os
 import random
 import re
 import threading
+from datetime import UTC, datetime
+from pathlib import Path
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Dict, Iterable, Mapping, NamedTuple, Sequence, Tuple
+
+import json
 
 try:
     import jax.numpy as jnp
@@ -60,12 +64,17 @@ from app.modules.data_sources import (
     MEAN_REUSE,
     REGOLITH_VECTOR,
     L2LParameters as _L2LParameters,
+    from_lazy_frame,
     load_l2l_parameters as _load_l2l_parameters,
     normalize_category,
     normalize_item,
     official_features_bundle as _load_official_features_bundle,
+    resolve_dataset_path,
+    slugify,
+    to_lazy_frame,
 )
 from app.modules.logging_utils import append_inference_log, pq
+from app.modules import logging_utils
 
 # The demo previously collapsed multiple NASA inventory families (Packaging,
 # Other Packaging, Gloves, Foam Packaging, Food Packaging, Structural Elements
@@ -98,8 +107,10 @@ _CATEGORY_FAMILY_FALLBACKS: Dict[str, tuple[str, ...]] = {
 }
 try:  # Optional heavy dependencies; used for fast vectorization
     import pyarrow as pa
+    import pyarrow.parquet as pq
 except Exception:  # pragma: no cover - pyarrow is expected in production
     pa = None  # type: ignore[assignment]
+    pq = None  # type: ignore[assignment]
 
 from app.modules.execution import (
     DEFAULT_PARALLEL_THRESHOLD,
@@ -117,6 +128,7 @@ except Exception:  # pragma: no cover - fallback when models are not available
 _REGOLITH_OXIDE_ITEMS = tuple(REGOLITH_VECTOR.items())
 _REGOLITH_OXIDE_NAMES = tuple(f"oxide_{name}" for name, _ in _REGOLITH_OXIDE_ITEMS)
 _REGOLITH_OXIDE_VALUES = np.asarray([float(value) for _, value in _REGOLITH_OXIDE_ITEMS], dtype=float)
+
 
 @dataclass(slots=True)
 class _InferenceWriterState:
@@ -247,13 +259,119 @@ class _InferenceLogWriterManager:
 
 _INFERENCE_LOG_MANAGER = _InferenceLogWriterManager()
 
+LOGS_ROOT: Path | None = None
+
+_ORIGINAL_INFERENCE_LOG_MANAGER = _INFERENCE_LOG_MANAGER
+
 
 def _close_inference_log_writer() -> None:
     """Expose a test hook to close the shared inference writer."""
 
     _INFERENCE_LOG_MANAGER.close()
+def _to_serializable(value: Any) -> Any:
+    """Convert *value* into a JSON-serializable structure."""
+
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, (list, tuple, set)):
+        return [_to_serializable(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _to_serializable(v) for k, v in value.items()}
+    if isinstance(value, np.ndarray):
+        return [_to_serializable(v) for v in value.tolist()]
+    return str(value)
 
 
+def _resolve_inference_log_dir(timestamp: datetime) -> Path:
+    """Return the directory backing inference logs for *timestamp*."""
+
+    root = LOGS_ROOT if LOGS_ROOT is not None else logging_utils.LOGS_ROOT
+    return root / "inference" / timestamp.strftime("%Y%m%d")
+
+
+if pq is not None:  # pragma: no branch - guard for optional dependency
+    atexit.register(_INFERENCE_LOG_MANAGER.close)
+
+
+def _prepare_inference_event(
+    input_features: Dict[str, Any],
+    prediction: Dict[str, Any] | None,
+    uncertainty: Dict[str, Any] | None,
+    model_registry: Any | None,
+    timestamp: datetime | None = None,
+) -> tuple[datetime, Dict[str, str | None]]:
+    """Build the serializable payload for an inference log event."""
+
+    now = timestamp or datetime.now(UTC)
+
+    model_hash = ""
+    if model_registry is not None:
+        metadata = getattr(model_registry, "metadata", {}) or {}
+        if isinstance(metadata, dict):
+            model_hash = str(metadata.get("model_hash") or metadata.get("checksum") or "")
+        if not model_hash:
+            for attr in ("model_hash", "checksum", "pipeline_checksum", "pipeline_hash"):
+                value = getattr(model_registry, attr, None)
+                if value:
+                    model_hash = str(value)
+                    break
+
+    payload: Dict[str, str | None] = {
+        "timestamp": now.isoformat(timespec="microseconds"),
+        "input_features": json.dumps(_to_serializable(input_features or {}), sort_keys=True),
+        "prediction": json.dumps(_to_serializable(prediction or {}), sort_keys=True),
+        "uncertainty": json.dumps(_to_serializable(uncertainty or {}), sort_keys=True),
+        "model_hash": model_hash or None,
+    }
+
+    return now, payload
+
+
+_ORIGINAL_PREPARE_INFERENCE_EVENT = _prepare_inference_event
+
+
+def append_inference_log(
+    input_features: Dict[str, Any],
+    prediction: Dict[str, Any] | None,
+    uncertainty: Dict[str, Any] | None,
+    model_registry: Any | None,
+) -> None:
+    """Persist an inference event using a streaming Parquet writer."""
+
+    if pa is None or pq is None:  # pragma: no cover - dependencies should exist
+        return
+
+    prepare_fn = globals().get("_prepare_inference_event", _prepare_inference_event)
+    if (
+        prepare_fn is _ORIGINAL_PREPARE_INFERENCE_EVENT
+        and hasattr(logging_utils, "prepare_inference_event")
+    ):
+        prepare_fn = logging_utils.prepare_inference_event
+
+    event_time, event_payload = prepare_fn(
+        input_features=input_features,
+        prediction=prediction,
+        uncertainty=uncertainty,
+        model_registry=model_registry,
+    )
+
+    manager = globals().get("_INFERENCE_LOG_MANAGER", _INFERENCE_LOG_MANAGER)
+    if (
+        manager is _ORIGINAL_INFERENCE_LOG_MANAGER
+        and hasattr(logging_utils, "_INFERENCE_LOG_MANAGER")
+    ):
+        manager = logging_utils._INFERENCE_LOG_MANAGER
+
+    manager.write_event(event_time, event_payload)
+
+
+def _close_inference_log_writer() -> None:
+    """Close the cached Parquet writer used for inference logs."""
+
+    _INFERENCE_LOG_MANAGER.close()
+=======
 def _to_lazy_frame(
     frame: pd.DataFrame | pl.DataFrame | pl.LazyFrame,
 ) -> tuple[pl.LazyFrame, str]:
@@ -304,98 +422,11 @@ def _slugify(value: str) -> str:
 
     text = re.sub(r"[^0-9a-zA-Z]+", "_", str(value).strip().lower())
     text = re.sub(r"_+", "_", text).strip("_")
-    return text or "value"
-
-
-def _to_serializable(value: Any) -> Any:
-    """Convert *value* into a JSON-serializable structure."""
-
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, np.generic):
-        return value.item()
-    if isinstance(value, (list, tuple, set)):
-        return [_to_serializable(v) for v in value]
-    if isinstance(value, dict):
-        return {str(k): _to_serializable(v) for k, v in value.items()}
-    if isinstance(value, np.ndarray):
-        return [_to_serializable(v) for v in value.tolist()]
-    return str(value)
-
-
-def _resolve_inference_log_dir(timestamp: datetime) -> Path:
-    """Return the directory backing inference logs for *timestamp*."""
-
-    return LOGS_ROOT / "inference" / timestamp.strftime("%Y%m%d")
-
-
-if pq is not None:  # pragma: no branch - guard for optional dependency
-    atexit.register(_INFERENCE_LOG_MANAGER.close)
-
-
-def _prepare_inference_event(
-    input_features: Dict[str, Any],
-    prediction: Dict[str, Any] | None,
-    uncertainty: Dict[str, Any] | None,
-    model_registry: Any | None,
-    timestamp: datetime | None = None,
-) -> tuple[datetime, Dict[str, str | None]]:
-    """Build the serializable payload for an inference log event."""
-
-    now = timestamp or datetime.now(UTC)
-
-    model_hash = ""
-    if model_registry is not None:
-        metadata = getattr(model_registry, "metadata", {}) or {}
-        if isinstance(metadata, dict):
-            model_hash = str(metadata.get("model_hash") or metadata.get("checksum") or "")
-        if not model_hash:
-            for attr in ("model_hash", "checksum", "pipeline_checksum", "pipeline_hash"):
-                value = getattr(model_registry, attr, None)
-                if value:
-                    model_hash = str(value)
-                    break
-
-    payload: Dict[str, str | None] = {
-        "timestamp": now.isoformat(timespec="microseconds"),
-        "input_features": json.dumps(_to_serializable(input_features or {}), sort_keys=True),
-        "prediction": json.dumps(_to_serializable(prediction or {}), sort_keys=True),
-        "uncertainty": json.dumps(_to_serializable(uncertainty or {}), sort_keys=True),
-        "model_hash": model_hash or None,
-    }
-
-    return now, payload
-
-
-def append_inference_log(
-    input_features: Dict[str, Any],
-    prediction: Dict[str, Any] | None,
-    uncertainty: Dict[str, Any] | None,
-    model_registry: Any | None,
-) -> None:
-    """Persist an inference event using a streaming Parquet writer."""
-
-    if pa is None or pq is None:  # pragma: no cover - dependencies should exist
-        return
-
-    event_time, event_payload = _prepare_inference_event(
-        input_features=input_features,
-        prediction=prediction,
-        uncertainty=uncertainty,
-        model_registry=model_registry,
-    )
-
-    _INFERENCE_LOG_MANAGER.write_event(event_time, event_payload)
-
-
-def _close_inference_log_writer() -> None:
-    """Close the cached Parquet writer used for inference logs."""
-
-    _INFERENCE_LOG_MANAGER.close()
+    return text or "value
 
 
 def _load_regolith_vector() -> Dict[str, float]:
-    path = _resolve_dataset_path("MGS-1_Martian_Regolith_Simulant_Recipe.csv")
+    path = resolve_dataset_path("MGS-1_Martian_Regolith_Simulant_Recipe.csv")
     if path is None:
         path = DATASETS_ROOT / "raw" / "mgs1_oxides.csv"
 
@@ -833,6 +864,10 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
         if sparse is not None and sparse.issparse(mission_reference_matrix)
         else np.asarray(mission_reference_matrix, dtype=np.float64)
     )
+    if sparse is not None and sparse.issparse(mission_reference_matrix):
+        mission_reference_dense = mission_reference_matrix.toarray()
+    else:
+        mission_reference_dense = np.asarray(mission_reference_matrix, dtype=np.float64)
 
     default = _OfficialFeaturesBundle(
         value_columns,
@@ -923,11 +958,6 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
             direct_map[key] = idx
             break
 
-    if sparse is not None and sparse.issparse(mission_reference_matrix):
-        mission_reference_dense = mission_reference_matrix.toarray()
-    else:
-        mission_reference_dense = np.asarray(mission_reference_matrix, dtype=np.float64)
-
     return _OfficialFeaturesBundle(
         value_columns,
         composition_columns,
@@ -951,12 +981,6 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
         item_features,
         hints,
     )
-
-def official_features_bundle() -> _OfficialFeaturesBundle:
-    """Public accessor for tests and external callers."""
-
-    return _official_features_bundle()
-
 
 def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], str]:
     """Resolve NASA reference features with packaging-aware fallbacks."""

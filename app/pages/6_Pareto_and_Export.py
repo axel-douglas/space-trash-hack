@@ -1,10 +1,5 @@
 # app/pages/6_Pareto_and_Export.py
-# --- path guard para Streamlit Cloud ---
-import sys, pathlib
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-# ---------------------------------------
+import app  # noqa: F401
 
 import streamlit as st
 import numpy as np
