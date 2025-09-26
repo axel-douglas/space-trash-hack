@@ -69,6 +69,36 @@ from app.modules.data_sources import (
     normalize_category,
     normalize_item,
 )
+
+# The demo previously collapsed multiple NASA inventory families (Packaging,
+# Other Packaging, Gloves, Foam Packaging, Food Packaging, Structural Elements
+# and EVA Waste) into a single "other packaging glove" bucket.  The updated
+# mapping keeps these families distinct so downstream heuristics can reason
+# about them independently while still tolerating legacy spellings.
+_CATEGORY_SYNONYMS.update(
+    {
+        "packaging": "packaging",
+        "packaging material": "packaging",
+        "other packaging": "other packaging",
+        "other packaging glove": "other packaging",
+        "glove": "gloves",
+        "gloves": "gloves",
+        "foam packaging": "foam packaging",
+        "foam packaging for launch": "foam packaging",
+        "food packaging": "food packaging",
+        "structural element": "structural elements",
+        "structural elements": "structural elements",
+        "eva": "eva waste",
+        "eva waste": "eva waste",
+    }
+)
+
+_CATEGORY_FAMILY_FALLBACKS: Dict[str, tuple[str, ...]] = {
+    "packaging": ("packaging", "other packaging"),
+    "other packaging": ("other packaging", "packaging"),
+    "gloves": ("gloves", "other packaging", "packaging"),
+    "other packaging glove": ("other packaging", "gloves", "packaging"),
+}
 try:  # Optional heavy dependencies; gracefully disable logging if missing
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -204,6 +234,12 @@ class _InferenceLogWriterManager:
 
 
 _INFERENCE_LOG_MANAGER = _InferenceLogWriterManager()
+
+
+def _close_inference_log_writer() -> None:
+    """Expose a test hook to close the shared inference writer."""
+
+    _INFERENCE_LOG_MANAGER.close()
 
 
 def _to_lazy_frame(
@@ -399,8 +435,11 @@ _COMPOSITION_DENSITY_MAP = {
 _CATEGORY_DENSITY_DEFAULTS = {
     "foam packaging": 100.0,
     "food packaging": 650.0,
+    "structural elements": 1800.0,
     "structural element": 1800.0,
-    "other packaging glove": 420.0,
+    "packaging": 420.0,
+    "other packaging": 420.0,
+    "gloves": 420.0,
     "eva waste": 240.0,
     "fabric": 350.0,
 }
@@ -699,6 +738,13 @@ def _build_match_key(category: Any, subitem: Any | None = None) -> str:
         return f"{_normalize_category(category)}|{_normalize_item(subitem)}"
     return _normalize_category(category)
 def _estimate_density_from_row(row: pd.Series) -> float | None:
+    """Estimate a material density with packaging-aware fallbacks."""
+
+    # The NASA features bundle exposes aggregate density and composition values
+    # per category.  Now that the packaging families are disambiguated the
+    # estimator first honours category-specific defaults (e.g. ``gloves`` vs.
+    # ``other packaging``) before falling back to the more general packaging
+    # prior used by legacy data dumps.
     category = _normalize_category(row.get("category", ""))
 
     try:
@@ -834,6 +880,12 @@ class _OfficialFeaturesBundle(NamedTuple):
     l2l_category_features: Dict[str, Dict[str, float]]
     l2l_item_features: Dict[str, Dict[str, float]]
     l2l_hints: Dict[str, str]
+
+
+def official_features_bundle() -> _OfficialFeaturesBundle:
+    """Public accessor mirroring :func:`_official_features_bundle`."""
+
+    return _official_features_bundle()
 
 
 def _build_payload_from_row(row: np.ndarray, columns: Sequence[str]) -> Dict[str, float]:
@@ -1037,6 +1089,17 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
     )
 
     table_lazy = table_lazy.with_columns(
+        pl.when(pl.col("category_norm") == "other packaging")
+        .then(
+            pl.when(pl.col("subitem_norm").str.contains("glove"))
+            .then(pl.lit("gloves"))
+            .otherwise(pl.col("category_norm"))
+        )
+        .otherwise(pl.col("category_norm"))
+        .alias("category_norm")
+    )
+
+    table_lazy = table_lazy.with_columns(
         pl.when(pl.col("subitem_norm").str.len_bytes() > 0)
         .then(pl.col("category_norm") + pl.lit("|") + pl.col("subitem_norm"))
         .otherwise(pl.col("category_norm"))
@@ -1108,6 +1171,8 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
 
 
 def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], str]:
+    """Resolve NASA reference features with packaging-aware fallbacks."""
+
     bundle = _official_features_bundle()
     if not bundle.value_columns:
         return {}, ""
@@ -1115,6 +1180,15 @@ def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], s
     category = _normalize_category(row.get("category", ""))
     if not category:
         return {}, ""
+
+    family_candidates = _CATEGORY_FAMILY_FALLBACKS.get(category, (category,))
+    # Preserve order while dropping duplicates so legacy aliases remain usable.
+    seen_families: set[str] = set()
+    families: tuple[str, ...] = tuple(
+        family for family in family_candidates if not (family in seen_families or seen_families.add(family))
+    )
+    if not families:
+        families = (category,)
 
     candidates = (
         row.get("material"),
@@ -1126,40 +1200,43 @@ def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], s
         normalized = _normalize_item(candidate)
         if not normalized:
             continue
-        key = f"{category}|{normalized}"
-        index = bundle.direct_map.get(key)
-        if index is not None and 0 <= index < bundle.value_matrix.shape[0]:
-            payload = _build_payload_from_row(bundle.value_matrix[index], bundle.value_columns)
-            return payload, key
+        for family in families:
+            key = f"{family}|{normalized}"
+            index = bundle.direct_map.get(key)
+            if index is not None and 0 <= index < bundle.value_matrix.shape[0]:
+                payload = _build_payload_from_row(bundle.value_matrix[index], bundle.value_columns)
+                return payload, key
 
-    category_index = bundle.direct_map.get(category)
-    if category_index is not None and 0 <= category_index < bundle.value_matrix.shape[0]:
-        payload = _build_payload_from_row(bundle.value_matrix[category_index], bundle.value_columns)
-        return payload, category
+    for family in families:
+        category_index = bundle.direct_map.get(family)
+        if category_index is not None and 0 <= category_index < bundle.value_matrix.shape[0]:
+            payload = _build_payload_from_row(bundle.value_matrix[category_index], bundle.value_columns)
+            return payload, family
 
     token_candidates = [value for value in candidates if value]
     if not token_candidates:
         return {}, ""
 
-    matches = bundle.category_tokens.get(category)
-    if not matches:
-        return {}, ""
-
-    token_array, key_array, row_indices = matches
-    reference_tokens = list(token_array.tolist())
-    match_keys = list(key_array.tolist())
-    indices = list(row_indices.tolist())
-
-    for candidate in token_candidates:
-        tokens = _token_set(candidate)
-        if not tokens:
+    for family in families:
+        matches = bundle.category_tokens.get(family)
+        if not matches:
             continue
-        for reference, match_key, index in zip(reference_tokens, match_keys, indices, strict=False):
-            if not isinstance(reference, frozenset):
+
+        token_array, key_array, row_indices = matches
+        reference_tokens = list(token_array.tolist())
+        match_keys = list(key_array.tolist())
+        indices = list(row_indices.tolist())
+
+        for candidate in token_candidates:
+            tokens = _token_set(candidate)
+            if not tokens:
                 continue
-            if tokens.issubset(reference) and 0 <= index < bundle.value_matrix.shape[0]:
-                payload = _build_payload_from_row(bundle.value_matrix[index], bundle.value_columns)
-                return payload, str(match_key)
+            for reference, match_key, index in zip(reference_tokens, match_keys, indices, strict=False):
+                if not isinstance(reference, frozenset):
+                    continue
+                if tokens.issubset(reference) and 0 <= index < bundle.value_matrix.shape[0]:
+                    payload = _build_payload_from_row(bundle.value_matrix[index], bundle.value_columns)
+                    return payload, str(match_key)
 
     return {}, ""
 
@@ -1680,7 +1757,7 @@ def prepare_waste_frame(waste_df: pd.DataFrame) -> pd.DataFrame:
     category_defaults = normalized_category.map(_CATEGORY_DENSITY_DEFAULTS).astype(float)
     density = density.fillna(category_defaults)
 
-    default_density = float(_CATEGORY_DENSITY_DEFAULTS.get("other packaging glove", 500.0))
+    default_density = float(_CATEGORY_DENSITY_DEFAULTS.get("packaging", 500.0))
     density = density.fillna(default_density)
     out["density_kg_m3"] = density.clip(lower=20.0, upper=4000.0)
 
