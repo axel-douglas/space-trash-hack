@@ -15,10 +15,10 @@ SUITABILITY = {
 FLAG_BOOST = {
     "multilayer": ["P02"],
     "thermal": ["P02"],
-    "CTB": ["P04"],
+    "ctb": ["P04"],
     "closed_cell": ["P03", "P02"],
-    "nitrile": ["P01","P02"],
-    "struts": ["P04"]
+    "nitrile": ["P01", "P02"],
+    "struts": ["P04"],
 }
 
 def choose_process(target_name: str, proc_df: pd.DataFrame,

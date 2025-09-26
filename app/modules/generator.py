@@ -371,7 +371,8 @@ def _close_inference_log_writer() -> None:
     """Close the cached Parquet writer used for inference logs."""
 
     _INFERENCE_LOG_MANAGER.close()
-=======
+
+
 def _to_lazy_frame(
     frame: pd.DataFrame | pl.DataFrame | pl.LazyFrame,
 ) -> tuple[pl.LazyFrame, str]:
@@ -422,7 +423,7 @@ def _slugify(value: str) -> str:
 
     text = re.sub(r"[^0-9a-zA-Z]+", "_", str(value).strip().lower())
     text = re.sub(r"_+", "_", text).strip("_")
-    return text or "value
+    return text or "value"
 
 
 def _load_regolith_vector() -> Dict[str, float]:
