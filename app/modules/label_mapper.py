@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Tuple
 
@@ -31,6 +32,8 @@ CLASS_TARGET_COLUMNS: Tuple[str, ...] = (
 _LABELS_CACHE: pd.DataFrame | None = None
 _LABELS_CACHE_PATH: Path | None = None
 
+LOGGER = logging.getLogger(__name__)
+
 
 def _normalise_key(value: Any) -> str:
     if value is None:
@@ -50,10 +53,13 @@ def _load_labels_table(path: Path | None = None) -> pd.DataFrame:
             from app.modules import data_build
 
             data_build.ensure_gold_dataset()
-        except Exception as exc:  # pragma: no cover - visibility of bootstrap errors
-            raise RuntimeError(
-                f"No se pudo generar el dataset gold en {target_path.parent}: {exc}"
-            ) from exc
+        except Exception:  # pragma: no cover - visibility of bootstrap errors
+            LOGGER.exception(
+                "Failed to ensure gold dataset at %s", target_path.parent
+            )
+            _LABELS_CACHE = pd.DataFrame()
+            _LABELS_CACHE_PATH = target_path
+            return _LABELS_CACHE
 
     if _LABELS_CACHE is not None and _LABELS_CACHE_PATH == target_path:
         return _LABELS_CACHE
