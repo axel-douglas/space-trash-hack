@@ -17,8 +17,7 @@ import pandas as pd
 import pyarrow.parquet as pq
 import pytest
 
-from app.modules import data_sources, generator, label_mapper, logging_utils
-from app.modules import data_sources, execution, generator, label_mapper
+from app.modules import data_sources, execution, generator, label_mapper, logging_utils
 
 pl = generator.pl
 
@@ -141,11 +140,11 @@ def test_append_inference_log_reuses_daily_writer(monkeypatch, tmp_path):
 def test_append_inference_log_skips_parquet_reads(monkeypatch, tmp_path):
     """Ensure append operations never trigger a Parquet read."""
 
-    generator._INFERENCE_LOG_MANAGER.close()
-    monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
+    logging_utils._INFERENCE_LOG_MANAGER.close()
+    monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
 
-    manager = generator._InferenceLogWriterManager()
-    monkeypatch.setattr(generator, "_INFERENCE_LOG_MANAGER", manager)
+    manager = logging_utils._InferenceLogWriterManager()
+    monkeypatch.setattr(logging_utils, "_INFERENCE_LOG_MANAGER", manager)
 
     created_paths: list[Path] = []
     write_counts: list[int] = []
@@ -168,13 +167,13 @@ def test_append_inference_log_skips_parquet_reads(monkeypatch, tmp_path):
         created_paths.append(writer.path)
         return writer
 
-    monkeypatch.setattr(generator.pq, "ParquetWriter", fake_writer)
+    monkeypatch.setattr(logging_utils.pq, "ParquetWriter", fake_writer)
 
     def fail_read(*_args: Any, **_kwargs: Any) -> None:
         pytest.fail("append_inference_log should not read existing shards")
 
-    if hasattr(generator.pq, "read_table"):
-        monkeypatch.setattr(generator.pq, "read_table", fail_read)
+    if hasattr(logging_utils.pq, "read_table"):
+        monkeypatch.setattr(logging_utils.pq, "read_table", fail_read)
 
     base = datetime(2024, 6, 1, 8, 30, tzinfo=UTC)
     events = [
@@ -204,7 +203,7 @@ def test_append_inference_log_skips_parquet_reads(monkeypatch, tmp_path):
         ts, payload = events.pop(0)
         return ts, payload
 
-    monkeypatch.setattr(generator, "_prepare_inference_event", fake_prepare)
+    monkeypatch.setattr(logging_utils, "prepare_inference_event", fake_prepare)
 
     generator.append_inference_log({}, {}, {}, None)
     generator.append_inference_log({}, {}, {}, None)

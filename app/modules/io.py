@@ -2,7 +2,9 @@
 from __future__ import annotations
 import json
 from pathlib import Path
+
 import pandas as pd
+import polars as pl
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 
@@ -34,86 +36,158 @@ def load_waste_df() -> pd.DataFrame:
     y preserva la proveniencia en columnas _source_*.
     """
     _ensure_exists()
-    raw = pd.read_csv(WASTE_CSV)
 
-    # Normalizamos flags a lista
-    def split_flags(x):
-        if pd.isna(x) or not str(x).strip():
-            return []
-        return [t.strip() for t in str(x).split(",")]
+    flags_str = pl.col("flags").cast(pl.Utf8, strict=False).fill_null("")
+    category_str = pl.col("category").cast(pl.Utf8, strict=False).fill_null("")
+    material_family_str = (
+        pl.col("material_family").cast(pl.Utf8, strict=False).fill_null("")
+    )
 
-    raw["flags_list"] = raw["flags"].apply(split_flags)
+    category_lower = category_str.str.to_lowercase()
+    flags_lower = flags_str.str.to_lowercase()
 
-    # Columna amigable para la UI (“material”)
-    ui_material = raw["category"].fillna("") + " — " + raw["material_family"].fillna("")
-    ui_notes = raw["flags"].fillna("")
+    problem_exprs = [
+        category_lower.str.contains("pouches"),
+        category_lower.str.contains("foam"),
+        category_lower.str.contains("eva"),
+        category_lower.str.contains("glove"),
+        category_lower.str.contains("aluminum"),
+    ]
+    problem_exprs.extend(flags_lower.str.contains(tag) for tag in PROBLEM_TAGS)
 
-    df = pd.DataFrame({
-        # columnas para la tabla editable
-        "material": ui_material,
-        "kg": raw["mass_kg"].astype(float),
-        "notes": ui_notes,
+    problematic_expr = pl.any_horizontal(*problem_exprs)
 
-        # proveniencia NASA (no se editan normalmente)
-        "_source_id": raw["id"],
-        "_source_category": raw["category"],
-        "_source_material_family": raw["material_family"],
-        "_source_volume_l": raw["volume_l"],
-        "_source_flags": raw["flags"],
-    })
-
-    # Señalamos si es “residuo problemático” según flags/categoría
-    def is_problem(row):
-        c = str(row["_source_category"]).lower()
-        flags = split_flags(row["_source_flags"])
-        return (
-            ("pouches" in c) or
-            ("foam" in c) or
-            ("eva" in c) or
-            ("glove" in c) or
-            ("aluminum" in c) or
-            any(f in PROBLEM_TAGS for f in flags)
+    lf = pl.scan_csv(WASTE_CSV)
+    result = (
+        lf.with_columns(
+            [
+                pl.concat_str(
+                    [category_str, pl.lit(" — "), material_family_str],
+                    separator="",
+                ).alias("material"),
+                pl.col("mass_kg").cast(pl.Float64, strict=False).alias("kg"),
+                flags_str.alias("notes"),
+                problematic_expr.alias("_problematic"),
+                pl.col("id").alias("_source_id"),
+                pl.col("category").alias("_source_category"),
+                pl.col("material_family").alias("_source_material_family"),
+                pl.col("volume_l").alias("_source_volume_l"),
+                pl.col("flags").alias("_source_flags"),
+            ]
         )
+        .select(
+            [
+                "material",
+                "kg",
+                "notes",
+                "_source_id",
+                "_source_category",
+                "_source_material_family",
+                "_source_volume_l",
+                "_source_flags",
+                "_problematic",
+            ]
+        )
+        .collect()
+    )
 
-    df["_problematic"] = df.apply(is_problem, axis=1)
-    return df
+    return result.to_pandas(use_pyarrow_extension_array=False)
 
-def save_waste_df(df: pd.DataFrame) -> None:
+def save_waste_df(df: pd.DataFrame | pl.DataFrame) -> None:
     """
     Persiste en el MISMO esquema NASA, para que el jurado vea que seguimos
     usando su formato. Tomamos de la UI: material (parseado), kg, notes.
     """
-    # Intentamos rehidratar campos originales cuando existen
-    out = pd.DataFrame({
-        "id": df.get("_source_id", pd.Series([None]*len(df))),
-        "category": df.get("_source_category", None),
-        "material_family": df.get("_source_material_family", None),
-        "mass_kg": df["kg"],
-        "volume_l": df.get("_source_volume_l", None),
-        "flags": df.get("notes", ""),
-    })
+    if isinstance(df, pd.DataFrame):
+        pl_df = pl.from_pandas(df, include_index=False)
+    elif isinstance(df, pl.DataFrame):
+        pl_df = df.clone()
+    else:
+        raise TypeError("save_waste_df requiere pandas.DataFrame o polars.DataFrame")
 
-    # Si alguien creó filas nuevas, intentamos inferir category/material_family
-    mask_missing = out["category"].isna() | out["material_family"].isna()
-    if mask_missing.any():
-        def parse_material(m):
-            # “category — material_family”
-            parts = str(m).split("—")
-            if len(parts) >= 2:
-                return parts[0].strip(), parts[1].strip()
-            return "unknown", str(m).strip()
-        cat_mf = df["material"].apply(parse_material)
-        out.loc[mask_missing, "category"] = [c for c,_ in cat_mf[mask_missing]]
-        out.loc[mask_missing, "material_family"] = [mf for _,mf in cat_mf[mask_missing]]
+    def _expr_for(names: list[str], default: pl.Expr) -> pl.Expr:
+        for name in names:
+            if name in pl_df.columns:
+                return pl.col(name)
+        return default
 
-    # Generamos id si falta
-    if out["id"].isna().any():
-        base = 1000
-        for idx in out.index[out["id"].isna()]:
-            base += 1
-            out.at[idx, "id"] = f"W{base}"
+    out = pl_df.select(
+        [
+            _expr_for(["_source_id", "id"], pl.lit(None, dtype=pl.Utf8)).alias("id"),
+            _expr_for(["_source_category", "category"], pl.lit(None, dtype=pl.Utf8)).alias(
+                "category"
+            ),
+            _expr_for(
+                ["_source_material_family", "material_family"],
+                pl.lit(None, dtype=pl.Utf8),
+            ).alias("material_family"),
+            _expr_for(["kg", "mass_kg"], pl.lit(None, dtype=pl.Float64))
+            .cast(pl.Float64, strict=False)
+            .alias("mass_kg"),
+            _expr_for(["_source_volume_l", "volume_l"], pl.lit(None, dtype=pl.Float64))
+            .cast(pl.Float64, strict=False)
+            .alias("volume_l"),
+            _expr_for(["notes", "flags", "_source_flags"], pl.lit("", dtype=pl.Utf8))
+            .cast(pl.Utf8, strict=False)
+            .fill_null("")
+            .alias("flags"),
+            _expr_for(["material"], pl.lit(None, dtype=pl.Utf8)).alias("_material"),
+        ]
+    )
 
-    out.to_csv(WASTE_CSV, index=False)
+    out = out.with_columns(
+        [
+            pl.col("category").cast(pl.Utf8, strict=False),
+            pl.col("material_family").cast(pl.Utf8, strict=False),
+            pl.col("flags").cast(pl.Utf8, strict=False).fill_null(""),
+            pl.col("mass_kg").cast(pl.Float64, strict=False),
+            pl.col("volume_l").cast(pl.Float64, strict=False),
+        ]
+    )
+
+    material_clean = pl.col("_material").cast(pl.Utf8, strict=False).fill_null("")
+    parts = material_clean.str.split("—")
+    parts_len = parts.list.len()
+
+    category_needs = pl.col("category").is_null() | pl.col("category").str.strip_chars().eq("")
+    material_needs = (
+        pl.col("material_family").is_null()
+        | pl.col("material_family").str.strip_chars().eq("")
+    )
+
+    parsed_category = pl.when(parts_len >= 2).then(
+        parts.list.get(0, null_on_oob=True).str.strip_chars()
+    ).otherwise(pl.lit("unknown"))
+    parsed_material = pl.when(parts_len >= 2).then(
+        parts.list.get(1, null_on_oob=True).str.strip_chars()
+    ).otherwise(material_clean.str.strip_chars())
+
+    out = out.with_columns(
+        [
+            pl.when(category_needs).then(parsed_category).otherwise(pl.col("category")).alias(
+                "category"
+            ),
+            pl.when(material_needs)
+            .then(parsed_material)
+            .otherwise(pl.col("material_family"))
+            .alias("material_family"),
+        ]
+    )
+
+    out = out.drop("_material")
+
+    id_str = pl.col("id").cast(pl.Utf8, strict=False)
+    id_missing = id_str.is_null() | id_str.str.strip_chars().eq("")
+    out = out.with_columns(
+        [
+            pl.when(id_missing)
+            .then(pl.format("W{}", 1000 + id_missing.cast(pl.Int64).cum_sum()))
+            .otherwise(id_str)
+            .alias("id"),
+        ]
+    )
+
+    out.write_csv(WASTE_CSV, include_header=True)
 
 def load_process_df() -> pd.DataFrame:
     _ensure_exists()

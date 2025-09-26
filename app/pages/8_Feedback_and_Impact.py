@@ -1,10 +1,5 @@
 # app/pages/8_Feedback_and_Impact.py
-# --- path guard para Streamlit Cloud ---
-import sys, pathlib
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-# ---------------------------------------
+import app  # noqa: F401
 
 # ⚠️ Debe ser la PRIMERA llamada Streamlit:
 import streamlit as st

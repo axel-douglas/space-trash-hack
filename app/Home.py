@@ -1,10 +1,5 @@
 # app/Home.py
-# ───────────────────────── path guard ─────────────────────────
-import sys, pathlib
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-# ──────────────────────────────────────────────────────────────
+import app  # noqa: F401
 
 from datetime import datetime
 import streamlit as st

@@ -1,10 +1,5 @@
 # app/pages/9_Capacity_Simulator.py
-# --- path guard para Streamlit Cloud ---
-import sys, pathlib
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-# ---------------------------------------
+import app  # noqa: F401
 
 # ⚠️ Debe ser la PRIMERA llamada de Streamlit
 import streamlit as st
