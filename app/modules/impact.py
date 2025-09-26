@@ -9,6 +9,13 @@ import uuid
 
 import pandas as pd
 
+try:  # Optional dependency used for streaming Parquet writes
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+except Exception:  # pragma: no cover - pyarrow is optional at runtime
+    pa = None  # type: ignore[assignment]
+    pq = None  # type: ignore[assignment]
+
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 LOGS_DIR = DATA_DIR / "logs"
 
@@ -75,13 +82,53 @@ def _entry_date(ts_iso: str) -> str:
 def _append_record(filename: str, payload: dict[str, Any]) -> None:
     _ensure_dirs()
     path = LOGS_DIR / filename
-    row_df = pd.DataFrame([payload])
-    if path.exists():
-        existing = pd.read_parquet(path)
-        df = pd.concat([existing, row_df], ignore_index=True, sort=False)
+
+    if pa is None or pq is None:
+        row_df = pd.DataFrame([payload])
+        if path.exists():
+            existing = pd.read_parquet(path)
+            df = pd.concat([existing, row_df], ignore_index=True, sort=False)
+        else:
+            df = row_df
+        df.to_parquet(path, index=False)
+        return
+
+    row_dict = {key: [value] for key, value in payload.items()}
+
+    if not path.exists():
+        table = pa.Table.from_pydict(row_dict)
+        pq.write_table(table, path)
+        return
+
+    try:
+        parquet_file = pq.ParquetFile(path)
+        existing_schema = parquet_file.schema_arrow
+        existing_fields = list(existing_schema.names)
+    except Exception:
+        existing_schema = None
+        existing_fields = []
+
+    if existing_fields:
+        new_columns = [col for col in row_dict if col not in existing_fields]
+        if new_columns:
+            row_df = pd.DataFrame([payload])
+            existing = pd.read_parquet(path)
+            df = pd.concat([existing, row_df], ignore_index=True, sort=False)
+            df.to_parquet(path, index=False)
+            return
+
+        data = {}
+        for name in existing_fields:
+            data[name] = [payload.get(name)]
+        table = (
+            pa.Table.from_pydict(data, schema=existing_schema)
+            if existing_schema is not None
+            else pa.Table.from_pydict(data)
+        )
     else:
-        df = row_df
-    df.to_parquet(path, index=False)
+        table = pa.Table.from_pydict(row_dict)
+
+    pq.write_table(table, path, append=True)
 
 
 def append_impact(entry: ImpactEntry) -> str:
