@@ -3,14 +3,17 @@ from __future__ import annotations
 import json
 import random
 import shutil
+import time
 from datetime import datetime
 from pathlib import Path
 from datetime import datetime
+from typing import Dict
 
 from deltalake import DeltaTable
 
 import pandas as pd
 import pytest
+import numpy as np
 
 from app.modules import generator
 
@@ -170,13 +173,87 @@ def test_official_features_bundle_polars_pipeline(tmp_path, monkeypatch):
     assert "processing_output_kg" in bundle.value_columns
     assert "leo_savings_pct" in bundle.value_columns
     assert "propellant_benefit" in bundle.value_columns
-    assert bundle.direct_map["other packaging glove|foam"]["value_kg"] == pytest.approx(2.5)
+    idx = bundle.direct_map["other packaging glove|foam"]
+    payload = generator._build_payload_from_row(bundle.value_matrix[idx], bundle.value_columns)
+    assert payload["value_kg"] == pytest.approx(2.5)
     assert "category_norm" in bundle.table.columns
     assert "subitem_norm" in bundle.table.columns
     assert bundle.mission_totals["artemis"] == pytest.approx(13.0)
     assert bundle.processing_metrics["processing"]["processing_output_kg"] == pytest.approx(3.0)
+    tokens, match_keys, indices = bundle.category_tokens["other packaging glove"]
+    assert "other packaging glove|foam" in match_keys.tolist()
+    assert idx in indices.tolist()
 
     generator._official_features_bundle.cache_clear()
+
+
+def test_vectorized_feature_map_benchmark():
+    rows = 4000
+    categories = ["Packaging" if idx % 2 == 0 else "Food Packaging" for idx in range(rows)]
+    subitems = [f"Item {idx}" for idx in range(rows)]
+    values = [float(idx % 17 + 1) for idx in range(rows)]
+
+    table_df = pl.DataFrame(
+        {
+            "category": categories,
+            "subitem": subitems,
+            "value_kg": values,
+        }
+    ).with_columns(
+        pl.col("category")
+        .map_elements(generator._normalize_category, return_dtype=pl.String)
+        .alias("category_norm"),
+        pl.col("subitem")
+        .map_elements(generator._normalize_item, return_dtype=pl.String)
+        .alias("subitem_norm"),
+    ).with_columns(
+        pl.when(pl.col("subitem_norm").str.len_bytes() > 0)
+        .then(pl.col("category_norm") + pl.lit("|") + pl.col("subitem_norm"))
+        .otherwise(pl.col("category_norm"))
+        .alias("key"),
+    )
+
+    excluded = {"category", "subitem", "category_norm", "subitem_norm", "key"}
+    value_columns = tuple(col for col in table_df.columns if col not in excluded)
+
+    def baseline_builder():
+        direct_map: Dict[str, Dict[str, float]] = {}
+        category_tokens: Dict[str, list[tuple[frozenset[str], Dict[str, float], str]]] = {}
+        for row in table_df.to_dicts():
+            key = row["key"]
+            if not key:
+                continue
+            payload = {col: float(row[col]) for col in value_columns}
+            direct_map[key] = payload
+            category_tokens.setdefault(row["category_norm"], []).append(
+                (generator._token_set(row["subitem_norm"]), payload, key)
+            )
+        return direct_map, category_tokens
+
+    baseline_map, _ = baseline_builder()
+    vector_map, _, value_matrix = generator._vectorized_feature_maps(table_df, value_columns)
+
+    assert set(baseline_map.keys()) == set(vector_map.keys())
+    sample_keys = list(baseline_map.keys())[:10]
+    for key in sample_keys:
+        idx = vector_map[key]
+        payload = generator._build_payload_from_row(value_matrix[idx], value_columns)
+        assert payload == baseline_map[key]
+
+    def measure(fn):
+        best = float("inf")
+        for _ in range(3):
+            start = time.perf_counter()
+            fn()
+            elapsed = time.perf_counter() - start
+            best = min(best, elapsed)
+        return best
+
+    baseline_time = measure(baseline_builder)
+    vectorized_time = measure(lambda: generator._vectorized_feature_maps(table_df, value_columns))
+
+    assert vectorized_time < baseline_time
+
 
 class DummyRegistry:
     ready = True
@@ -252,8 +329,12 @@ def test_generate_candidates_uses_parallel_backend(monkeypatch):
             "_source_category": ["packaging"],
             "_source_flags": [""],
             "material": ["foil"],
+            "category": ["packaging"],
+            "flags": [""],
+            "_problematic": [0],
         }
     ))
+    monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ([], {}))
 
     draws: list[float] = []
 
@@ -284,9 +365,19 @@ def test_generate_candidates_uses_parallel_backend(monkeypatch):
             "_source_id": ["A"],
             "_source_category": ["packaging"],
             "_source_flags": [""],
+            "category": ["packaging"],
+            "flags": [""],
         }
     )
-    proc_df = pd.DataFrame({"process_id": ["P01"], "name": ["Process"]})
+    proc_df = pd.DataFrame(
+        {
+            "process_id": ["P01"],
+            "name": ["Process"],
+            "energy_kwh_per_kg": [1.0],
+            "water_l_per_kg": [0.5],
+            "crew_min_per_batch": [30.0],
+        }
+    )
 
     candidates, history = generator.generate_candidates(
         waste_df,
@@ -606,14 +697,17 @@ def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
     generator._official_features_bundle.cache_clear()
 
     match_key = "food packaging|rehydratable pouch"
+    dummy_matrix = np.array([[1.0]], dtype=np.float64)
     dummy_bundle = generator._OfficialFeaturesBundle(
         value_columns=("dummy_col",),
         composition_columns=(),
-        direct_map={match_key: {"dummy_col": 1.0}},
+        direct_map={match_key: 0},
         category_tokens={
-            "food packaging": [
-                (frozenset({"rehydratable", "pouch"}), {"dummy_col": 1.0}, match_key)
-            ]
+            "food packaging": (
+                np.array([frozenset({"rehydratable", "pouch"})], dtype=object),
+                np.array([match_key], dtype=object),
+                np.array([0], dtype=np.int32),
+            )
         },
         table=pl.DataFrame(
             {
@@ -622,6 +716,7 @@ def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
                 "dummy_col": [1.0],
             }
         ),
+        value_matrix=dummy_matrix,
         mission_mass={
             match_key: {"gateway_i": 200.0},
             "food packaging": {"gateway_i": 300.0},
@@ -686,14 +781,17 @@ def test_prepare_waste_frame_injects_l2l_features(monkeypatch):
     generator._official_features_bundle.cache_clear()
 
     match_key = "food packaging|rehydratable pouch"
+    dummy_matrix = np.array([[1.0]], dtype=np.float64)
     dummy_bundle = generator._OfficialFeaturesBundle(
         value_columns=("dummy_col",),
         composition_columns=(),
-        direct_map={match_key: {"dummy_col": 1.0}},
+        direct_map={match_key: 0},
         category_tokens={
-            "food packaging": [
-                (frozenset({"rehydratable", "pouch"}), {"dummy_col": 1.0}, match_key)
-            ]
+            "food packaging": (
+                np.array([frozenset({"rehydratable", "pouch"})], dtype=object),
+                np.array([match_key], dtype=object),
+                np.array([0], dtype=np.int32),
+            )
         },
         table=pl.DataFrame(
             {
@@ -702,6 +800,7 @@ def test_prepare_waste_frame_injects_l2l_features(monkeypatch):
                 "dummy_col": [1.0],
             }
         ),
+        value_matrix=dummy_matrix,
         mission_mass={},
         mission_totals={},
         processing_metrics={},
@@ -747,6 +846,7 @@ def test_prepare_waste_frame_injects_l2l_features(monkeypatch):
 def test_compute_feature_vector_uses_l2l_packaging_ratio(monkeypatch):
     generator._official_features_bundle.cache_clear()
 
+    dummy_matrix = np.empty((0, 0), dtype=np.float64)
     dummy_bundle = generator._OfficialFeaturesBundle(
         value_columns=("dummy_col",),
         composition_columns=(),
@@ -760,6 +860,7 @@ def test_compute_feature_vector_uses_l2l_packaging_ratio(monkeypatch):
             },
             data=[],
         ),
+        value_matrix=dummy_matrix,
         mission_mass={},
         mission_totals={},
         processing_metrics={},
