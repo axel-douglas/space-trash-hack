@@ -641,7 +641,7 @@ def test_generate_candidates_uses_parallel_backend(monkeypatch):
 
 def test_append_inference_log_appends_without_reads(monkeypatch, tmp_path):
     monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
-    generator._close_inference_log_writer()
+    generator._INFERENCE_LOG_MANAGER.close()
 
     log_root = tmp_path / "inference"
     if log_root.exists():
@@ -655,7 +655,7 @@ def test_append_inference_log_appends_without_reads(monkeypatch, tmp_path):
             model_registry=None,
         )
 
-    generator._close_inference_log_writer()
+    generator._INFERENCE_LOG_MANAGER.close()
 
     log_dir = _collect_single_log_dir(tmp_path)
     table = _read_inference_log(log_dir)
@@ -664,7 +664,7 @@ def test_append_inference_log_appends_without_reads(monkeypatch, tmp_path):
 
 def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
     monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
-    generator._close_inference_log_writer()
+    generator._INFERENCE_LOG_MANAGER.close()
 
     log_root = tmp_path / "inference"
     if log_root.exists():
@@ -694,7 +694,7 @@ def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
         model_registry=None,
     )
 
-    generator._close_inference_log_writer()
+    generator._INFERENCE_LOG_MANAGER.close()
 
     log_dir = _collect_single_log_dir(tmp_path)
     log_df = _read_inference_log(log_dir)
@@ -707,7 +707,7 @@ def test_generate_candidates_appends_inference_log(monkeypatch, tmp_path):
     monkeypatch.setattr(generator, "MODEL_REGISTRY", DummyRegistry())
     monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
     monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
-    generator._close_inference_log_writer()
+    generator._INFERENCE_LOG_MANAGER.close()
 
     log_root = tmp_path / "inference"
     if log_root.exists():
@@ -738,7 +738,7 @@ def test_generate_candidates_appends_inference_log(monkeypatch, tmp_path):
     assert candidates, "Expected at least one candidate to be generated"
     assert history.empty
 
-    generator._close_inference_log_writer()
+    generator._INFERENCE_LOG_MANAGER.close()
 
     log_dir = _collect_single_log_dir(tmp_path)
     log_df = _read_inference_log(log_dir).sort_values("timestamp")
@@ -784,11 +784,10 @@ def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch, tmp_path):
 
     monkeypatch.setattr(generator, "MODEL_REGISTRY", NoCallRegistry())
     monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
-    generator._close_inference_log_writer()
+    generator._INFERENCE_LOG_MANAGER.close()
 
     log_root = tmp_path / "inference"
-    if log_root.exists():
-        shutil.rmtree(log_root)
+    shutil.rmtree(log_root, ignore_errors=True)
     monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
 
     log_dir = generator.LOGS_ROOT
@@ -818,6 +817,8 @@ def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch, tmp_path):
     candidates, history = generator.generate_candidates(
         waste_df, proc_df, target={}, n=1, use_ml=False
     )
+
+    generator._INFERENCE_LOG_MANAGER.close()
 
     assert candidates, "Expected heuristic candidate even when ML disabled"
     assert history.empty
