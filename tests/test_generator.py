@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+import shutil
+from pathlib import Path
+
+from deltalake import DeltaTable
 
 import pandas as pd
 import pytest
@@ -175,15 +178,85 @@ def _dummy_process_series() -> pd.Series:
     )
 
 
-def test_generate_candidates_appends_inference_log(monkeypatch):
+def _collect_single_log_dir(root: Path) -> Path:
+    log_root = root / "inference"
+    assert log_root.exists(), "Expected inference log directory to be created"
+    day_dirs = list(log_root.iterdir())
+    assert len(day_dirs) == 1, f"Expected a single log directory, found {day_dirs}"
+    return day_dirs[0]
+
+
+def test_append_inference_log_appends_without_reads(monkeypatch, tmp_path):
+    monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
+
+    log_root = tmp_path / "inference"
+    if log_root.exists():
+        shutil.rmtree(log_root)
+
+    def fail_read(*_args, **_kwargs):  # pragma: no cover - ensures pandas path unused
+        raise AssertionError("Parquet reads should not be triggered during logging")
+
+    monkeypatch.setattr(generator.pd, "read_parquet", fail_read)
+
+    for idx in range(2):
+        generator._append_inference_log(
+            input_features={"feature": idx},
+            prediction={"score": idx},
+            uncertainty=None,
+            model_registry=None,
+        )
+
+    log_dir = _collect_single_log_dir(tmp_path)
+    table = DeltaTable(str(log_dir)).to_pyarrow_table()
+    assert table.num_rows == 2
+
+
+def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
+    monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
+
+    log_root = tmp_path / "inference"
+    if log_root.exists():
+        shutil.rmtree(log_root)
+
+    generator._append_inference_log(
+        input_features={"feature": 0},
+        prediction={"score": 0},
+        uncertainty=None,
+        model_registry=None,
+    )
+
+    original_prepare = generator._prepare_inference_event
+
+    def prepare_with_session(*args, **kwargs):
+        timestamp, payload = original_prepare(*args, **kwargs)
+        updated = dict(payload)
+        updated["session_id"] = "alpha"
+        return timestamp, updated
+
+    monkeypatch.setattr(generator, "_prepare_inference_event", prepare_with_session)
+
+    generator._append_inference_log(
+        input_features={"feature": 1},
+        prediction={"score": 1},
+        uncertainty=None,
+        model_registry=None,
+    )
+
+    log_dir = _collect_single_log_dir(tmp_path)
+    log_df = DeltaTable(str(log_dir)).to_pandas()
+    assert "session_id" in log_df.columns
+    assert log_df["session_id"].isna().sum() == 1
+    assert set(log_df["session_id"].dropna()) == {"alpha"}
+
+
+def test_generate_candidates_appends_inference_log(monkeypatch, tmp_path):
     monkeypatch.setattr(generator, "MODEL_REGISTRY", DummyRegistry())
+    monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
     monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
 
-    log_dir = generator.LOGS_ROOT
-    log_dir.mkdir(parents=True, exist_ok=True)
-    log_path = log_dir / f"inference_{datetime.utcnow().strftime('%Y%m%d')}.parquet"
-    if log_path.exists():
-        log_path.unlink()
+    log_root = tmp_path / "inference"
+    if log_root.exists():
+        shutil.rmtree(log_root)
 
     waste_df = pd.DataFrame(
         {
@@ -210,9 +283,8 @@ def test_generate_candidates_appends_inference_log(monkeypatch):
     assert candidates, "Expected at least one candidate to be generated"
     assert history.empty
 
-    assert log_path.exists(), "Inference log parquet file was not created"
-
-    log_df = pd.read_parquet(log_path)
+    log_dir = _collect_single_log_dir(tmp_path)
+    log_df = DeltaTable(str(log_dir)).to_pandas().sort_values("timestamp")
     for column in ["timestamp", "input_features", "prediction", "uncertainty", "model_hash"]:
         assert column in log_df.columns
 
@@ -235,8 +307,9 @@ def test_generate_candidates_appends_inference_log(monkeypatch):
     assert isinstance(auxiliary, dict)
     assert "passes_seal" in auxiliary
 
-    log_path.unlink(missing_ok=True)
+    shutil.rmtree(log_dir.parent, ignore_errors=True)
 
+def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch, tmp_path):
 def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch):
     calls: list[str] = []
 
@@ -252,6 +325,11 @@ def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch):
             return []
 
     monkeypatch.setattr(generator, "MODEL_REGISTRY", NoCallRegistry())
+    monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
+
+    log_root = tmp_path / "inference"
+    if log_root.exists():
+        shutil.rmtree(log_root)
     monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
 
     log_dir = generator.LOGS_ROOT
@@ -285,7 +363,9 @@ def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch):
     assert candidates, "Expected heuristic candidate even when ML disabled"
     assert history.empty
     assert not calls, "ML predict should not be invoked in heuristic mode"
-    assert not log_path.exists(), "Inference log should not be created in heuristic mode"
+    assert (not log_root.exists()) or (not any(log_root.iterdir())), (
+        "Inference log should not be created in heuristic mode"
+    )
 
     cand = candidates[0]
     assert "score_breakdown" in cand
