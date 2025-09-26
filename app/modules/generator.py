@@ -25,6 +25,10 @@ import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, Iterable, Mapping, NamedTuple, Sequence, Tuple
+
+from functools import lru_cache
 from functools import lru_cache
 from pathlib import Path
 from datetime import UTC, datetime
@@ -44,11 +48,22 @@ except Exception:  # pragma: no cover - JAX is optional during inference
 import numpy as np
 import pandas as pd
 import polars as pl
+try:
+    from scipy import sparse
+except Exception:  # pragma: no cover - scipy is optional during inference
+    sparse = None  # type: ignore[assignment]
+
+try:  # Torch tensors may appear when the caller works in PyTorch land.
+    import torch
+except Exception:  # pragma: no cover - torch is optional
+    torch = None  # type: ignore[assignment]
 
 from app.modules.data_sources import (
+    _CATEGORY_SYNONYMS,
     GAS_MEAN_YIELD,
     MEAN_REUSE,
     REGOLITH_VECTOR,
+    load_l2l_parameters as _load_l2l_parameters,
     OfficialFeaturesBundle,
     load_l2l_parameters,
     normalize_category,
@@ -71,9 +86,9 @@ try:  # Lazy import to avoid circular dependency during training pipelines
 except Exception:  # pragma: no cover - fallback when models are not available
     MODEL_REGISTRY = None
 
-_OfficialFeaturesBundle = OfficialFeaturesBundle
 DATASETS_ROOT = Path(__file__).resolve().parents[2] / "datasets"
 LOGS_ROOT = Path(__file__).resolve().parents[2] / "data" / "logs"
+_OFFICIAL_FEATURES_PATH = DATASETS_ROOT / "rexai_nasa_waste_features.csv"
 
 
 @dataclass(slots=True)
@@ -754,6 +769,11 @@ class _OfficialFeaturesBundle(NamedTuple):
     value_matrix: np.ndarray
     mission_mass: Dict[str, Dict[str, float]]
     mission_totals: Dict[str, float]
+    mission_reference_keys: tuple[str, ...]
+    mission_reference_index: Dict[str, int]
+    mission_reference_matrix: Any
+    mission_names: tuple[str, ...]
+    mission_totals_vector: np.ndarray
     processing_metrics: Dict[str, Dict[str, float]]
     leo_mass_savings: Dict[str, Dict[str, float]]
     propellant_benefits: Dict[str, Dict[str, float]]
@@ -852,9 +872,66 @@ def _vectorized_feature_maps(
     return direct_map, category_tokens, value_matrix
 
 
+def _build_mission_reference_tables(
+    mass_by_key: Mapping[str, Mapping[str, float]],
+    mission_totals: Mapping[str, float],
+) -> tuple[tuple[str, ...], Dict[str, int], Any, tuple[str, ...], np.ndarray]:
+    mission_names = tuple(sorted(mission_totals.keys()))
+    mission_index = {name: idx for idx, name in enumerate(mission_names)}
+    totals_vector = np.asarray(
+        [float(mission_totals.get(name, 0.0)) for name in mission_names], dtype=np.float64
+    )
+
+    mission_reference_keys = tuple(sorted(mass_by_key.keys()))
+    mission_reference_index = {key: idx for idx, key in enumerate(mission_reference_keys)}
+
+    if not mission_reference_keys or not mission_names:
+        if sparse is not None:
+            matrix = sparse.csr_matrix((0, 0), dtype=np.float64)
+        else:
+            matrix = np.zeros((0, 0), dtype=np.float64)
+        return mission_reference_keys, mission_reference_index, matrix, mission_names, totals_vector
+
+    data: list[float] = []
+    rows: list[int] = []
+    cols: list[int] = []
+
+    for key, row_idx in mission_reference_index.items():
+        missions = mass_by_key.get(key) or {}
+        if not missions:
+            continue
+        for mission, mass in missions.items():
+            col_idx = mission_index.get(mission)
+            if col_idx is None:
+                continue
+            try:
+                mass_value = float(mass)
+            except (TypeError, ValueError):
+                continue
+            if not np.isfinite(mass_value) or mass_value <= 0:
+                continue
+            rows.append(row_idx)
+            cols.append(col_idx)
+            data.append(mass_value)
+
+    shape = (len(mission_reference_keys), len(mission_names))
+    if sparse is not None:
+        matrix = sparse.csr_matrix((data, (rows, cols)), shape=shape, dtype=np.float64)
+    else:
+        matrix = np.zeros(shape, dtype=np.float64)
+        if data:
+            matrix[rows, cols] = data
+
+    return mission_reference_keys, mission_reference_index, matrix, mission_names, totals_vector
+
+
 @lru_cache(maxsize=1)
 def _official_features_bundle() -> _OfficialFeaturesBundle:
     l2l = _L2L_PARAMETERS
+    if sparse is not None:
+        empty_reference = sparse.csr_matrix((0, 0), dtype=np.float64)
+    else:
+        empty_reference = np.zeros((0, 0), dtype=np.float64)
     default = _OfficialFeaturesBundle(
         (),
         (),
@@ -863,6 +940,11 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
         np.empty((0, 0), dtype=np.float64),
         {},
         {},
+        (),
+        {},
+        empty_reference,
+        (),
+        np.zeros(0, dtype=np.float64),
         {},
         {},
         {},
@@ -934,6 +1016,16 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
         ["category_norm", "subitem_norm", *value_columns]
     ).unique(subset=["category_norm", "subitem_norm"], maintain_order=True)
 
+    (
+        mission_reference_keys,
+        mission_reference_index,
+        mission_reference_matrix,
+        mission_names,
+        mission_totals_vector,
+    ) = _build_mission_reference_tables(
+        waste_summary.mass_by_key, waste_summary.mission_totals
+    )
+
     return _OfficialFeaturesBundle(
         value_columns,
         composition_columns,
@@ -943,6 +1035,11 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
         value_matrix,
         waste_summary.mass_by_key,
         waste_summary.mission_totals,
+        mission_reference_keys,
+        mission_reference_index,
+        mission_reference_matrix,
+        mission_names,
+        mission_totals_vector,
         processing_metrics,
         leo_savings,
         propellant_metrics,
@@ -1011,7 +1108,7 @@ def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], s
 
 
 def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
-    bundle = official_features_bundle()
+    bundle = _official_features_bundle()
     if not bundle.value_columns or frame.empty:
         return frame
 
@@ -1108,7 +1205,7 @@ def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
         joined_lazy = joined_lazy.with_columns(
             pl.when(pl.any_horizontal(match_checks))
             .then(pl.col("_official_match_key"))
-            .otherwise(pl.lit(""))
+            .otherwise(pl.col("_official_match_key"))
             .alias("_official_match_key")
         )
 
@@ -1179,6 +1276,10 @@ def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
                 )
 
     if bundle.value_columns:
+        for column in bundle.value_columns:
+            if column not in result_df.columns:
+                result_df[column] = np.nan
+
         numeric_candidates = [
             column
             for column in bundle.value_columns
@@ -1186,6 +1287,50 @@ def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
             or column.startswith("category_total")
             or column in {"difficulty_factor", "approx_moisture_pct"}
         ]
+
+        if bundle.direct_map and bundle.value_matrix.size:
+            matrix = bundle.value_matrix
+            columns = bundle.value_columns
+            match_series = result_df.get("_official_match_key")
+            for row_idx in result_df.index:
+                candidates: list[str] = []
+                if isinstance(match_series, pd.Series):
+                    raw_key = match_series.get(row_idx)
+                    if raw_key:
+                        candidates.append(str(raw_key))
+
+                category_norm = _normalize_category(result_df.at[row_idx, "category"] if "category" in result_df.columns else "")
+                if category_norm:
+                    for source in ("material", "key_materials", "material_family"):
+                        value = result_df.at[row_idx, source] if source in result_df.columns else ""
+                        normalized = _normalize_item(value)
+                        if normalized:
+                            candidates.append(f"{category_norm}|{normalized}")
+                    candidates.append(category_norm)
+
+                resolved_index: int | None = None
+                for candidate in candidates:
+                    if not candidate:
+                        continue
+                    index = bundle.direct_map.get(candidate)
+                    if index is not None and 0 <= index < matrix.shape[0]:
+                        resolved_index = index
+                        break
+
+                if resolved_index is None:
+                    continue
+
+                row_values = matrix[resolved_index]
+                for col_pos, column in enumerate(columns):
+                    if column not in result_df.columns:
+                        continue
+                    try:
+                        value = float(row_values[col_pos])
+                    except (IndexError, TypeError, ValueError):
+                        continue
+                    if np.isnan(value):
+                        continue
+                    result_df.at[row_idx, column] = value
 
         for column in numeric_candidates:
             if column in result_df.columns:
@@ -1596,14 +1741,32 @@ class FeatureTensorBatch:
     logistics_ratio: float
 
 
+def _coerce_weight_array(values: Iterable[float] | Any) -> np.ndarray:
+    if isinstance(values, np.ndarray):
+        array = values.astype(float, copy=False)
+    elif torch is not None and isinstance(values, torch.Tensor):  # type: ignore[arg-type]
+        array = values.detach().cpu().numpy().astype(float, copy=False)
+    elif jnp is not None and hasattr(jnp, "ndarray") and isinstance(values, jnp.ndarray):  # type: ignore[attr-defined]
+        array = np.asarray(values, dtype=float)
+    elif isinstance(values, pd.Series):
+        array = values.to_numpy(dtype=float, copy=False)
+    else:
+        array = np.asarray(list(values), dtype=float)
+
+    if array.ndim == 0:
+        array = np.asarray([float(array)], dtype=float)
+
+    return array
+
+
 def _prepare_feature_context(
     picks: pd.DataFrame,
-    weights: Iterable[float],
+    weights: Iterable[float] | Any,
     regolith_pct: float,
-    bundle: OfficialFeaturesBundle,
+    bundle: _OfficialFeaturesBundle,
 ) -> CandidateFeatureContext:
     total_kg = max(0.001, float(picks["kg"].sum()))
-    raw_weights = np.asarray(list(weights), dtype=float)
+    raw_weights = _coerce_weight_array(weights)
     if len(raw_weights) < len(picks):
         raw_weights = np.pad(raw_weights, (0, len(picks) - len(raw_weights)), constant_values=0.0)
     elif len(raw_weights) > len(picks):
@@ -1694,88 +1857,75 @@ def _prepare_feature_context(
     mission_scaled_mass: Dict[str, float] = {}
     mission_official_mass: Dict[str, float] = {}
 
-    if bundle.mission_mass and bundle.mission_totals:
-        match_keys_col = picks.get("_official_match_key")
-        if match_keys_col is not None:
-            match_keys_list = match_keys_col.fillna("").astype(str).tolist()
-        else:
-            match_keys_list = [""] * len(picks)
-
-        for idx, (_, row) in enumerate(picks.iterrows()):
-            weight = float(raw_weights[idx]) if idx < len(raw_weights) else 0.0
-            if weight <= 0:
-                continue
-
-            keys_to_check: list[str] = []
-            match_key = match_keys_list[idx] if idx < len(match_keys_list) else ""
-            if match_key:
-                keys_to_check.append(match_key)
-
-            if not match_key:
-                category_key = normalize_category(row.get("category", ""))
-                if category_key:
-                    keys_to_check.append(category_key)
-
-            seen_keys: set[str] = set()
-            for key in keys_to_check:
-                if not key or key in seen_keys:
-                    continue
-                seen_keys.add(key)
-                missions = bundle.mission_mass.get(key)
-                if not missions:
-                    continue
-        if item_count:
-            if "_official_match_key" in picks.columns:
-                match_keys = np.asarray(
-                    picks["_official_match_key"].astype(str).fillna("").to_numpy(),
-                    dtype=str,
-                )
-            else:
-                match_keys = np.full(item_count, "", dtype=str)
-
-            normalized_categories = np.array(
-                [_normalize_category(value) for value in category_raw], dtype=object
+    if (
+        item_count
+        and bundle.mission_reference_keys
+        and bundle.mission_names
+        and (bundle.mission_reference_matrix.shape[0] > 0)
+    ):
+        if "_official_match_key" in picks.columns:
+            match_keys = (
+                picks["_official_match_key"].astype(str).fillna("").to_numpy(dtype=object)
             )
-            effective_keys = match_keys.astype(object)
-            empty_mask = effective_keys == ""
-            if empty_mask.any():
-                effective_keys[empty_mask] = normalized_categories[empty_mask]
+        else:
+            match_keys = np.full(item_count, "", dtype=object)
 
-            weights_arr = raw_weights[:item_count]
-            positive_mask = (weights_arr > 0) & np.isfinite(weights_arr)
+        normalized_categories = np.asarray(
+            [normalize_category(value) for value in category_raw], dtype=object
+        )
+
+        effective_keys = match_keys.astype(object)
+        empty_mask = (effective_keys == "") | pd.isna(effective_keys)
+        if empty_mask.any():
+            effective_keys[empty_mask] = normalized_categories[empty_mask]
+
+        weights_arr = raw_weights[:item_count]
+        if weights_arr.size:
+            positive_mask = np.isfinite(weights_arr) & (weights_arr > 0)
             if not positive_mask.all():
                 effective_keys = effective_keys.astype(object)
                 effective_keys[~positive_mask] = ""
 
-            if effective_keys.size:
-                unique_keys, inverse = np.unique(effective_keys, return_inverse=True)
-                for key_idx, key in enumerate(unique_keys):
-                    if not key:
-                        continue
-                    missions = bundle.mission_mass.get(str(key))
-                    if not missions:
-                        continue
-                    mask = inverse == key_idx
-                    if not mask.any():
-                        continue
-                    weights_for_key = weights_arr[mask]
-                    if not weights_for_key.size:
-                        continue
-                    for mission, reference_mass in missions.items():
-                        total_reference = bundle.mission_totals.get(mission)
-                        if not total_reference or total_reference <= 0:
-                            continue
-                        ref_mass_float = float(reference_mass)
-                        reference_total = float(total_reference)
-                        share_values = (ref_mass_float / reference_total) * weights_for_key
-                        share_total = float(np.sum(share_values))
-                        if share_total <= 0:
-                            continue
-                        mission_share[mission] = mission_share.get(mission, 0.0) + share_total
-                        mission_official_mass[mission] = mission_official_mass.get(mission, 0.0) + float(
-                            np.sum(weights_for_key * ref_mass_float)
+            key_indices = np.array(
+                [bundle.mission_reference_index.get(str(key), -1) for key in effective_keys],
+                dtype=np.int32,
+            )
+            valid_mask = key_indices >= 0
+            if np.any(valid_mask):
+                weights_valid = weights_arr[valid_mask]
+                if weights_valid.size:
+                    key_indices_valid = key_indices[valid_mask]
+                    weights_by_key = np.bincount(
+                        key_indices_valid,
+                        weights=weights_valid,
+                        minlength=len(bundle.mission_reference_keys),
+                    )
+                    if sparse is not None and sparse.issparse(bundle.mission_reference_matrix):
+                        weighted_mass = weights_by_key @ bundle.mission_reference_matrix
+                    else:
+                        weighted_mass = weights_by_key @ np.asarray(
+                            bundle.mission_reference_matrix, dtype=np.float64
                         )
-                        mission_scaled_mass[mission] = mission_scaled_mass.get(mission, 0.0) + share_total * total_kg
+                    weighted_mass = np.asarray(weighted_mass, dtype=float).ravel()
+                    totals_vector = bundle.mission_totals_vector
+                    share_vector = np.divide(
+                        weighted_mass,
+                        totals_vector,
+                        out=np.zeros_like(weighted_mass, dtype=float),
+                        where=totals_vector > 0,
+                    )
+
+                    for mission, share_val, mass_val in zip(
+                        bundle.mission_names,
+                        share_vector,
+                        weighted_mass,
+                        strict=False,
+                    ):
+                        if share_val <= 0 and mass_val <= 0:
+                            continue
+                        mission_share[mission] = float(max(0.0, share_val))
+                        mission_official_mass[mission] = float(max(0.0, mass_val))
+                        mission_scaled_mass[mission] = float(max(0.0, share_val * total_kg))
 
     return CandidateFeatureContext(
         total_mass=total_kg,
@@ -1799,7 +1949,7 @@ def _prepare_feature_context(
 def _contexts_to_tensor_batch(
     contexts: Sequence[CandidateFeatureContext],
     processes: Sequence[pd.Series],
-    bundle: OfficialFeaturesBundle,
+    bundle: _OfficialFeaturesBundle,
     *,
     backend: str = "jax",
 ) -> FeatureTensorBatch:
@@ -1809,7 +1959,7 @@ def _contexts_to_tensor_batch(
     batch = len(contexts)
     max_items = max((ctx.num_items for ctx in contexts), default=0)
     keyword_names = tuple(_KEYWORD_FEATURES.keys())
-    mission_names = tuple(sorted(bundle.mission_totals.keys())) if bundle.mission_totals else tuple()
+    mission_names = bundle.mission_names
 
     def _alloc(shape: tuple[int, ...]) -> np.ndarray:
         return np.zeros(shape, dtype=float)
@@ -1831,7 +1981,7 @@ def _contexts_to_tensor_batch(
     num_items: list[int] = []
     official_comp: list[Dict[str, float]] = []
 
-    mission_totals = np.array([float(bundle.mission_totals.get(name, 0.0)) for name in mission_names], dtype=float)
+    mission_totals = np.asarray(bundle.mission_totals_vector, dtype=float)
 
     for idx, ctx in enumerate(contexts):
         count = ctx.num_items
@@ -1910,7 +2060,7 @@ def build_feature_tensor_batch(
     if not (len(picks) == len(weights) == len(processes) == len(regolith_pct)):
         raise ValueError("picks, weights, processes and regolith_pct must share the same length")
 
-    bundle = official_features_bundle()
+    bundle = _official_features_bundle()
     contexts = [
         _prepare_feature_context(p, w, r, bundle)
         for p, w, r in zip(picks, weights, regolith_pct)
@@ -2258,7 +2408,7 @@ def compute_feature_vectors_batch(
 
 
 def compute_feature_vector(
-    picks: pd.DataFrame | FeatureTensorBatch,
+    picks: pd.DataFrame | pl.DataFrame | FeatureTensorBatch,
     weights: Iterable[float] | None = None,
     process: pd.Series | None = None,
     regolith_pct: float | None = None,
@@ -2266,13 +2416,19 @@ def compute_feature_vector(
     if isinstance(picks, FeatureTensorBatch):
         return _compute_features_from_batch(picks)
 
-    if not isinstance(picks, pd.DataFrame):
-        raise TypeError("picks must be a pandas.DataFrame or a FeatureTensorBatch")
+    if isinstance(picks, pl.DataFrame):
+        picks_df = picks.to_pandas()
+    elif isinstance(picks, pd.DataFrame):
+        picks_df = picks
+    else:
+        raise TypeError(
+            "picks must be a pandas.DataFrame, a polars.DataFrame or a FeatureTensorBatch"
+        )
     if weights is None or process is None or regolith_pct is None:
         raise ValueError("weights, process and regolith_pct are required for DataFrame inputs")
 
-    bundle = official_features_bundle()
-    context = _prepare_feature_context(picks, weights, regolith_pct, bundle)
+    bundle = _official_features_bundle()
+    context = _prepare_feature_context(picks_df, weights, regolith_pct, bundle)
     batch = _contexts_to_tensor_batch([context], [process], bundle)
     features = _compute_features_from_batch(batch)
     return features[0] if features else {}
