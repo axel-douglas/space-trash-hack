@@ -471,6 +471,73 @@ def test_compute_targets_fallback_without_curated_data(
     assert result["estanqueidad"] == pytest.approx(tightness)
 
 
+@pytest.mark.skipif(
+    not (
+        model_training.HAS_LIGHTGBM
+        and model_training.HAS_SKL2ONNX
+        and model_training.HAS_ONNX
+    ),
+    reason="LightGBM/ONNX optional dependencies not available",
+)
+def test_train_lightgbm_gpu_exports_onnx(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rng = np.random.default_rng(0)
+    rows: list[dict[str, float | str | int]] = []
+
+    for idx in range(48):
+        row: dict[str, float | str | int] = {"process_id": f"P{idx % 4:02d}"}
+        for column in model_training.FEATURE_COLUMNS:
+            if column == "process_id":
+                continue
+            row[column] = float(rng.uniform(0.0, 1.0))
+
+        row["total_mass_kg"] = float(rng.uniform(5.0, 25.0))
+        row["mass_input_kg"] = float(max(row["total_mass_kg"] - rng.uniform(0.0, 4.0), 1.0))
+        row["num_items"] = float(rng.integers(3, 12))
+        row["difficulty_index"] = float(rng.uniform(0.1, 0.9))
+        row["moisture_frac"] = float(rng.uniform(0.0, 0.6))
+        row["gas_recovery_index"] = float(rng.uniform(0.0, 1.0))
+
+        rigidez = float(np.clip(0.35 + 0.45 * row["difficulty_index"] - 0.25 * row["moisture_frac"], 0.0, 1.0))
+        estanqueidad = float(
+            np.clip(0.4 + 0.4 * row["gas_recovery_index"] - 0.2 * row["moisture_frac"], 0.0, 1.0)
+        )
+        energy = float(25.0 + 55.0 * row["total_mass_kg"] + 12.0 * row["difficulty_index"])
+        water = float(6.0 + 48.0 * row["moisture_frac"] + 15.0 * row["hydrogen_rich_frac"])
+        crew = float(9.0 + 32.0 * row["difficulty_index"] + 4.0 * row["num_items"])
+
+        row["rigidez"] = rigidez
+        row["estanqueidad"] = estanqueidad
+        row["energy_kwh"] = energy
+        row["water_l"] = water
+        row["crew_min"] = crew
+        row["tightness_pass"] = 1 if estanqueidad > 0.6 else 0
+        level = int(np.clip(round(rigidez * 2) + 1, 1, 3))
+        row["rigidity_level"] = level
+        row["label_source"] = "simulated"
+        row["label_weight"] = 1.0
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+    pipeline, *_ = model_training._train_random_forest(df, seed=0)
+
+    onnx_path = tmp_path / "models" / "rexai_lightgbm.onnx"
+    monkeypatch.setattr(model_training, "LIGHTGBM_ONNX_PATH", onnx_path)
+
+    payload = model_training._train_lightgbm_gpu(pipeline, df, seed=0)
+
+    assert payload.get("backend") in {"gpu", "cpu"}
+    overall = payload.get("metrics", {}).get("overall", {})
+    assert overall, "Expected overall metrics from LightGBM training"
+    assert overall.get("mae", 1.0) < 5.0
+    assert onnx_path.exists(), "ONNX artefact was not written to disk"
+    path_label = payload.get("path")
+    assert path_label is not None
+    assert Path(path_label).name == onnx_path.name
+    assert payload.get("format") == "onnx"
+
+
 def test_compute_targets_relabels_weak_sources(monkeypatch: pytest.MonkeyPatch) -> None:
     picks, process, weights = _sample_inputs()
     features = generator.compute_feature_vector(picks, weights, process, 0.0)

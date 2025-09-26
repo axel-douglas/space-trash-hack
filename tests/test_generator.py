@@ -161,6 +161,15 @@ class DummyRegistry:
             "water_l": 1.2,
             "crew_min": 15.0,
             "uncertainty": {"rigidez": 0.05},
+            "comparisons": {
+                "lightgbm_gpu": {
+                    "rigidez": 0.78,
+                    "estanqueidad": 0.69,
+                    "energy_kwh": 3.4,
+                    "water_l": 1.1,
+                    "crew_min": 14.8,
+                }
+            },
         }
 
     def embed(self, features):
@@ -306,6 +315,7 @@ def test_generate_candidates_appends_inference_log(monkeypatch, tmp_path):
     auxiliary = cand.get("auxiliary")
     assert isinstance(auxiliary, dict)
     assert "passes_seal" in auxiliary
+    assert "lightgbm_gpu" in cand.get("model_variants", {})
 
     shutil.rmtree(log_dir.parent, ignore_errors=True)
 

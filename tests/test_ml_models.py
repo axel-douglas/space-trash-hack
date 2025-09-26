@@ -9,6 +9,7 @@ import zipfile
 from pathlib import Path
 
 import joblib
+import numpy as np
 import pytest
 import responses
 
@@ -45,6 +46,28 @@ def _prepare_bundle(tmp_path: Path) -> tuple[bytes, str]:
     payload = buffer.getvalue()
     digest = hashlib.sha256(payload).hexdigest()
     return payload, digest
+
+
+def _write_constant_lightgbm_model(path: Path, values: list[float]) -> None:
+    onnx = pytest.importorskip("onnx")
+    from onnx import TensorProto, helper
+
+    tensor = helper.make_tensor(
+        name="const_values",
+        data_type=TensorProto.FLOAT,
+        dims=[len(values)],
+        vals=[float(v) for v in values],
+    )
+    const_node = helper.make_node("Constant", inputs=[], outputs=["const"], value=tensor)
+    add_node = helper.make_node("Add", inputs=["input", "const"], outputs=["sum"])
+    graph = helper.make_graph(
+        nodes=[const_node, add_node],
+        name="ConstAdd",
+        inputs=[helper.make_tensor_value_info("input", TensorProto.FLOAT, ["N", len(values)])],
+        outputs=[helper.make_tensor_value_info("sum", TensorProto.FLOAT, ["N", len(values)])],
+    )
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)], ir_version=10)
+    onnx.save(model, path)
 
 
 @responses.activate
@@ -142,3 +165,56 @@ def test_model_registry_parses_label_summary(tmp_path, monkeypatch):
     label_text = registry.label_distribution_label()
     assert "mission×3" in label_text
     assert "simulated×2" in label_text
+
+
+@pytest.mark.skipif(not ml_models.HAS_ONNXRUNTIME, reason="onnxruntime not available")
+def test_model_registry_uses_lightgbm_variant(tmp_path, monkeypatch):
+    models_dir = tmp_path / "models"
+    models_dir.mkdir()
+
+    pipeline_path = models_dir / "rexai_regressor.joblib"
+    joblib.dump(DummyPipeline(), pipeline_path)
+
+    onnx_path = models_dir / "rexai_lightgbm.onnx"
+    constant_output = [0.72, 0.68, 4.5, 1.8, 18.0]
+    _write_constant_lightgbm_model(onnx_path, constant_output)
+
+    metadata_path = models_dir / "metadata_gold.json"
+    metadata_payload = {
+        "trained_at": "2025-01-01T00:00:00Z",
+        "trained_on": "synthetic_v0",
+        "post_transform_features": [f"f{i}" for i in range(len(ml_models.TARGET_COLUMNS))],
+        "random_forest": {"feature_importance": {"average": []}},
+        "artifacts": {
+            "lightgbm_gpu": {
+                "path": onnx_path.name,
+                "metrics": {"overall": {"mae": 0.5}},
+                "backend": "gpu",
+                "format": "onnx",
+            }
+        },
+    }
+    metadata_path.write_text(json.dumps(metadata_payload), encoding="utf-8")
+
+    monkeypatch.setattr(ml_models, "MODEL_DIR", models_dir)
+    monkeypatch.setattr(ml_models, "PIPELINE_PATH", pipeline_path)
+    monkeypatch.setattr(ml_models, "METADATA_PATH", metadata_path)
+    monkeypatch.setattr(ml_models, "LEGACY_METADATA_PATH", models_dir / "metadata.json")
+    monkeypatch.setattr(ml_models, "XGBOOST_PATH", models_dir / "rexai_xgboost.joblib")
+    monkeypatch.setattr(ml_models, "AUTOENCODER_PATH", models_dir / "rexai_autoencoder.pt")
+    monkeypatch.setattr(ml_models, "TABTRANSFORMER_PATH", models_dir / "rexai_tabtransformer.pt")
+    monkeypatch.setattr(ml_models, "TIGHTNESS_CLASSIFIER_PATH", models_dir / "rexai_class_tightness.joblib")
+    monkeypatch.setattr(ml_models, "RIGIDITY_CLASSIFIER_PATH", models_dir / "rexai_class_rigidity.joblib")
+    monkeypatch.setattr(ml_models, "LIGHTGBM_ONNX_PATH", onnx_path)
+
+    registry = ml_models.ModelRegistry(model_dir=models_dir)
+
+    assert registry.lightgbm_session is not None
+    assert registry.lightgbm_meta.get("backend") == "gpu"
+    assert registry.lightgbm_input_name
+
+    matrix = np.zeros((1, len(ml_models.TARGET_COLUMNS)), dtype=float)
+    variants = registry._predict_variants(matrix)
+    assert "lightgbm_gpu" in variants
+    for idx, target in enumerate(ml_models.TARGET_COLUMNS):
+        assert variants["lightgbm_gpu"][target] == pytest.approx(constant_output[idx])
