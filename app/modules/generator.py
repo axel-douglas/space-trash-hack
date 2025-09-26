@@ -14,7 +14,6 @@ candidate assembly.
 
 from __future__ import annotations
 
-import atexit
 import itertools
 import logging
 import math
@@ -22,13 +21,11 @@ import os
 import random
 import re
 import threading
-from datetime import UTC, datetime
-from pathlib import Path
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 from functools import lru_cache
 from typing import Any, Dict, Iterable, Mapping, NamedTuple, Sequence, Tuple
-
-import json
 
 try:
     import jax.numpy as jnp
@@ -74,8 +71,7 @@ from app.modules.data_sources import (
     to_lazy_frame,
     token_set,
 )
-from app.modules.logging_utils import append_inference_log, pq
-from app.modules import logging_utils
+from app.modules.logging_utils import append_inference_log
 
 # The demo previously collapsed multiple NASA inventory families (Packaging,
 # Other Packaging, Gloves, Foam Packaging, Food Packaging, Structural Elements
@@ -108,10 +104,8 @@ _CATEGORY_FAMILY_FALLBACKS: Dict[str, tuple[str, ...]] = {
 }
 try:  # Optional heavy dependencies; used for fast vectorization
     import pyarrow as pa
-    import pyarrow.parquet as pq
 except Exception:  # pragma: no cover - pyarrow is expected in production
     pa = None  # type: ignore[assignment]
-    pq = None  # type: ignore[assignment]
 
 from app.modules.execution import (
     DEFAULT_PARALLEL_THRESHOLD,
@@ -368,6 +362,122 @@ def append_inference_log(
     manager.write_event(event_time, event_payload)
 
 
+def _close_inference_log_writer() -> None:
+    """Close the cached Parquet writer used for inference logs."""
+
+    _INFERENCE_LOG_MANAGER.close()
+
+def _to_lazy_frame(
+    frame: pd.DataFrame | pl.DataFrame | pl.LazyFrame,
+) -> tuple[pl.LazyFrame, str]:
+    """Return a :class:`polars.LazyFrame` along with the original frame type."""
+
+    if isinstance(frame, pl.LazyFrame):
+        return frame, "lazy"
+    if isinstance(frame, pl.DataFrame):
+        return frame.lazy(), "polars"
+    if isinstance(frame, pd.DataFrame):
+        return pl.from_pandas(frame).lazy(), "pandas"
+    raise TypeError(f"Unsupported frame type: {type(frame)!r}")
+
+
+def _from_lazy_frame(lazy: pl.LazyFrame, frame_kind: str) -> pd.DataFrame | pl.DataFrame | pl.LazyFrame:
+    """Convert *lazy* back to the representation described by *frame_kind*."""
+
+    if frame_kind == "lazy":
+        return lazy
+
+    collected = lazy.collect()
+    if frame_kind == "polars":
+        return collected
+    if frame_kind == "pandas":
+        return collected.to_pandas()
+    raise ValueError(f"Unsupported frame kind: {frame_kind}")
+
+
+def _resolve_dataset_path(name: str) -> Path | None:
+    """Return the first dataset path that exists for *name*.
+
+    The helper checks the canonical ``datasets`` root alongside the ``raw``
+    subdirectory so callers do not need to remember where a file was stored.
+    """
+
+    candidates = (
+        DATASETS_ROOT / name,
+        DATASETS_ROOT / "raw" / name,
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _slugify(value: str) -> str:
+    """Convert *value* into a snake_case identifier safe for feature names."""
+
+    text = re.sub(r"[^0-9a-zA-Z]+", "_", str(value).strip().lower())
+    text = re.sub(r"_+", "_", text).strip("_")
+    return text or "value"
+
+
+def _load_regolith_vector() -> Dict[str, float]:
+    path = resolve_dataset_path("MGS-1_Martian_Regolith_Simulant_Recipe.csv")
+    if path is None:
+        path = DATASETS_ROOT / "raw" / "mgs1_oxides.csv"
+
+    if path and path.exists():
+        table_lazy = pl.scan_csv(path)
+        columns = table_lazy.columns
+
+        key_cols = [
+            col
+            for col in columns
+            if col.lower() in {"oxide", "component", "phase", "mineral"}
+        ]
+        value_cols = [
+            col
+            for col in columns
+            if any(token in col.lower() for token in ("wt", "weight", "percent"))
+        ]
+
+        key_col = key_cols[0] if key_cols else None
+        value_col = value_cols[0] if value_cols else None
+
+        if key_col and value_col:
+
+            def _clean_label(value: Any) -> str:
+                text = str(value or "").lower()
+                text = re.sub(r"[^0-9a-z]+", "_", text)
+                text = re.sub(r"_+", "_", text).strip("_")
+                return text
+
+            working_lazy = (
+                table_lazy.select(
+                    pl.col(key_col).alias("key"),
+                    pl.col(value_col).cast(pl.Float64, strict=False).alias("value"),
+                )
+                .drop_nulls()
+                .with_columns(
+                    pl.col("key").map_elements(_clean_label, return_dtype=pl.String)
+                )
+            )
+
+            working = working_lazy.collect()
+            if working.height:
+                values = working.get_column("value")
+                total = float(values.sum())
+                if total > 0:
+                    normalised = working.with_columns(
+                        (pl.col("value") / pl.lit(total)).alias("weight")
+                    )
+                    keys = normalised.get_column("key").to_list()
+                    weights = normalised.get_column("weight").to_numpy()
+                    return {
+                        str(key): float(weight)
+                        for key, weight in zip(keys, weights, strict=False)
+                        if key and weight is not None and np.isfinite(weight)
+                    }
+
 _COMPOSITION_DENSITY_MAP = {
     "Aluminum_pct": 2700.0,
     "Carbon_Fiber_pct": 1700.0,
@@ -553,7 +663,6 @@ class _OfficialFeaturesBundle(NamedTuple):
     mission_reference_keys: tuple[str, ...]
     mission_reference_index: Dict[str, int]
     mission_reference_matrix: Any
-    mission_reference_dense: np.ndarray
     mission_names: tuple[str, ...]
     mission_totals_vector: np.ndarray
     processing_metrics: Dict[str, Dict[str, float]]
@@ -563,6 +672,31 @@ class _OfficialFeaturesBundle(NamedTuple):
     l2l_category_features: Dict[str, Dict[str, float]]
     l2l_item_features: Dict[str, Dict[str, float]]
     l2l_hints: Dict[str, str]
+    mission_reference_dense: np.ndarray = np.zeros((0, 0), dtype=np.float64)
+
+
+_OfficialFeaturesBundle._field_defaults = {
+    "mission_reference_dense": np.zeros((0, 0), dtype=np.float64)
+}
+
+
+_ORIGINAL_OFFICIAL_BUNDLE_NEW = _OfficialFeaturesBundle.__new__
+
+
+def _official_features_bundle_new(cls, *args, **kwargs):
+    if "mission_reference_dense" not in kwargs:
+        if len(args) == len(_OfficialFeaturesBundle._fields) - 1:
+            args = (
+                *args[:11],
+                np.zeros((0, 0), dtype=np.float64),
+                *args[11:],
+            )
+        elif len(args) < len(_OfficialFeaturesBundle._fields):
+            kwargs["mission_reference_dense"] = np.zeros((0, 0), dtype=np.float64)
+    return _ORIGINAL_OFFICIAL_BUNDLE_NEW(cls, *args, **kwargs)
+
+
+_OfficialFeaturesBundle.__new__ = staticmethod(_official_features_bundle_new)
 
 
 _OfficialFeaturesBundle.__new__.__defaults__ = (
@@ -768,27 +902,27 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
         mission_reference_dense = np.asarray(mission_reference_matrix, dtype=np.float64)
 
     default = _OfficialFeaturesBundle(
-        value_columns,
-        composition_columns,
-        {},
-        {},
-        table_df,
-        np.empty((0, len(value_columns)), dtype=np.float64),
-        raw_bundle.mission_mass,
-        raw_bundle.mission_totals,
-        mission_reference_keys,
-        mission_reference_index,
-        mission_reference_matrix,
-        mission_reference_dense,
-        mission_names,
-        mission_totals_vector,
-        raw_bundle.processing_metrics,
-        raw_bundle.leo_mass_savings,
-        raw_bundle.propellant_benefits,
-        constants,
-        category_features,
-        item_features,
-        hints,
+        value_columns=value_columns,
+        composition_columns=composition_columns,
+        direct_map={},
+        category_tokens={},
+        table=table_df,
+        value_matrix=np.empty((0, len(value_columns)), dtype=np.float64),
+        mission_mass=raw_bundle.mission_mass,
+        mission_totals=raw_bundle.mission_totals,
+        mission_reference_keys=mission_reference_keys,
+        mission_reference_index=mission_reference_index,
+        mission_reference_matrix=mission_reference_matrix,
+        mission_names=mission_names,
+        mission_totals_vector=mission_totals_vector,
+        processing_metrics=raw_bundle.processing_metrics,
+        leo_mass_savings=raw_bundle.leo_mass_savings,
+        propellant_benefits=raw_bundle.propellant_benefits,
+        l2l_constants=constants,
+        l2l_category_features=category_features,
+        l2l_item_features=item_features,
+        l2l_hints=hints,
+        mission_reference_dense=mission_reference_dense,
     )
 
     if not value_columns or table_df.height == 0:
@@ -857,27 +991,27 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
             break
 
     return _OfficialFeaturesBundle(
-        value_columns,
-        composition_columns,
-        direct_map,
-        category_tokens,
-        table_df,
-        value_matrix,
-        raw_bundle.mission_mass,
-        raw_bundle.mission_totals,
-        mission_reference_keys,
-        mission_reference_index,
-        mission_reference_matrix,
-        mission_reference_dense,
-        mission_names,
-        mission_totals_vector,
-        raw_bundle.processing_metrics,
-        raw_bundle.leo_mass_savings,
-        raw_bundle.propellant_benefits,
-        constants,
-        category_features,
-        item_features,
-        hints,
+        value_columns=value_columns,
+        composition_columns=composition_columns,
+        direct_map=direct_map,
+        category_tokens=category_tokens,
+        table=table_df,
+        value_matrix=value_matrix,
+        mission_mass=raw_bundle.mission_mass,
+        mission_totals=raw_bundle.mission_totals,
+        mission_reference_keys=mission_reference_keys,
+        mission_reference_index=mission_reference_index,
+        mission_reference_matrix=mission_reference_matrix,
+        mission_names=mission_names,
+        mission_totals_vector=mission_totals_vector,
+        processing_metrics=raw_bundle.processing_metrics,
+        leo_mass_savings=raw_bundle.leo_mass_savings,
+        propellant_benefits=raw_bundle.propellant_benefits,
+        l2l_constants=constants,
+        l2l_category_features=category_features,
+        l2l_item_features=item_features,
+        l2l_hints=hints,
+        mission_reference_dense=mission_reference_dense,
     )
 
 def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], str]:
