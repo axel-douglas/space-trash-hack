@@ -21,7 +21,8 @@ import os
 import random
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
+import threading
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, NamedTuple, Sequence, Tuple
@@ -29,6 +30,16 @@ from typing import Any, Dict, Iterable, Mapping, NamedTuple, Tuple
 
 import numpy as np
 import pandas as pd
+
+try:  # Optional heavy dependencies; gracefully disable logging if missing
+    import pyarrow as pa
+except Exception:  # pragma: no cover - pyarrow is expected in production
+    pa = None  # type: ignore[assignment]
+
+try:  # ``deltalake`` provides lightweight Delta transactions
+    from deltalake.writer import write_deltalake
+except Exception:  # pragma: no cover - deltalake is expected in production
+    write_deltalake = None  # type: ignore[assignment]
 
 from app.modules.label_mapper import derive_recipe_id, lookup_labels
 from app.modules.ranking import derive_auxiliary_signals, score_recipe
@@ -40,6 +51,8 @@ except Exception:  # pragma: no cover - fallback when models are not available
 
 DATASETS_ROOT = Path(__file__).resolve().parents[2] / "datasets"
 LOGS_ROOT = Path(__file__).resolve().parents[2] / "data" / "logs"
+
+_INFERENCE_LOG_LOCK = threading.Lock()
 
 
 def _resolve_dataset_path(name: str) -> Path | None:
@@ -83,18 +96,22 @@ def _to_serializable(value: Any) -> Any:
     return str(value)
 
 
-def _append_inference_log(
+def _resolve_inference_log_dir(timestamp: datetime) -> Path:
+    """Return the Delta Lake directory for the given *timestamp*."""
+
+    return LOGS_ROOT / "inference" / timestamp.strftime("%Y%m%d")
+
+
+def _prepare_inference_event(
     input_features: Dict[str, Any],
     prediction: Dict[str, Any] | None,
     uncertainty: Dict[str, Any] | None,
     model_registry: Any | None,
-) -> None:
-    """Persist an inference event as a Parquet append."""
+    timestamp: datetime | None = None,
+) -> tuple[datetime, Dict[str, str | None]]:
+    """Build the serializable payload for an inference log event."""
 
-    try:
-        LOGS_ROOT.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        return
+    now = timestamp or datetime.now(UTC)
 
     model_hash = ""
     if model_registry is not None:
@@ -108,23 +125,63 @@ def _append_inference_log(
                     model_hash = str(value)
                     break
 
-    now = datetime.utcnow()
-    event = {
-        "timestamp": now.isoformat(),
+    payload: Dict[str, str | None] = {
+        "timestamp": now.isoformat(timespec="microseconds"),
         "input_features": json.dumps(_to_serializable(input_features or {}), sort_keys=True),
         "prediction": json.dumps(_to_serializable(prediction or {}), sort_keys=True),
         "uncertainty": json.dumps(_to_serializable(uncertainty or {}), sort_keys=True),
-        "model_hash": model_hash,
+        "model_hash": model_hash or None,
     }
 
-    log_path = LOGS_ROOT / f"inference_{now.strftime('%Y%m%d')}.parquet"
+    return now, payload
+
+
+def _append_inference_log(
+    input_features: Dict[str, Any],
+    prediction: Dict[str, Any] | None,
+    uncertainty: Dict[str, Any] | None,
+    model_registry: Any | None,
+) -> None:
+    """Persist an inference event using Delta transactions to avoid read-modify-write."""
+
+    if pa is None or write_deltalake is None:  # pragma: no cover - dependencies should exist
+        return
 
     try:
-        new_row = pd.DataFrame([event])
-        if log_path.exists():
-            existing = pd.read_parquet(log_path)
-            new_row = pd.concat([existing, new_row], ignore_index=True)
-        new_row.to_parquet(log_path, index=False)
+        LOGS_ROOT.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return
+
+    event_time, event_payload = _prepare_inference_event(
+        input_features=input_features,
+        prediction=prediction,
+        uncertainty=uncertainty,
+        model_registry=model_registry,
+    )
+
+    log_dir = _resolve_inference_log_dir(event_time)
+
+    try:
+        log_dir.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return
+
+    data = {
+        key: pa.array([value], type=pa.string())
+        for key, value in event_payload.items()
+    }
+
+    table = pa.table(data)
+
+    try:
+        with _INFERENCE_LOG_LOCK:
+            write_deltalake(
+                str(log_dir),
+                table,
+                mode="append",
+                schema_mode="merge",
+                engine="rust",
+            )
     except Exception:
         return
 
@@ -368,7 +425,6 @@ _GAS_MEAN_YIELD = _load_gas_mean_yield()
 _MEAN_REUSE = _load_mean_reuse()
 
 _OFFICIAL_FEATURES_PATH = DATASETS_ROOT / "rexai_nasa_waste_features.csv"
-_L2L_PARAMETERS = _load_l2l_parameters()
 
 _CATEGORY_SYNONYMS = {
     "foam": "foam packaging",
@@ -651,6 +707,9 @@ def _token_set(value: Any) -> frozenset[str]:
     return frozenset(normalized.split())
 
 
+_L2L_PARAMETERS = _load_l2l_parameters()
+
+
 class _OfficialFeaturesBundle(NamedTuple):
     value_columns: tuple[str, ...]
     composition_columns: tuple[str, ...]
@@ -715,7 +774,6 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
 
     direct_map: Dict[str, Dict[str, float]] = {}
     category_tokens: Dict[str, list[tuple[frozenset[str], Dict[str, float], str]]] = {}
-    category_tokens: Dict[str, list[tuple[frozenset[str], Dict[str, float]]]] = {}
 
     for _, row in table.iterrows():
         payload: Dict[str, float] = {}
@@ -760,19 +818,6 @@ def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], s
     category = _normalize_category(row.get("category", ""))
     if not category:
         return {}, ""
-        category_tokens.setdefault(category, []).append((tokens, payload))
-
-    return _OfficialFeaturesBundle(value_columns, composition_columns, direct_map, category_tokens)
-
-
-def _lookup_official_feature_values(row: pd.Series) -> Dict[str, float]:
-    bundle = _official_features_bundle()
-    if not bundle.value_columns:
-        return {}
-
-    category = _normalize_category(row.get("category", ""))
-    if not category:
-        return {}
 
     candidates = (
         row.get("material"),
@@ -796,15 +841,6 @@ def _lookup_official_feature_values(row: pd.Series) -> Dict[str, float]:
     matches = bundle.category_tokens.get(category)
     if not matches:
         return {}, ""
-            return payload
-
-    token_candidates = [value for value in candidates if value]
-    if not token_candidates:
-        return {}
-
-    matches = bundle.category_tokens.get(category)
-    if not matches:
-        return {}
 
     for candidate in token_candidates:
         tokens = _token_set(candidate)
@@ -815,16 +851,10 @@ def _lookup_official_feature_values(row: pd.Series) -> Dict[str, float]:
                 return payload, match_key
 
     return {}, ""
-        for reference_tokens, payload in matches:
-            if tokens.issubset(reference_tokens):
-                return payload
-
-    return {}
 
 
 def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
     bundle = _official_features_bundle()
-    if frame.empty:
     if not bundle.value_columns or frame.empty:
         return frame
 
