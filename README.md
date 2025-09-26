@@ -6,6 +6,20 @@ Demo ligera que muestra la lógica del "cerebro de reciclaje" para Marte:
 3) Generación de recetas (combinaciones + proceso)
 4) Resultados y trade-offs (Pareto, Sankey, métricas)
 
+## Módulos principales
+
+La refactorización de 2025 separó responsabilidades clave para mantener el
+código testeable y comprensible:
+
+| Módulo | Responsabilidades |
+| --- | --- |
+| `app/modules/data_sources.py` | Resuelve rutas dentro de `datasets/`, normaliza taxonomías NASA y expone el bundle cacheado de features oficiales. |
+| `app/modules/generator.py` | Mezcla residuos, selecciona procesos y construye candidatos junto con sus features listos para inferencia. |
+| `app/modules/logging_utils.py` | Serializa eventos de inferencia y los guarda en Delta Lake evitando condiciones de carrera. |
+
+Los tests unitarios apuntan a estos límites para garantizar que cada módulo
+permanezca enfocado en su dominio (ingesta, generación y logging).
+
 ## Requisitos
 - Python 3.10+
 - `pip install -r requirements.txt`
