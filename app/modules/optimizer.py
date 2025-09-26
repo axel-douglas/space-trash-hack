@@ -7,13 +7,17 @@ conjunto Pareto y métricas de convergencia (hipervolumen y dominancia).
 """
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Callable, Iterable
-import os
 
 import numpy as np
 import pandas as pd
+
+from app.modules.execution import (
+    DEFAULT_PARALLEL_THRESHOLD,
+    ExecutionBackend,
+    create_backend,
+)
 
 try:  # pragma: no cover - optional dependency
     from ax.service.ax_client import AxClient
@@ -24,14 +28,7 @@ except Exception:  # pragma: no cover - optional dependency missing
     AX_AVAILABLE = False
 
 
-_PARALLEL_THRESHOLD = 4
-
-
-def _max_workers_for(task_count: int) -> int:
-    if task_count <= 1:
-        return 1
-    cpu = os.cpu_count() or 1
-    return max(1, min(cpu, task_count))
+_PARALLEL_THRESHOLD = DEFAULT_PARALLEL_THRESHOLD
 
 
 @dataclass
@@ -54,6 +51,8 @@ def optimize_candidates(
     target: dict,
     n_evals: int = 30,
     process_ids: list[str] | None = None,
+    backend: ExecutionBackend | None = None,
+    backend_kind: str | None = None,
 ) -> tuple[list[Candidate], pd.DataFrame]:
     """Ejecuta un barrido de optimización multiobjetivo.
 
@@ -80,14 +79,18 @@ def optimize_candidates(
     history: list[OptimizationSummary] = []
 
     parallel_tasks = max(len(evaluated), n_evals, 1)
-    use_parallel = parallel_tasks >= _PARALLEL_THRESHOLD
-    worker_count = _max_workers_for(parallel_tasks) if use_parallel else 1
-    executor: ThreadPoolExecutor | None = None
-    if worker_count > 1:
-        executor = ThreadPoolExecutor(max_workers=worker_count)
+    local_backend = backend
+    owns_backend = False
+    if local_backend is None:
+        local_backend = create_backend(
+            parallel_tasks,
+            preferred=backend_kind,
+            threshold=_PARALLEL_THRESHOLD,
+        )
+        owns_backend = True
 
     try:
-        pareto = _pareto_front(evaluated, target, executor=executor)
+        pareto = _pareto_front(evaluated, target, backend=local_backend)
         hv = _hypervolume(pareto, evaluated, target)
         dom_ratio = _dominance_ratio(pareto, evaluated)
         history.append(
@@ -111,25 +114,22 @@ def optimize_candidates(
                     target,
                     n_evals,
                     process_ids or [],
-                    executor=executor,
+                    backend=local_backend,
                     start_iteration=len(history) - 1,
                 )
             else:
-                batch_size = worker_count if executor is not None else 1
+                batch_size = max(1, local_backend.max_workers)
                 produced = 0
                 while produced < n_evals:
                     current_batch = min(batch_size, n_evals - produced)
-                    tasks = [None] * current_batch
-                    if executor is not None:
-                        results = list(executor.map(lambda _x: sampler({}), tasks))
-                    else:
-                        results = [sampler({}) for _ in tasks]
+                    overrides = [{} for _ in range(current_batch)]
+                    results = local_backend.map(lambda override: sampler(override), overrides)
                     for candidate in results:
                         produced += 1
                         iteration += 1
                         if candidate:
                             evaluated.append(candidate)
-                        pareto = _pareto_front(evaluated, target, executor=executor)
+                        pareto = _pareto_front(evaluated, target, backend=local_backend)
                         hv = _hypervolume(pareto, evaluated, target)
                         dom_ratio = _dominance_ratio(pareto, evaluated)
                         score = float(candidate["score"]) if candidate else float("nan")
@@ -144,27 +144,27 @@ def optimize_candidates(
                                 pareto_size=len(pareto),
                             )
                         )
-            pareto = _pareto_front(evaluated, target, executor=executor)
+            pareto = _pareto_front(evaluated, target, backend=local_backend)
 
         pareto_sorted = sorted(pareto, key=lambda c: c.get("score", 0.0), reverse=True)
         history_df = pd.DataFrame(history)
         return pareto_sorted, history_df
     finally:
-        if executor is not None:
-            executor.shutdown()
+        if owns_backend and local_backend is not None:
+            local_backend.shutdown()
 
 
 def _pareto_front(
     candidates: list[Candidate],
     target: dict,
-    executor: ThreadPoolExecutor | None = None,
+    backend: ExecutionBackend | None = None,
 ) -> list[Candidate]:
     if not candidates:
         return []
 
     front: list[Candidate] = []
-    if executor is not None:
-        metrics_iter = executor.map(lambda c: _metrics(c, target), candidates)
+    if backend is not None and backend.max_workers > 1:
+        metrics_iter = backend.map(lambda c: _metrics(c, target), candidates)
     else:
         metrics_iter = (_metrics(c, target) for c in candidates)
     metrics_map = {id(cand): metrics for cand, metrics in zip(candidates, metrics_iter)}
@@ -281,7 +281,7 @@ def _run_bayesian_optimization(
     target: dict,
     n_evals: int,
     process_ids: list[str],
-    executor: ThreadPoolExecutor | None = None,
+    backend: ExecutionBackend | None = None,
     start_iteration: int = 0,
 ) -> None:
     if AxClient is None:
@@ -310,14 +310,14 @@ def _run_bayesian_optimization(
             "regolith_pct": float(params.get("regolith_pct", 0.0)),
             "process_choice": params.get("process_choice"),
         }
-        if executor is not None:
-            future = executor.submit(sampler, override)
+        if backend is not None:
+            future = backend.submit(sampler, override)
             candidate = future.result()
         else:
             candidate = sampler(override)
         if not candidate:
-            if executor is not None:
-                candidate = executor.submit(sampler, {}).result()
+            if backend is not None:
+                candidate = backend.submit(sampler, {}).result()
             else:
                 candidate = sampler({})
 
@@ -328,7 +328,7 @@ def _run_bayesian_optimization(
             evaluated.append(candidate)
 
         iteration += 1
-        pareto = _pareto_front(evaluated, target, executor=executor)
+        pareto = _pareto_front(evaluated, target, backend=backend)
         hv = _hypervolume(pareto, evaluated, target)
         dom_ratio = _dominance_ratio(pareto, evaluated)
         penalty = _penalty(candidate, target) if candidate else float("nan")

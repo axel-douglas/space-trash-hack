@@ -23,7 +23,6 @@ import os
 import random
 import re
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, NamedTuple, Sequence, Tuple
@@ -106,6 +105,11 @@ except Exception:  # pragma: no cover - pyarrow is expected in production
     pa = None  # type: ignore[assignment]
     pq = None  # type: ignore[assignment]
 
+from app.modules.execution import (
+    DEFAULT_PARALLEL_THRESHOLD,
+    ExecutionBackend,
+    create_backend,
+)
 from app.modules.label_mapper import derive_recipe_id, lookup_labels
 from app.modules.ranking import derive_auxiliary_signals, score_recipe
 
@@ -3161,14 +3165,7 @@ def _build_candidate(
 # ---------------------------------------------------------------------------
 
 
-_PARALLEL_THRESHOLD = 4
-
-
-def _max_workers_for(task_count: int) -> int:
-    if task_count <= 1:
-        return 1
-    cpu = os.cpu_count() or 1
-    return max(1, min(cpu, task_count))
+_PARALLEL_THRESHOLD = DEFAULT_PARALLEL_THRESHOLD
 
 
 def generate_candidates(
@@ -3179,6 +3176,8 @@ def generate_candidates(
     crew_time_low: bool = False,
     optimizer_evals: int = 0,
     use_ml: bool = True,
+    backend: ExecutionBackend | None = None,
+    backend_kind: str | None = None,
 ):
     """Generate *n* candidate recycling plans plus optional optimization history."""
 
@@ -3212,61 +3211,67 @@ def generate_candidates(
 
     candidates: list[dict] = []
     seeds = [_next_seed() for _ in range(n)]
-    worker_count = _max_workers_for(n) if n >= _PARALLEL_THRESHOLD else 1
-    executor: ThreadPoolExecutor | None = None
-    if worker_count > 1:
-        executor = ThreadPoolExecutor(max_workers=worker_count)
+    local_backend = backend
+    owns_backend = False
+    if local_backend is None:
+        task_count = max(n, 1)
+        local_backend = create_backend(
+            task_count,
+            preferred=backend_kind,
+            threshold=_PARALLEL_THRESHOLD,
+        )
+        owns_backend = True
     try:
-        if executor is not None:
-            results = executor.map(lambda seed: sampler({}, seed=seed), seeds)
-        else:
-            results = (sampler({}, seed=seed) for seed in seeds)
+        results = local_backend.map(lambda seed: sampler({}, seed=seed), seeds)
         for candidate in results:
             if candidate:
                 candidates.append(candidate)
-    finally:
-        if executor is not None:
-            executor.shutdown()
 
-    components_batch: list[CandidateComponents] = []
-    for _ in range(n):
-        bias = 2.0
-        picks = _pick_materials(df, rng, n=rng.choice([2, 3]), bias=bias)
-        components = _create_candidate_components(picks, proc_df, rng, {})
-        if components:
-            components_batch.append(components)
+        components_batch: list[CandidateComponents] = []
+        for _ in range(n):
+            bias = 2.0
+            picks = _pick_materials(df, rng, n=rng.choice([2, 3]), bias=bias)
+            components = _create_candidate_components(picks, proc_df, rng, {})
+            if components:
+                components_batch.append(components)
 
-    if components_batch:
-        _ = compute_feature_vector(
-            [component.picks for component in components_batch],
-            weights=[component.weights for component in components_batch],
-            process=[component.process for component in components_batch],
-            regolith_pct=[component.regolith_pct for component in components_batch],
-        )
-
-    attempts = 0
-    max_attempts = max(n * 2, 4)
-    while len(candidates) < n and attempts < max_attempts:
-        attempts += 1
-        candidate = sampler({})
-        if candidate:
-            candidates.append(candidate)
-
-    history = pd.DataFrame()
-    if optimizer_evals and optimizer_evals > 0:
-        try:
-            from app.modules.optimizer import optimize_candidates
-
-            pareto, history = optimize_candidates(
-                initial_candidates=candidates,
-                sampler=sampler,
-                target=target,
-                n_evals=int(optimizer_evals),
-                process_ids=process_ids,
+        if components_batch:
+            _ = compute_feature_vector(
+                [component.picks for component in components_batch],
+                weights=[component.weights for component in components_batch],
+                process=[component.process for component in components_batch],
+                regolith_pct=[component.regolith_pct for component in components_batch],
             )
-            candidates = pareto
-        except Exception:
-            history = pd.DataFrame()
+
+        attempts = 0
+        max_attempts = max(n * 2, 4)
+        while len(candidates) < n and attempts < max_attempts:
+            attempts += 1
+            candidate = sampler({})
+            if candidate:
+                candidates.append(candidate)
+
+        history = pd.DataFrame()
+        if optimizer_evals and optimizer_evals > 0:
+            try:
+                from app.modules.optimizer import optimize_candidates
+
+                pareto, history = optimize_candidates(
+                    initial_candidates=candidates,
+                    sampler=sampler,
+                    target=target,
+                    n_evals=int(optimizer_evals),
+                    process_ids=process_ids,
+                    backend=local_backend,
+                    backend_kind=backend_kind,
+                )
+                candidates = pareto
+            except Exception:
+                history = pd.DataFrame()
+
+    finally:
+        if owns_backend:
+            local_backend.shutdown()
 
     candidates.sort(key=lambda cand: cand.get("score", 0.0), reverse=True)
     return candidates, history

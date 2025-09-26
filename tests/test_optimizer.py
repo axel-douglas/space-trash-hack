@@ -1,7 +1,7 @@
 import random
 import types
 
-from app.modules import optimizer
+from app.modules import execution, optimizer
 
 
 def _make_candidate(score: float) -> optimizer.Candidate:
@@ -18,9 +18,9 @@ def _make_candidate(score: float) -> optimizer.Candidate:
 def test_optimize_candidates_parallel_heuristic(monkeypatch):
     monkeypatch.setattr(optimizer, "_PARALLEL_THRESHOLD", 1)
 
-    class DummyExecutor:
-        def __init__(self, max_workers: int):
-            self.max_workers = max_workers
+    class DummyBackend(execution.ExecutionBackend):
+        def __init__(self):
+            super().__init__(max_workers=4)
             self.map_calls = 0
             self.submit_calls = 0
             self.shutdown_called = False
@@ -37,8 +37,7 @@ def test_optimize_candidates_parallel_heuristic(monkeypatch):
         def shutdown(self):
             self.shutdown_called = True
 
-    dummy_executor = DummyExecutor(4)
-    monkeypatch.setattr(optimizer, "ThreadPoolExecutor", lambda max_workers: dummy_executor)
+    backend = DummyBackend()
 
     random.seed(42)
 
@@ -46,21 +45,28 @@ def test_optimize_candidates_parallel_heuristic(monkeypatch):
         return _make_candidate(random.random())
 
     initial = [_make_candidate(0.5)]
-    pareto, history = optimizer.optimize_candidates(initial, sampler, target={}, n_evals=3)
+    pareto, history = optimizer.optimize_candidates(
+        initial,
+        sampler,
+        target={},
+        n_evals=3,
+        backend=backend,
+    )
 
     assert len(history) == 4
     assert history.iteration.tolist() == [0, 1, 2, 3]
-    assert dummy_executor.map_calls >= 2
-    assert dummy_executor.shutdown_called is True
+    assert backend.map_calls >= 2
+    assert backend.submit_calls == 0
+    assert backend.shutdown_called is False
     assert pareto and all(isinstance(item, dict) for item in pareto)
 
 
 def test_optimize_candidates_parallel_ax(monkeypatch):
     monkeypatch.setattr(optimizer, "_PARALLEL_THRESHOLD", 1)
 
-    class DummyExecutor:
-        def __init__(self, max_workers: int):
-            self.max_workers = max_workers
+    class DummyBackend(execution.ExecutionBackend):
+        def __init__(self):
+            super().__init__(max_workers=4)
             self.map_calls = 0
             self.submit_calls = 0
             self.shutdown_called = False
@@ -77,8 +83,7 @@ def test_optimize_candidates_parallel_ax(monkeypatch):
         def shutdown(self):
             self.shutdown_called = True
 
-    dummy_executor = DummyExecutor(4)
-    monkeypatch.setattr(optimizer, "ThreadPoolExecutor", lambda max_workers: dummy_executor)
+    backend = DummyBackend()
 
     class DummyAxClient:
         def __init__(self, enforce_sequential_optimization: bool = True):
@@ -115,10 +120,12 @@ def test_optimize_candidates_parallel_ax(monkeypatch):
         target={},
         n_evals=2,
         process_ids=["P01"],
+        backend=backend,
     )
 
     assert len(history) == 3
     assert history.iteration.tolist() == [0, 1, 2]
-    assert dummy_executor.submit_calls >= 2
-    assert dummy_executor.shutdown_called is True
+    assert backend.submit_calls >= 2
+    assert backend.map_calls >= 1
+    assert backend.shutdown_called is False
     assert pareto and all(isinstance(item, dict) for item in pareto)
