@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import json
+import os
+import uuid
 from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from typing import Any
-import json
-import uuid
 
 import pandas as pd
 
@@ -77,6 +78,46 @@ def _entry_date(ts_iso: str) -> str:
     return dt.strftime("%Y-%m-%d")
 
 
+def _align_table_to_schema(table: "pa.Table" | "pa.RecordBatch", schema: "pa.Schema") -> "pa.Table":
+    """Return *table* aligned to *schema*, filling missing columns with nulls."""
+
+    if isinstance(table, pa.RecordBatch):
+        base_table = pa.Table.from_batches([table])
+    else:
+        base_table = table
+
+    columns = []
+    for field in schema:
+        if field.name in base_table.column_names:
+            column = base_table[field.name]
+            if column.type != field.type:
+                column = column.cast(field.type)
+        else:
+            column = pa.nulls(base_table.num_rows, type=field.type)
+        columns.append(column)
+
+    return pa.Table.from_arrays(columns, schema=schema)
+
+
+def _updated_schema(
+    existing_schema: "pa.Schema | None", row_schema: "pa.Schema"
+) -> tuple["pa.Schema", bool]:
+    """Return schema extended with any new fields from *row_schema*."""
+
+    if existing_schema is None:
+        return row_schema, False
+
+    schema = existing_schema
+    changed = False
+    existing_names = set(existing_schema.names)
+    for field in row_schema:
+        if field.name not in existing_names:
+            inferred = pa.field(field.name, field.type, nullable=True)
+            schema = schema.append(inferred)
+            changed = True
+    return schema, changed
+
+
 def _append_record(filename: str, payload: dict[str, Any]) -> None:
     _ensure_dirs()
     path = LOGS_DIR / filename
@@ -91,42 +132,37 @@ def _append_record(filename: str, payload: dict[str, Any]) -> None:
         df.to_parquet(path, index=False)
         return
 
-    row_dict = {key: [value] for key, value in payload.items()}
+    row_table = pa.Table.from_pydict({key: [value] for key, value in payload.items()})
 
     if not path.exists():
-        table = pa.Table.from_pydict(row_dict)
-        pq.write_table(table, path)
+        pq.write_table(row_table, path)
         return
 
     try:
         parquet_file = pq.ParquetFile(path)
         existing_schema = parquet_file.schema_arrow
-        existing_fields = list(existing_schema.names)
     except Exception:
+        parquet_file = None
         existing_schema = None
-        existing_fields = []
 
-    if existing_fields:
-        new_columns = [col for col in row_dict if col not in existing_fields]
-        if new_columns:
-            row_df = pd.DataFrame([payload])
-            existing = pd.read_parquet(path)
-            df = pd.concat([existing, row_df], ignore_index=True, sort=False)
-            df.to_parquet(path, index=False)
-            return
+    target_schema, schema_changed = _updated_schema(existing_schema, row_table.schema)
+    aligned_row = _align_table_to_schema(row_table, target_schema)
 
-        data = {}
-        for name in existing_fields:
-            data[name] = [payload.get(name)]
-        table = (
-            pa.Table.from_pydict(data, schema=existing_schema)
-            if existing_schema is not None
-            else pa.Table.from_pydict(data)
-        )
-    else:
-        table = pa.Table.from_pydict(row_dict)
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    with pq.ParquetWriter(temp_path, target_schema) as writer:
+        if parquet_file is not None:
+            for batch in parquet_file.iter_batches():
+                if schema_changed:
+                    aligned_batch = _align_table_to_schema(batch, target_schema)
+                else:
+                    aligned_batch = pa.Table.from_batches([batch])
+                writer.write_table(aligned_batch)
+        writer.write_table(aligned_row)
 
-    pq.write_table(table, path, append=True)
+    if parquet_file is not None:
+        del parquet_file
+
+    os.replace(temp_path, path)
 
 
 def append_impact(entry: ImpactEntry) -> str:
