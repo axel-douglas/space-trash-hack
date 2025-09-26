@@ -5,12 +5,11 @@ import numbers
 import random
 import shutil
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from deltalake import DeltaTable
-from datetime import datetime
-from typing import Dict
+from typing import Any, Dict
 
 import pandas as pd
 import pytest
@@ -22,6 +21,152 @@ from app.modules import data_sources, generator, logging_utils
 pl = generator.pl
 
 
+def test_append_inference_log_reuses_daily_writer(monkeypatch, tmp_path):
+    generator._INFERENCE_LOG_MANAGER.close()
+    monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
+    manager = generator._InferenceLogWriterManager()
+    monkeypatch.setattr(generator, "_INFERENCE_LOG_MANAGER", manager)
+
+    created_paths: list[Path] = []
+    write_calls: list[tuple[Path, int]] = []
+
+    class WriterSpy:
+        def __init__(self, path: str, schema: Any) -> None:  # pragma: no cover - test helper
+            self.path = Path(path)
+            self.schema = schema
+            self.write_count = 0
+
+        def write_table(self, table: Any) -> None:  # pragma: no cover - test helper
+            self.write_count += 1
+            write_calls.append((self.path, self.write_count))
+
+        def close(self) -> None:  # pragma: no cover - test helper
+            pass
+
+    def fake_writer(path: str, schema: Any) -> WriterSpy:
+        writer = WriterSpy(path, schema)
+        created_paths.append(writer.path)
+        return writer
+
+    monkeypatch.setattr(generator.pq, "ParquetWriter", fake_writer)
+
+    day = datetime(2024, 5, 4, 12, 0, tzinfo=UTC)
+    events = [
+        (
+            day,
+            {
+                "timestamp": day.isoformat(),
+                "input_features": "{}",
+                "prediction": "{}",
+                "uncertainty": "{}",
+                "model_hash": "abc",
+            },
+        ),
+        (
+            day.replace(hour=18),
+            {
+                "timestamp": day.replace(hour=18).isoformat(),
+                "input_features": "{\"foo\": 1}",
+                "prediction": "{\"bar\": 2}",
+                "uncertainty": "{}",
+                "model_hash": "def",
+            },
+        ),
+    ]
+
+    def fake_prepare(*args: Any, **kwargs: Any) -> tuple[datetime, Dict[str, str | None]]:
+        ts, payload = events.pop(0)
+        return ts, payload
+
+    monkeypatch.setattr(generator, "_prepare_inference_event", fake_prepare)
+
+    generator._append_inference_log({}, {}, {}, None)
+    generator._append_inference_log({}, {}, {}, None)
+
+    assert len(created_paths) == 1
+    expected_path = (
+        tmp_path
+        / "inference"
+        / "20240504"
+        / "inference_20240504.parquet"
+    )
+    assert created_paths[0] == expected_path
+    assert [count for _, count in write_calls] == [1, 2]
+
+    manager.close()
+
+
+def test_append_inference_log_rotates_daily(monkeypatch, tmp_path):
+    generator._INFERENCE_LOG_MANAGER.close()
+    monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
+    manager = generator._InferenceLogWriterManager()
+    monkeypatch.setattr(generator, "_INFERENCE_LOG_MANAGER", manager)
+
+    created_paths: list[Path] = []
+    closed_paths: list[Path] = []
+
+    class WriterSpy:
+        def __init__(self, path: str, schema: Any) -> None:  # pragma: no cover - test helper
+            self.path = Path(path)
+
+        def write_table(self, table: Any) -> None:  # pragma: no cover - test helper
+            pass
+
+        def close(self) -> None:  # pragma: no cover - test helper
+            closed_paths.append(self.path)
+
+    def fake_writer(path: str, schema: Any) -> WriterSpy:
+        writer = WriterSpy(path, schema)
+        created_paths.append(writer.path)
+        return writer
+
+    monkeypatch.setattr(generator.pq, "ParquetWriter", fake_writer)
+
+    day_one = datetime(2024, 5, 4, 23, 0, tzinfo=UTC)
+    day_two = datetime(2024, 5, 5, 0, 5, tzinfo=UTC)
+    events = [
+        (
+            day_one,
+            {
+                "timestamp": day_one.isoformat(),
+                "input_features": "{}",
+                "prediction": "{}",
+                "uncertainty": "{}",
+                "model_hash": None,
+            },
+        ),
+        (
+            day_two,
+            {
+                "timestamp": day_two.isoformat(),
+                "input_features": "{}",
+                "prediction": "{}",
+                "uncertainty": "{}",
+                "model_hash": None,
+            },
+        ),
+    ]
+
+    def fake_prepare(*args: Any, **kwargs: Any) -> tuple[datetime, Dict[str, str | None]]:
+        ts, payload = events.pop(0)
+        return ts, payload
+
+    monkeypatch.setattr(generator, "_prepare_inference_event", fake_prepare)
+
+    generator._append_inference_log({}, {}, {}, None)
+    assert len(created_paths) == 1
+    assert closed_paths == []
+
+    generator._append_inference_log({}, {}, {}, None)
+    assert len(created_paths) == 2
+    assert closed_paths == [
+        tmp_path / "inference" / "20240504" / "inference_20240504.parquet"
+    ]
+
+    manager.close()
+    assert closed_paths[-1] == (
+        tmp_path / "inference" / "20240505" / "inference_20240505.parquet"
+    )
 def _batched_feature_vectors(
     picks: pd.DataFrame,
     weights: list[float],
@@ -345,22 +490,6 @@ def test_generate_candidates_uses_parallel_backend(monkeypatch):
         }
     ))
     monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ([], {}))
-                {
-                    "kg": [1.0],
-                    "pct_mass": [100.0],
-                    "pct_volume": [100.0],
-                    "moisture_pct": [0.0],
-                    "difficulty_factor": [1.0],
-                    "density_kg_m3": [1.0],
-                    "category": ["packaging"],
-                    "flags": [""],
-                    "_problematic": [0],
-                    "_source_id": ["A"],
-                    "_source_category": ["packaging"],
-                    "_source_flags": [""],
-                    "material": ["foil"],
-                }
-    ))
     monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
 
     draws: list[float] = []

@@ -25,7 +25,10 @@ import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Mapping, Sequence, Tuple
+from datetime import UTC, datetime
+from pathlib import Path
+from functools import lru_cache
+from typing import Any, Dict, Iterable, Mapping, NamedTuple, Sequence, Tuple
 
 try:
     import jax.numpy as jnp
@@ -69,13 +72,121 @@ _OfficialFeaturesBundle = OfficialFeaturesBundle
 DATASETS_ROOT = Path(__file__).resolve().parents[2] / "datasets"
 LOGS_ROOT = Path(__file__).resolve().parents[2] / "data" / "logs"
 
-_INFERENCE_LOG_LOCK = threading.Lock()
-_INFERENCE_LOG_STATE: Dict[str, Any] = {
-    "date": None,
-    "path": None,
-    "schema": None,
-    "writer": None,
-}
+
+@dataclass(slots=True)
+class _InferenceWriterState:
+    """Book-keeping for an active Parquet writer."""
+
+    date_token: str
+    path: Path
+    schema: "pa.Schema"
+    writer: Any
+
+
+class _InferenceLogWriterManager:
+    """Manage a single append-only Parquet writer with daily rotation."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._state: _InferenceWriterState | None = None
+
+    def close(self) -> None:
+        """Close the active writer, if any."""
+
+        if pq is None:
+            return
+        with self._lock:
+            self._close_locked()
+
+    def _close_locked(self) -> None:
+        state = self._state
+        if state is None:
+            return
+        try:
+            state.writer.close()
+        except Exception:  # pragma: no cover - best effort cleanup
+            pass
+        self._state = None
+
+    def _open_locked(
+        self, timestamp: datetime, field_names: Iterable[str]
+    ) -> _InferenceWriterState | None:
+        if pa is None or pq is None:
+            return None
+
+        desired_fields = sorted(set(str(name) for name in field_names))
+        if not desired_fields:
+            return None
+
+        log_dir = _resolve_inference_log_dir(timestamp)
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            return None
+
+        date_token = timestamp.strftime("%Y%m%d")
+        path = log_dir / f"inference_{date_token}.parquet"
+        schema = pa.schema(pa.field(name, pa.string()) for name in desired_fields)
+
+        try:
+            writer = pq.ParquetWriter(str(path), schema=schema)
+        except Exception:
+            return None
+
+        state = _InferenceWriterState(
+            date_token=date_token,
+            path=path,
+            schema=schema,
+            writer=writer,
+        )
+        self._state = state
+        return state
+
+    def _ensure_state_locked(
+        self, timestamp: datetime, field_names: Iterable[str]
+    ) -> _InferenceWriterState | None:
+        state = self._state
+        desired_fields = sorted(set(str(name) for name in field_names))
+        if not desired_fields:
+            return None
+
+        date_token = timestamp.strftime("%Y%m%d")
+        if state is not None:
+            if state.date_token != date_token or set(state.schema.names) != set(
+                desired_fields
+            ):
+                self._close_locked()
+                state = None
+
+        if state is None:
+            state = self._open_locked(timestamp, desired_fields)
+
+        return state
+
+    def write_event(
+        self, timestamp: datetime, payload: Mapping[str, str | None]
+    ) -> None:
+        if pa is None or pq is None:
+            return
+
+        with self._lock:
+            state = self._ensure_state_locked(timestamp, payload.keys())
+            if state is None:
+                return
+
+            arrays = []
+            for field in state.schema:
+                arrays.append(pa.array([payload.get(field.name)], type=field.type))
+
+            table = pa.Table.from_arrays(arrays, schema=state.schema)
+
+            try:
+                state.writer.write_table(table)
+            except Exception:
+                self._close_locked()
+
+
+_INFERENCE_LOG_MANAGER = _InferenceLogWriterManager()
 
 
 def _to_lazy_frame(
@@ -153,102 +264,8 @@ def _resolve_inference_log_dir(timestamp: datetime) -> Path:
     return LOGS_ROOT / "inference" / timestamp.strftime("%Y%m%d")
 
 
-def _close_inference_log_writer_locked() -> None:
-    state = _INFERENCE_LOG_STATE
-    writer = state.get("writer")
-    if writer is not None:
-        try:
-            writer.close()
-        except Exception:
-            pass
-    state["writer"] = None
-    state["schema"] = None
-    state["date"] = None
-    state["path"] = None
-
-
-def _close_inference_log_writer() -> None:
-    if pq is None:
-        return
-    with _INFERENCE_LOG_LOCK:
-        _close_inference_log_writer_locked()
-
-
-def _next_inference_log_path(log_dir: Path, date_token: str) -> Path:
-    base_name = f"inference_{date_token}"
-    candidate = log_dir / f"{base_name}.parquet"
-    if not candidate.exists():
-        return candidate
-
-    index = 1
-    while True:
-        candidate = log_dir / f"{base_name}_{index:03d}.parquet"
-        if not candidate.exists():
-            return candidate
-        index += 1
-
-
-def _ensure_inference_log_writer_locked(
-    timestamp: datetime, field_names: Iterable[str]
-) -> tuple[pa.Schema | None, Any | None]:
-    if pa is None or pq is None:
-        return None, None
-
-    desired_fields = sorted(set(str(name) for name in field_names))
-    state = _INFERENCE_LOG_STATE
-
-    current_date = state.get("date")
-    date_token = timestamp.strftime("%Y%m%d")
-    schema: pa.Schema | None = state.get("schema")
-
-    if current_date != date_token:
-        _close_inference_log_writer_locked()
-        schema = None
-
-    if schema is not None:
-        existing_fields = list(schema.names)
-    else:
-        existing_fields = []
-
-    if set(existing_fields) != set(desired_fields):
-        if state.get("writer") is not None:
-            _close_inference_log_writer_locked()
-        all_fields = sorted(set(existing_fields) | set(desired_fields))
-        schema = pa.schema((pa.field(name, pa.string()) for name in all_fields))
-
-        log_dir = _resolve_inference_log_dir(timestamp)
-        log_dir.mkdir(parents=True, exist_ok=True)
-        path = _next_inference_log_path(log_dir, date_token)
-
-        try:
-            writer = pq.ParquetWriter(str(path), schema=schema)
-        except Exception:
-            return None, None
-
-        state["date"] = date_token
-        state["path"] = path
-        state["schema"] = schema
-        state["writer"] = writer
-        return schema, writer
-
-    writer = state.get("writer")
-    if writer is None:
-        log_dir = _resolve_inference_log_dir(timestamp)
-        log_dir.mkdir(parents=True, exist_ok=True)
-        path = _next_inference_log_path(log_dir, date_token)
-        try:
-            writer = pq.ParquetWriter(str(path), schema=schema)
-        except Exception:
-            return None, None
-        state["date"] = date_token
-        state["path"] = path
-        state["writer"] = writer
-
-    return schema, writer
-
-
 if pq is not None:  # pragma: no branch - guard for optional dependency
-    atexit.register(_close_inference_log_writer)
+    atexit.register(_INFERENCE_LOG_MANAGER.close)
 
 
 def _prepare_inference_event(
@@ -296,11 +313,6 @@ def _append_inference_log(
     if pa is None or pq is None:  # pragma: no cover - dependencies should exist
         return
 
-    try:
-        LOGS_ROOT.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        return
-
     event_time, event_payload = _prepare_inference_event(
         input_features=input_features,
         prediction=prediction,
@@ -308,24 +320,7 @@ def _append_inference_log(
         model_registry=model_registry,
     )
 
-    with _INFERENCE_LOG_LOCK:
-        schema, writer = _ensure_inference_log_writer_locked(
-            event_time, event_payload.keys()
-        )
-        if schema is None or writer is None:
-            return
-
-        arrays = []
-        for field in schema:
-            value = event_payload.get(field.name)
-            arrays.append(pa.array([value], type=field.type))
-
-        table = pa.Table.from_arrays(arrays, schema=schema)
-
-        try:
-            writer.write_table(table)
-        except Exception:
-            _close_inference_log_writer_locked()
+    _INFERENCE_LOG_MANAGER.write_event(event_time, event_payload)
 
 
 def _load_regolith_vector() -> Dict[str, float]:
@@ -733,6 +728,17 @@ def _token_set(value: Any) -> frozenset[str]:
     return frozenset(normalized.split())
 
 
+def _load_l2l_parameters() -> Mapping[str, Any]:
+    """Return optional Life-to-Life process parameters.
+
+    The production deployment sources these from reference datasets; the
+    open-source snapshot defaults to an empty mapping so the module can be
+    imported during tests without additional assets.
+    """
+
+    return {}
+
+
 _L2L_PARAMETERS = _load_l2l_parameters()
 
 
@@ -1015,8 +1021,8 @@ def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
     norm_exprs: list[pl.Expr] = []
     if "category" in existing_columns:
         norm_exprs.append(
-            pl.col("category").map_elements(normalize_category).alias("category_norm")
             pl.col("category")
+            .map_elements(normalize_category)
             .map_elements(_normalize_category, return_dtype=pl.String)
             .alias("category_norm")
         )
@@ -1030,8 +1036,8 @@ def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
     ):
         if source in existing_columns:
             norm_exprs.append(
-                pl.col(source).map_elements(normalize_item).alias(alias)
                 pl.col(source)
+                .map_elements(normalize_item)
                 .map_elements(_normalize_item, return_dtype=pl.String)
                 .alias(alias)
             )
