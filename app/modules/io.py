@@ -16,10 +16,10 @@ TARGETS_JSON= DATA_DIR / "targets_presets.json"
 PROBLEM_TAGS = {
     "multilayer": "Lámina multicapa (PE/PET/Al)",
     "thermal": "Pouches térmicos",
-    "CTB": "EVA / Cargo Transfer Bag",
+    "ctb": "EVA / Cargo Transfer Bag",
     "closed_cell": "Espuma técnica (ZOTEK F30)",
     "nitrile": "Guantes de nitrilo",
-    "struts": "Estructuras/estrús Al"
+    "struts": "Estructuras/estrús Al",
 }
 
 def _ensure_exists():
@@ -53,7 +53,9 @@ def load_waste_df() -> pd.DataFrame:
         category_lower.str.contains("glove"),
         category_lower.str.contains("aluminum"),
     ]
-    problem_exprs.extend(flags_lower.str.contains(tag) for tag in PROBLEM_TAGS)
+    problem_exprs.extend(
+        flags_lower.str.contains(tag) for tag in PROBLEM_TAGS.keys()
+    )
 
     problematic_expr = pl.any_horizontal(*problem_exprs)
 

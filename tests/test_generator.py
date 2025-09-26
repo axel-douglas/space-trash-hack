@@ -1905,6 +1905,7 @@ def test_prepare_waste_frame_density_missing_volume(monkeypatch):
         mission_reference_keys=(),
         mission_reference_index={},
         mission_reference_matrix=np.zeros((0, 0), dtype=np.float64),
+        mission_reference_dense=np.zeros((0, 0), dtype=np.float64),
         mission_names=(),
         mission_totals_vector=np.zeros(0, dtype=np.float64),
         processing_metrics={},
