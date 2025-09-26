@@ -14,6 +14,7 @@ candidate assembly.
 
 from __future__ import annotations
 
+import atexit
 import itertools
 import logging
 import math
@@ -54,23 +55,25 @@ try:  # Torch tensors may appear when the caller works in PyTorch land.
 except Exception:  # pragma: no cover - torch is optional
     torch = None  # type: ignore[assignment]
 
-from app.modules.data_sources import (
-    _CATEGORY_SYNONYMS,
-    DATASETS_ROOT,
-    GAS_MEAN_YIELD,
-    MEAN_REUSE,
-    REGOLITH_VECTOR,
-    L2LParameters as _L2LParameters,
-    from_lazy_frame,
-    load_l2l_parameters as _load_l2l_parameters,
-    normalize_category,
-    normalize_item,
-    official_features_bundle as _load_official_features_bundle,
-    resolve_dataset_path,
-    slugify,
-    to_lazy_frame,
-    token_set,
-)
+from app.modules import data_sources as ds
+
+_CATEGORY_SYNONYMS = ds._CATEGORY_SYNONYMS
+DATASETS_ROOT = ds.DATASETS_ROOT
+GAS_MEAN_YIELD = ds.GAS_MEAN_YIELD
+MEAN_REUSE = ds.MEAN_REUSE
+REGOLITH_VECTOR = ds.REGOLITH_VECTOR
+_L2LParameters = ds.L2LParameters
+_load_l2l_parameters = ds.load_l2l_parameters
+_load_official_features_bundle = ds.official_features_bundle
+normalize_category = ds.normalize_category
+normalize_item = ds.normalize_item
+token_set = ds.token_set
+to_lazy_frame = ds.to_lazy_frame
+from_lazy_frame = ds.from_lazy_frame
+resolve_dataset_path = ds.resolve_dataset_path
+slugify = ds.slugify
+_load_regolith_vector = ds._load_regolith_vector
+from app.modules import logging_utils
 from app.modules.logging_utils import append_inference_log
 
 # The demo previously collapsed multiple NASA inventory families (Packaging,
@@ -106,6 +109,11 @@ try:  # Optional heavy dependencies; used for fast vectorization
     import pyarrow as pa
 except Exception:  # pragma: no cover - pyarrow is expected in production
     pa = None  # type: ignore[assignment]
+
+try:
+    import pyarrow.parquet as pq
+except Exception:  # pragma: no cover - pyarrow is expected in production
+    pq = None  # type: ignore[assignment]
 
 from app.modules.execution import (
     DEFAULT_PARALLEL_THRESHOLD,
@@ -367,117 +375,6 @@ def _close_inference_log_writer() -> None:
 
     _INFERENCE_LOG_MANAGER.close()
 
-def _to_lazy_frame(
-    frame: pd.DataFrame | pl.DataFrame | pl.LazyFrame,
-) -> tuple[pl.LazyFrame, str]:
-    """Return a :class:`polars.LazyFrame` along with the original frame type."""
-
-    if isinstance(frame, pl.LazyFrame):
-        return frame, "lazy"
-    if isinstance(frame, pl.DataFrame):
-        return frame.lazy(), "polars"
-    if isinstance(frame, pd.DataFrame):
-        return pl.from_pandas(frame).lazy(), "pandas"
-    raise TypeError(f"Unsupported frame type: {type(frame)!r}")
-
-
-def _from_lazy_frame(lazy: pl.LazyFrame, frame_kind: str) -> pd.DataFrame | pl.DataFrame | pl.LazyFrame:
-    """Convert *lazy* back to the representation described by *frame_kind*."""
-
-    if frame_kind == "lazy":
-        return lazy
-
-    collected = lazy.collect()
-    if frame_kind == "polars":
-        return collected
-    if frame_kind == "pandas":
-        return collected.to_pandas()
-    raise ValueError(f"Unsupported frame kind: {frame_kind}")
-
-
-def _resolve_dataset_path(name: str) -> Path | None:
-    """Return the first dataset path that exists for *name*.
-
-    The helper checks the canonical ``datasets`` root alongside the ``raw``
-    subdirectory so callers do not need to remember where a file was stored.
-    """
-
-    candidates = (
-        DATASETS_ROOT / name,
-        DATASETS_ROOT / "raw" / name,
-    )
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    return None
-
-
-def _slugify(value: str) -> str:
-    """Convert *value* into a snake_case identifier safe for feature names."""
-
-    text = re.sub(r"[^0-9a-zA-Z]+", "_", str(value).strip().lower())
-    text = re.sub(r"_+", "_", text).strip("_")
-    return text or "value"
-
-
-def _load_regolith_vector() -> Dict[str, float]:
-    path = resolve_dataset_path("MGS-1_Martian_Regolith_Simulant_Recipe.csv")
-    if path is None:
-        path = DATASETS_ROOT / "raw" / "mgs1_oxides.csv"
-
-    if path and path.exists():
-        table_lazy = pl.scan_csv(path)
-        columns = table_lazy.columns
-
-        key_cols = [
-            col
-            for col in columns
-            if col.lower() in {"oxide", "component", "phase", "mineral"}
-        ]
-        value_cols = [
-            col
-            for col in columns
-            if any(token in col.lower() for token in ("wt", "weight", "percent"))
-        ]
-
-        key_col = key_cols[0] if key_cols else None
-        value_col = value_cols[0] if value_cols else None
-
-        if key_col and value_col:
-
-            def _clean_label(value: Any) -> str:
-                text = str(value or "").lower()
-                text = re.sub(r"[^0-9a-z]+", "_", text)
-                text = re.sub(r"_+", "_", text).strip("_")
-                return text
-
-            working_lazy = (
-                table_lazy.select(
-                    pl.col(key_col).alias("key"),
-                    pl.col(value_col).cast(pl.Float64, strict=False).alias("value"),
-                )
-                .drop_nulls()
-                .with_columns(
-                    pl.col("key").map_elements(_clean_label, return_dtype=pl.String)
-                )
-            )
-
-            working = working_lazy.collect()
-            if working.height:
-                values = working.get_column("value")
-                total = float(values.sum())
-                if total > 0:
-                    normalised = working.with_columns(
-                        (pl.col("value") / pl.lit(total)).alias("weight")
-                    )
-                    keys = normalised.get_column("key").to_list()
-                    weights = normalised.get_column("weight").to_numpy()
-                    return {
-                        str(key): float(weight)
-                        for key, weight in zip(keys, weights, strict=False)
-                        if key and weight is not None and np.isfinite(weight)
-                    }
-
 _COMPOSITION_DENSITY_MAP = {
     "Aluminum_pct": 2700.0,
     "Carbon_Fiber_pct": 1700.0,
@@ -506,12 +403,6 @@ _CATEGORY_DENSITY_DEFAULTS = {
     "eva waste": 240.0,
     "fabric": 350.0,
 }
-
-
-def _load_regolith_vector() -> Dict[str, float]:
-    """Return a copy of the shared regolith composition vector."""
-
-    return dict(REGOLITH_VECTOR)
 
 
 def _normalize_category(value: Any) -> str:
