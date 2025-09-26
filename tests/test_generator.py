@@ -1304,7 +1304,7 @@ def test_compute_feature_vector_dataframe_matches_tensor_batch():
     )
 
     tensor_batch = generator.build_feature_tensor_batch(
-        [prepared], [weights], [process], [regolith_pct]
+        [prepared], [weights], [process], [regolith_pct], backend="numpy"
     )
     tensor_features = generator.compute_feature_vector(tensor_batch)
 
@@ -1314,6 +1314,21 @@ def test_compute_feature_vector_dataframe_matches_tensor_batch():
     assert set(tensor_features) == set(dataframe_features)
     for key, value in dataframe_features.items():
         lhs = tensor_features[key]
+        if isinstance(value, numbers.Real):
+            assert lhs == pytest.approx(value, rel=1e-6, abs=1e-8)
+        else:
+            assert lhs == value
+
+    tensor_mapping = {
+        field: getattr(tensor_batch, field)
+        for field in generator.FeatureTensorBatch.__annotations__
+    }
+    mapping_features = generator.compute_feature_vector(tensor_mapping)
+    assert isinstance(mapping_features, list) and mapping_features
+    mapping_features = mapping_features[0]
+    assert set(mapping_features) == set(tensor_features)
+    for key, value in tensor_features.items():
+        lhs = mapping_features[key]
         if isinstance(value, numbers.Real):
             assert lhs == pytest.approx(value, rel=1e-6, abs=1e-8)
         else:
@@ -1511,6 +1526,9 @@ def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
         mission_reference_keys=mission_reference_keys,
         mission_reference_index=mission_reference_index,
         mission_reference_matrix=mission_reference_matrix,
+        mission_reference_dense=np.asarray(mission_reference_matrix.todense())
+        if generator.sparse is not None and generator.sparse.issparse(mission_reference_matrix)
+        else np.asarray(mission_reference_matrix, dtype=np.float64),
         mission_names=mission_names,
         mission_totals_vector=mission_totals_vector,
         processing_metrics={"gateway_i": {"processing_o2_ch4_yield_kg": 5.0}},
@@ -1627,6 +1645,9 @@ def test_prepare_waste_frame_injects_l2l_features(monkeypatch):
         mission_reference_keys=(),
         mission_reference_index={},
         mission_reference_matrix=empty_reference,
+        mission_reference_dense=np.asarray(empty_reference.todense())
+        if generator.sparse is not None and generator.sparse.issparse(empty_reference)
+        else np.asarray(empty_reference, dtype=np.float64),
         mission_names=(),
         mission_totals_vector=np.zeros(0, dtype=np.float64),
         processing_metrics={},
@@ -1955,6 +1976,9 @@ def test_compute_feature_vector_uses_l2l_packaging_ratio(monkeypatch):
         mission_reference_keys=(),
         mission_reference_index={},
         mission_reference_matrix=empty_reference,
+        mission_reference_dense=np.asarray(empty_reference.todense())
+        if generator.sparse is not None and generator.sparse.issparse(empty_reference)
+        else np.asarray(empty_reference, dtype=np.float64),
         mission_names=(),
         mission_totals_vector=np.zeros(0, dtype=np.float64),
         processing_metrics={},
