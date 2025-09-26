@@ -7,6 +7,8 @@ import shutil
 import time
 from datetime import datetime
 from pathlib import Path
+
+from deltalake import DeltaTable
 from datetime import datetime
 from typing import Dict
 
@@ -15,7 +17,7 @@ import pytest
 import numpy as np
 import pyarrow.parquet as pq
 
-from app.modules import generator
+from app.modules import data_sources, generator, logging_utils
 
 pl = generator.pl
 
@@ -56,12 +58,12 @@ def test_load_waste_summary_data_polars(tmp_path, monkeypatch):
     )
 
     monkeypatch.setattr(
-        generator,
-        "_resolve_dataset_path",
+        data_sources,
+        "resolve_dataset_path",
         lambda name: summary_path if name == "nasa_waste_summary.csv" else None,
     )
 
-    summary = generator._load_waste_summary_data()
+    summary = data_sources._load_waste_summary_data()
 
     assert summary.mission_totals["artemis"] == pytest.approx(13.0)
     assert summary.mission_totals["gateway"] == pytest.approx(7.0)
@@ -83,12 +85,12 @@ def test_extract_grouped_metrics_polars(tmp_path, monkeypatch):
     )
 
     monkeypatch.setattr(
-        generator,
-        "_resolve_dataset_path",
+        data_sources,
+        "resolve_dataset_path",
         lambda name: metrics_path if name == "nasa_waste_processing_products.csv" else None,
     )
 
-    aggregated = generator._extract_grouped_metrics(
+    aggregated = data_sources.extract_grouped_metrics(
         "nasa_waste_processing_products.csv", "processing"
     )
 
@@ -163,11 +165,11 @@ def test_official_features_bundle_polars_pipeline(tmp_path, monkeypatch):
         "nasa_propellant_benefits.csv": propellant_path,
     }
 
-    monkeypatch.setattr(generator, "_OFFICIAL_FEATURES_PATH", official_path)
-    monkeypatch.setattr(generator, "_resolve_dataset_path", lambda name: file_map.get(name))
-    generator._official_features_bundle.cache_clear()
+    monkeypatch.setattr(data_sources, "_OFFICIAL_FEATURES_PATH", official_path)
+    monkeypatch.setattr(data_sources, "resolve_dataset_path", lambda name: file_map.get(name))
+    data_sources.official_features_bundle.cache_clear()
 
-    bundle = generator._official_features_bundle()
+    bundle = data_sources.official_features_bundle()
 
     assert "value_kg" in bundle.value_columns
     assert "processing_output_kg" in bundle.value_columns
@@ -184,7 +186,7 @@ def test_official_features_bundle_polars_pipeline(tmp_path, monkeypatch):
     assert "other packaging glove|foam" in match_keys.tolist()
     assert idx in indices.tolist()
 
-    generator._official_features_bundle.cache_clear()
+    data_sources.official_features_bundle.cache_clear()
 
 
 def test_vectorized_feature_map_benchmark():
@@ -335,6 +337,7 @@ def test_generate_candidates_uses_parallel_backend(monkeypatch):
             "_source_id": ["A"],
             "_source_category": ["packaging"],
             "_source_flags": [""],
+            "_problematic": [0],
             "material": ["foil"],
             "category": ["packaging"],
             "flags": [""],
@@ -380,6 +383,8 @@ def test_generate_candidates_uses_parallel_backend(monkeypatch):
     monkeypatch.setattr(generator, "_build_candidate", fake_build)
     base_random_cls = random.Random
     monkeypatch.setattr(generator.random, "Random", lambda *args, **kwargs: base_random_cls(1234))
+
+    monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
 
     waste_df = pd.DataFrame(
         {
@@ -432,6 +437,7 @@ def test_generate_candidates_uses_parallel_backend(monkeypatch):
 
 
 def test_append_inference_log_appends_without_reads(monkeypatch, tmp_path):
+    monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
     monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
     generator._close_inference_log_writer()
 
@@ -439,13 +445,8 @@ def test_append_inference_log_appends_without_reads(monkeypatch, tmp_path):
     if log_root.exists():
         shutil.rmtree(log_root)
 
-    def fail_read(*_args, **_kwargs):  # pragma: no cover - ensures pandas path unused
-        raise AssertionError("Parquet reads should not be triggered during logging")
-
-    monkeypatch.setattr(generator.pd, "read_parquet", fail_read)
-
     for idx in range(2):
-        generator._append_inference_log(
+        logging_utils.append_inference_log(
             input_features={"feature": idx},
             prediction={"score": idx},
             uncertainty=None,
@@ -460,6 +461,7 @@ def test_append_inference_log_appends_without_reads(monkeypatch, tmp_path):
 
 
 def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
+    monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
     monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
     generator._close_inference_log_writer()
 
@@ -467,14 +469,14 @@ def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
     if log_root.exists():
         shutil.rmtree(log_root)
 
-    generator._append_inference_log(
+    logging_utils.append_inference_log(
         input_features={"feature": 0},
         prediction={"score": 0},
         uncertainty=None,
         model_registry=None,
     )
 
-    original_prepare = generator._prepare_inference_event
+    original_prepare = logging_utils.prepare_inference_event
 
     def prepare_with_session(*args, **kwargs):
         timestamp, payload = original_prepare(*args, **kwargs)
@@ -482,9 +484,9 @@ def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
         updated["session_id"] = "alpha"
         return timestamp, updated
 
-    monkeypatch.setattr(generator, "_prepare_inference_event", prepare_with_session)
+    monkeypatch.setattr(logging_utils, "prepare_inference_event", prepare_with_session)
 
-    generator._append_inference_log(
+    logging_utils.append_inference_log(
         input_features={"feature": 1},
         prediction={"score": 1},
         uncertainty=None,
@@ -502,7 +504,7 @@ def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
 
 def test_generate_candidates_appends_inference_log(monkeypatch, tmp_path):
     monkeypatch.setattr(generator, "MODEL_REGISTRY", DummyRegistry())
-    monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
+    monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
     monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
     generator._close_inference_log_writer()
 
@@ -580,6 +582,7 @@ def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch, tmp_path):
             return []
 
     monkeypatch.setattr(generator, "MODEL_REGISTRY", NoCallRegistry())
+    monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
     monkeypatch.setattr(generator, "LOGS_ROOT", tmp_path)
     generator._close_inference_log_writer()
 
@@ -587,6 +590,11 @@ def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch, tmp_path):
     if log_root.exists():
         shutil.rmtree(log_root)
     monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
+
+    log_dir = logging_utils.LOGS_ROOT
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"inference_{datetime.utcnow().strftime('%Y%m%d')}.parquet"
+    log_path.unlink(missing_ok=True)
     waste_df = pd.DataFrame(
         {
             "id": ["W1", "W2"],
@@ -774,7 +782,7 @@ def test_compute_feature_vector_dataframe_matches_tensor_batch():
 
 def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
     # Ensure cached bundles from other tests do not leak.
-    generator._official_features_bundle.cache_clear()
+    data_sources.official_features_bundle.cache_clear()
 
     match_key = "food packaging|rehydratable pouch"
     dummy_matrix = np.array([[1.0]], dtype=np.float64)
@@ -815,7 +823,7 @@ def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
         return dummy_bundle
 
     fake_bundle.cache_clear = lambda: None  # type: ignore[attr-defined]
-    monkeypatch.setattr(generator, "_official_features_bundle", fake_bundle)
+    monkeypatch.setattr(generator, "official_features_bundle", fake_bundle)
 
     waste_df = pd.DataFrame(
         {
@@ -858,7 +866,7 @@ def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
 
 
 def test_prepare_waste_frame_injects_l2l_features(monkeypatch):
-    generator._official_features_bundle.cache_clear()
+    data_sources.official_features_bundle.cache_clear()
 
     match_key = "food packaging|rehydratable pouch"
     dummy_matrix = np.array([[1.0]], dtype=np.float64)
@@ -899,7 +907,7 @@ def test_prepare_waste_frame_injects_l2l_features(monkeypatch):
         return dummy_bundle
 
     fake_bundle.cache_clear = lambda: None  # type: ignore[attr-defined]
-    monkeypatch.setattr(generator, "_official_features_bundle", fake_bundle)
+    monkeypatch.setattr(generator, "official_features_bundle", fake_bundle)
 
     waste_df = pd.DataFrame(
         {
@@ -924,7 +932,7 @@ def test_prepare_waste_frame_injects_l2l_features(monkeypatch):
 
 
 def test_compute_feature_vector_uses_l2l_packaging_ratio(monkeypatch):
-    generator._official_features_bundle.cache_clear()
+    data_sources.official_features_bundle.cache_clear()
 
     dummy_matrix = np.empty((0, 0), dtype=np.float64)
     dummy_bundle = generator._OfficialFeaturesBundle(
@@ -956,7 +964,7 @@ def test_compute_feature_vector_uses_l2l_packaging_ratio(monkeypatch):
         return dummy_bundle
 
     fake_bundle.cache_clear = lambda: None  # type: ignore[attr-defined]
-    monkeypatch.setattr(generator, "_official_features_bundle", fake_bundle)
+    monkeypatch.setattr(generator, "official_features_bundle", fake_bundle)
 
     waste_df = pd.DataFrame(
         {

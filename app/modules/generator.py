@@ -6,10 +6,10 @@ artifacts are available, predictions are served from the trained
 RandomForest/XGBoost ensemble; otherwise the fallback heuristics ensure
 the UI remains functional.
 
-The code historically suffered from duplicated blocks introduced during
-rapid prototyping.  The refactor below consolidates the logic into
-clear, reusable helpers so that both the app runtime and the training
-pipeline can rely on a single source of truth.
+Reference dataset loading and inference logging responsibilities now live
+in :mod:`app.modules.data_sources` and :mod:`app.modules.logging_utils`
+respectively so that this file focuses on feature engineering and
+candidate assembly.
 """
 
 from __future__ import annotations
@@ -22,13 +22,10 @@ import math
 import os
 import random
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from datetime import UTC, datetime
-import threading
-from functools import lru_cache
-from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, NamedTuple, Sequence, Tuple
+from typing import Any, Dict, Iterable, Mapping, Sequence, Tuple
 
 try:
     import jax.numpy as jnp
@@ -43,6 +40,15 @@ import numpy as np
 import pandas as pd
 import polars as pl
 
+from app.modules.data_sources import (
+    GAS_MEAN_YIELD,
+    MEAN_REUSE,
+    REGOLITH_VECTOR,
+    OfficialFeaturesBundle,
+    normalize_category,
+    normalize_item,
+    official_features_bundle,
+)
 try:  # Optional heavy dependencies; gracefully disable logging if missing
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -51,6 +57,7 @@ except Exception:  # pragma: no cover - pyarrow is expected in production
     pq = None  # type: ignore[assignment]
 
 from app.modules.label_mapper import derive_recipe_id, lookup_labels
+from app.modules.logging_utils import append_inference_log
 from app.modules.ranking import derive_auxiliary_signals, score_recipe
 
 try:  # Lazy import to avoid circular dependency during training pipelines
@@ -58,6 +65,7 @@ try:  # Lazy import to avoid circular dependency during training pipelines
 except Exception:  # pragma: no cover - fallback when models are not available
     MODEL_REGISTRY = None
 
+_OfficialFeaturesBundle = OfficialFeaturesBundle
 DATASETS_ROOT = Path(__file__).resolve().parents[2] / "datasets"
 LOGS_ROOT = Path(__file__).resolve().parents[2] / "data" / "logs"
 
@@ -361,219 +369,6 @@ def _load_regolith_vector() -> Dict[str, float]:
                     if pd.notna(normalised.iloc[idx])
                 }
 
-    return {"sio2": 0.48, "feot": 0.18, "mgo": 0.13, "cao": 0.055, "so3": 0.07, "h2o": 0.032}
-
-
-def _load_gas_mean_yield() -> float:
-    path = DATASETS_ROOT / "raw" / "nasa_trash_to_gas.csv"
-    if path.exists():
-        table = pd.read_csv(path)
-        ratio = table["o2_ch4_yield_kg"] / table["water_makeup_kg"].clip(lower=1e-6)
-        return float(ratio.mean())
-    return 6.0
-
-
-def _load_mean_reuse() -> float:
-    path = DATASETS_ROOT / "raw" / "logistics_to_living.csv"
-    if path.exists():
-        table = pd.read_csv(path)
-        efficiency = (
-            (table["outfitting_replaced_kg"] - table["residual_waste_kg"]) / table["packaging_kg"].clip(lower=1e-6)
-        ).clip(lower=0)
-        return float(efficiency.mean())
-    return 0.6
-
-
-@dataclass
-class _L2LParameters:
-    constants: Dict[str, float]
-    category_features: Dict[str, Dict[str, float]]
-    item_features: Dict[str, Dict[str, float]]
-    hints: Dict[str, str]
-
-
-def _parse_l2l_numeric(value: Any) -> Dict[str, float]:
-    """Return numeric representations for Logistics-to-Living values."""
-
-    result: Dict[str, float] = {}
-    if value is None:
-        return result
-
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        if np.isfinite(value):
-            result["value"] = float(value)
-        return result
-
-    text = str(value).strip()
-    if not text:
-        return result
-
-    cleaned = text.replace(",", "").replace("—", "-").replace("–", "-").replace("−", "-")
-    numbers = [
-        float(match)
-        for match in re.findall(r"-?\d+(?:\.\d+)?", cleaned)
-        if match not in {"-"}
-    ]
-    if not numbers:
-        return result
-
-    lowered = cleaned.lower()
-    if any(token in lowered for token in (" per ", ":", "/")) and len(numbers) >= 2:
-        denominator = numbers[1]
-        if denominator:
-            result["value"] = numbers[0] / denominator
-            result["numerator"] = numbers[0]
-            result["denominator"] = denominator
-        else:
-            result["value"] = numbers[0]
-        return result
-
-    if "-" in cleaned and len(numbers) >= 2:
-        result["min"] = numbers[0]
-        result["max"] = numbers[1]
-        result["value"] = float(np.mean(numbers[:2]))
-        return result
-
-    result["value"] = numbers[0]
-    if len(numbers) > 1:
-        result["extra"] = numbers[1]
-    return result
-
-
-def _feature_name_from_parts(*parts: str) -> str:
-    return "_".join(part for part in (_slugify(part) for part in parts if part) if part)
-
-
-def _load_l2l_parameters() -> _L2LParameters:
-    path = _resolve_dataset_path("l2l_parameters.csv")
-    if path is None or not path.exists():
-        return _L2LParameters({}, {}, {}, {})
-
-    table = pd.read_csv(path)
-    if table.empty:
-        return _L2LParameters({}, {}, {}, {})
-
-    normalized_cols = {col.lower(): col for col in table.columns}
-    category_col = normalized_cols.get("category")
-    subitem_col = normalized_cols.get("subitem")
-
-    descriptor_cols = [
-        normalized_cols[name]
-        for name in ("parameter", "metric", "key", "feature", "name", "field")
-        if name in normalized_cols
-    ]
-    value_candidates = [
-        column
-        for column in table.columns
-        if column not in {category_col, subitem_col}
-        and column not in descriptor_cols
-        and column.lower() not in {"page_hint", "units", "unit", "notes"}
-    ]
-
-    constants: Dict[str, float] = {}
-    category_features: Dict[str, Dict[str, float]] = {}
-    item_features: Dict[str, Dict[str, float]] = {}
-    hints: Dict[str, str] = {}
-
-    global_categories = {
-        "geometry",
-        "logistics",
-        "scenario",
-        "scenarios",
-        "testbed",
-        "ops",
-        "operations",
-        "materials",
-        "material",
-        "global",
-        "constants",
-    }
-
-    for _, row in table.iterrows():
-        category_value = row.get(category_col, "") if category_col else ""
-        category_norm = _normalize_category(category_value)
-        subitem_value = row.get(subitem_col, "") if subitem_col else ""
-        subitem_norm = _normalize_item(subitem_value) if subitem_value else ""
-
-        descriptor = ""
-        for candidate in descriptor_cols:
-            value = str(row.get(candidate, "")).strip()
-            if value:
-                descriptor = value
-                break
-
-        hint = str(row.get(normalized_cols.get("page_hint", "page_hint"), "")).strip()
-
-        target_map: Dict[str, Dict[str, float]] | None
-        key: str | None
-
-        if category_norm in global_categories or not category_norm:
-            target_map = None
-            key = None
-        elif subitem_norm:
-            key = f"{category_norm}|{subitem_norm}"
-            target_map = item_features
-        else:
-            key = category_norm
-            target_map = category_features
-
-        base_parts = ["l2l", category_norm]
-        if subitem_norm:
-            base_parts.append(subitem_norm)
-        if descriptor:
-            base_parts.append(descriptor)
-
-        for column in value_candidates:
-            payload = _parse_l2l_numeric(row.get(column))
-            if not payload:
-                continue
-
-            for suffix, numeric_value in payload.items():
-                if not np.isfinite(numeric_value):
-                    continue
-                name_parts = list(base_parts)
-                if column:
-                    name_parts.append(column)
-                if suffix not in {"value"}:
-                    name_parts.append(suffix)
-                feature_name = _feature_name_from_parts(*name_parts)
-                if not feature_name:
-                    continue
-
-                if category_norm in global_categories or not category_norm:
-                    constants[feature_name] = float(numeric_value)
-                elif target_map is not None and key is not None:
-                    entry = target_map.setdefault(key, {})
-                    entry[feature_name] = float(numeric_value)
-                else:
-                    constants[feature_name] = float(numeric_value)
-
-                if hint:
-                    hints[feature_name] = hint
-
-    return _L2LParameters(constants, category_features, item_features, hints)
-
-
-_REGOLITH_VECTOR = _load_regolith_vector()
-_GAS_MEAN_YIELD = _load_gas_mean_yield()
-_MEAN_REUSE = _load_mean_reuse()
-
-_OFFICIAL_FEATURES_PATH = DATASETS_ROOT / "rexai_nasa_waste_features.csv"
-
-_CATEGORY_SYNONYMS = {
-    "foam": "foam packaging",
-    "foam packaging": "foam packaging",
-    "packaging": "other packaging glove",
-    "other packaging": "other packaging glove",
-    "glove": "other packaging glove",
-    "other packaging glove": "other packaging glove",
-    "food packaging": "food packaging",
-    "structural elements": "structural element",
-    "structural element": "structural element",
-    "eva": "eva waste",
-    "eva waste": "eva waste",
-    "gloves": "other packaging glove",
-}
 
 _COMPOSITION_DENSITY_MAP = {
     "Aluminum_pct": 2700.0,
@@ -1207,7 +1002,7 @@ def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], s
 
 
 def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
-    bundle = _official_features_bundle()
+    bundle = official_features_bundle()
     if not bundle.value_columns or frame.empty:
         return frame
 
@@ -1220,6 +1015,7 @@ def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
     norm_exprs: list[pl.Expr] = []
     if "category" in existing_columns:
         norm_exprs.append(
+            pl.col("category").map_elements(normalize_category).alias("category_norm")
             pl.col("category")
             .map_elements(_normalize_category, return_dtype=pl.String)
             .alias("category_norm")
@@ -1234,6 +1030,7 @@ def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
     ):
         if source in existing_columns:
             norm_exprs.append(
+                pl.col(source).map_elements(normalize_item).alias(alias)
                 pl.col(source)
                 .map_elements(_normalize_item, return_dtype=pl.String)
                 .alias(alias)
@@ -1391,6 +1188,8 @@ def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
             result_df.loc[mask, "moisture_pct"] = result_df.loc[mask, "approx_moisture_pct"]
 
     return result_df
+
+
 @dataclass(slots=True)
 class PredProps:
     """Structured container for predicted (or heuristic) properties."""
@@ -1715,7 +1514,7 @@ def _prepare_feature_context(
     picks: pd.DataFrame,
     weights: Iterable[float],
     regolith_pct: float,
-    bundle: "_OfficialFeaturesBundle",
+    bundle: OfficialFeaturesBundle,
 ) -> CandidateFeatureContext:
     total_kg = max(0.001, float(picks["kg"].sum()))
     raw_weights = np.asarray(list(weights), dtype=float)
@@ -1726,6 +1525,12 @@ def _prepare_feature_context(
 
     item_count = len(picks)
 
+    default_series = lambda default: pd.Series(default, index=picks.index, dtype=float)
+    pct_mass = picks.get("pct_mass", default_series(0.0)).to_numpy(dtype=float) / 100.0
+    pct_volume = picks.get("pct_volume", default_series(0.0)).to_numpy(dtype=float) / 100.0
+    moisture = picks.get("moisture_pct", default_series(0.0)).to_numpy(dtype=float) / 100.0
+    difficulty = picks.get("difficulty_factor", default_series(1.0)).to_numpy(dtype=float) / 3.0
+    densities = picks.get("density_kg_m3", default_series(0.0)).to_numpy(dtype=float)
     if item_count:
         token_arrays: list[np.ndarray] = []
         for column in ("material", "category", "flags", "material_family", "key_materials"):
@@ -1804,6 +1609,35 @@ def _prepare_feature_context(
     mission_official_mass: Dict[str, float] = {}
 
     if bundle.mission_mass and bundle.mission_totals:
+        match_keys_col = picks.get("_official_match_key")
+        if match_keys_col is not None:
+            match_keys_list = match_keys_col.fillna("").astype(str).tolist()
+        else:
+            match_keys_list = [""] * len(picks)
+
+        for idx, (_, row) in enumerate(picks.iterrows()):
+            weight = float(raw_weights[idx]) if idx < len(raw_weights) else 0.0
+            if weight <= 0:
+                continue
+
+            keys_to_check: list[str] = []
+            match_key = match_keys_list[idx] if idx < len(match_keys_list) else ""
+            if match_key:
+                keys_to_check.append(match_key)
+
+            if not match_key:
+                category_key = normalize_category(row.get("category", ""))
+                if category_key:
+                    keys_to_check.append(category_key)
+
+            seen_keys: set[str] = set()
+            for key in keys_to_check:
+                if not key or key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                missions = bundle.mission_mass.get(key)
+                if not missions:
+                    continue
         if item_count:
             if "_official_match_key" in picks.columns:
                 match_keys = np.asarray(
@@ -1879,7 +1713,7 @@ def _prepare_feature_context(
 def _contexts_to_tensor_batch(
     contexts: Sequence[CandidateFeatureContext],
     processes: Sequence[pd.Series],
-    bundle: "_OfficialFeaturesBundle",
+    bundle: OfficialFeaturesBundle,
     *,
     backend: str = "jax",
 ) -> FeatureTensorBatch:
@@ -1990,7 +1824,7 @@ def build_feature_tensor_batch(
     if not (len(picks) == len(weights) == len(processes) == len(regolith_pct)):
         raise ValueError("picks, weights, processes and regolith_pct must share the same length")
 
-    bundle = _official_features_bundle()
+    bundle = official_features_bundle()
     contexts = [
         _prepare_feature_context(p, w, r, bundle)
         for p, w, r in zip(picks, weights, regolith_pct)
@@ -2049,7 +1883,7 @@ def _feature_kernel_body(
     eva = keyword[:, _KEYWORD_INDEX["eva_frac"]] if keyword.shape[1] else xp.zeros(keyword.shape[0])
     textile = keyword[:, _KEYWORD_INDEX["textile_frac"]] if keyword.shape[1] else xp.zeros(keyword.shape[0])
 
-    gas_index = _GAS_MEAN_YIELD * (
+    gas_index = GAS_MEAN_YIELD * (
         0.7 * polyethylene
         + 0.4 * foam
         + 0.5 * eva
@@ -2062,7 +1896,7 @@ def _feature_kernel_body(
     packaging_term = packaging + 0.5 * eva
     ratio_broadcast = xp.broadcast_to(ratio, packaging_term.shape)
     valid_ratio = xp.logical_and(xp.isfinite(ratio_broadcast), ratio_broadcast > 0)
-    reuse_term = packaging_term * _MEAN_REUSE
+    reuse_term = packaging_term * MEAN_REUSE
     logistics_index = xp.where(valid_ratio, packaging_term / ratio_broadcast, reuse_term)
     logistics_index = xp.clip(logistics_index, 0.0, 2.0)
 
@@ -2317,7 +2151,7 @@ def _compute_features_from_batch(batch: FeatureTensorBatch) -> list[Dict[str, An
         features["gas_recovery_index"] = float(gas_recovery[idx]) if gas_recovery.size else 0.0
         features["logistics_reuse_index"] = float(logistics_reuse[idx]) if logistics_reuse.size else 0.0
 
-        for oxide, value in _REGOLITH_VECTOR.items():
+        for oxide, value in REGOLITH_VECTOR.items():
             features[f"oxide_{oxide}"] = float(value * features["regolith_pct"])
 
         features_list.append(features)
@@ -2351,7 +2185,7 @@ def compute_feature_vector(
     if weights is None or process is None or regolith_pct is None:
         raise ValueError("weights, process and regolith_pct are required for DataFrame inputs")
 
-    bundle = _official_features_bundle()
+    bundle = official_features_bundle()
     context = _prepare_feature_context(picks, weights, regolith_pct, bundle)
     batch = _contexts_to_tensor_batch([context], [process], bundle)
     features = _compute_features_from_batch(batch)
@@ -2368,9 +2202,13 @@ def heuristic_props(
     total_mass = max(0.001, float(picks["kg"].sum()))
     base_weights = weights_arr if weights_arr.sum() else np.ones_like(weights_arr) / len(weights_arr)
 
-    materials = " ".join(picks["material"].astype(str)).lower()
-    categories = " ".join(picks["category"].astype(str).str.lower())
-    flags = " ".join(picks["flags"].astype(str).str.lower())
+    material_series = picks.get("material", pd.Series("", index=picks.index))
+    category_series = picks.get("category", pd.Series("", index=picks.index))
+    flags_series = picks.get("flags", pd.Series("", index=picks.index))
+
+    materials = " ".join(material_series.astype(str)).lower()
+    categories = " ".join(category_series.astype(str).str.lower())
+    flags = " ".join(flags_series.astype(str).str.lower())
 
     rigidity = 0.5
     if any(keyword in materials for keyword in ("al", "aluminum", "alloy")):
@@ -2386,10 +2224,22 @@ def heuristic_props(
         tightness -= 0.05
     tightness = float(np.clip(tightness, 0.05, 1.0))
 
-    process_energy = float(process["energy_kwh_per_kg"])
-    process_water = float(process["water_l_per_kg"])
-    process_crew = float(process["crew_min_per_batch"])
+    process_energy = float(process.get("energy_kwh_per_kg", 0.0))
+    process_water = float(process.get("water_l_per_kg", 0.0))
+    process_crew = float(process.get("crew_min_per_batch", 0.0))
 
+    moisture = float(
+        np.dot(
+            base_weights,
+            picks.get("moisture_pct", pd.Series(0.0, index=picks.index)).to_numpy(dtype=float) / 100.0,
+        )
+    )
+    difficulty = float(
+        np.dot(
+            base_weights,
+            picks.get("difficulty_factor", pd.Series(1.0, index=picks.index)).to_numpy(dtype=float) / 3.0,
+        )
+    )
     def _vector(column: str, default: float, scale: float) -> np.ndarray:
         series = picks.get(column)
         if isinstance(series, pd.Series):
@@ -2632,7 +2482,7 @@ def _finalize_candidate(
                     logging.getLogger(__name__).exception("MODEL_REGISTRY.predict failed")
                     prediction = {}
                     prediction_error = f"Error al invocar el modelo ML: {exc}"
-                    _append_inference_log(
+                    append_inference_log(
                         features_for_inference,
                         {"error": str(exc)},
                         {},
@@ -2640,7 +2490,7 @@ def _finalize_candidate(
                     )
                 else:
                     logged_prediction = prediction or {"error": "MODEL_REGISTRY returned no data"}
-                    _append_inference_log(
+                    append_inference_log(
                         features_for_inference,
                         logged_prediction,
                         ((prediction or {}).get("uncertainty") if isinstance(prediction, dict) else {}),
@@ -2817,6 +2667,14 @@ def generate_candidates(
     finally:
         if executor is not None:
             executor.shutdown()
+
+    components_batch: list[CandidateComponents] = []
+    for _ in range(n):
+        bias = 2.0
+        picks = _pick_materials(df, rng, n=rng.choice([2, 3]), bias=bias)
+        components = _create_candidate_components(picks, proc_df, rng, {})
+        if components:
+            components_batch.append(components)
 
     attempts = 0
     max_attempts = max(n * 2, 4)
