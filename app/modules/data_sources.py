@@ -123,16 +123,17 @@ def normalize_text(value: Any) -> str:
 _CATEGORY_SYNONYMS = {
     "foam": "foam packaging",
     "foam packaging": "foam packaging",
-    "packaging": "other packaging glove",
-    "other packaging": "other packaging glove",
-    "glove": "other packaging glove",
-    "other packaging glove": "other packaging glove",
+    "foam packaging for launch": "foam packaging",
+    "packaging": "packaging",
+    "other packaging": "other packaging",
+    "other packaging glove": "other packaging",
+    "glove": "gloves",
+    "gloves": "gloves",
     "food packaging": "food packaging",
-    "structural elements": "structural element",
-    "structural element": "structural element",
+    "structural elements": "structural elements",
+    "structural element": "structural elements",
     "eva": "eva waste",
     "eva waste": "eva waste",
-    "gloves": "other packaging glove",
 }
 
 
