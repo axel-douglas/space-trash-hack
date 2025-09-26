@@ -900,6 +900,93 @@ def test_generate_candidates_parallel_is_deterministic(monkeypatch):
     assert scores_a == scores_b
 
 
+def test_generate_candidates_seed_reproducible(monkeypatch):
+    monkeypatch.delenv("REXAI_GENERATOR_SEED", raising=False)
+    monkeypatch.setattr(generator, "_PARALLEL_THRESHOLD", 1)
+    monkeypatch.setattr(generator, "prepare_waste_frame", lambda df: df)
+    monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
+    monkeypatch.setattr(generator, "append_inference_log", lambda *args, **kwargs: None)
+    monkeypatch.setattr(generator, "_create_candidate_components", lambda *args, **kwargs: None)
+
+    def fake_pick(df, rng, n=2, bias=2.0):
+        order = list(range(len(df)))
+        rng.shuffle(order)
+        take = max(1, min(int(n), len(order)))
+        return df.iloc[order[:take]].reset_index(drop=True)
+
+    monkeypatch.setattr(generator, "_pick_materials", fake_pick)
+
+    def fake_build(picks, proc_df, rng, target, crew_time_low, use_ml, tuning):
+        value = round(rng.random(), 6)
+        return {
+            "score": value,
+            "props": generator.PredProps(
+                rigidity=1.0,
+                tightness=1.0,
+                mass_final_kg=1.0,
+                energy_kwh=0.1,
+                water_l=0.1,
+                crew_min=1.0,
+            ),
+            "picked": sorted(picks["_source_id"].tolist()),
+        }
+
+    monkeypatch.setattr(generator, "_build_candidate", fake_build)
+
+    waste_df = pd.DataFrame(
+        {
+            "material": ["foil", "foam", "tape"],
+            "kg": [1.0, 0.5, 0.75],
+            "_problematic": [0, 0, 0],
+            "_source_id": ["A", "B", "C"],
+            "_source_category": ["packaging", "eva", "packaging"],
+            "_source_flags": ["", "", ""],
+            "category": ["packaging", "eva", "packaging"],
+            "flags": ["", "", ""],
+        }
+    )
+    proc_df = pd.DataFrame(
+        {
+            "process_id": ["P01"],
+            "name": ["Process"],
+            "energy_kwh_per_kg": [1.0],
+            "water_l_per_kg": [0.5],
+            "crew_min_per_batch": [30.0],
+        }
+    )
+
+    def run_once(seed_value: int | None) -> list[float]:
+        backend = execution.SynchronousBackend()
+        try:
+            candidates, _ = generator.generate_candidates(
+                waste_df,
+                proc_df,
+                target={},
+                n=4,
+                crew_time_low=False,
+                optimizer_evals=0,
+                use_ml=False,
+                backend=backend,
+                seed=seed_value,
+            )
+        finally:
+            backend.shutdown()
+        return [cand["score"] for cand in candidates]
+
+    scores_seed_a = run_once(1234)
+    scores_seed_b = run_once(1234)
+    assert scores_seed_a == scores_seed_b
+
+    scores_seed_c = run_once(4321)
+    assert scores_seed_c != scores_seed_a
+
+    monkeypatch.setenv("REXAI_GENERATOR_SEED", "2024")
+    scores_env_a = run_once(None)
+    scores_env_b = run_once(None)
+    assert scores_env_a == scores_env_b
+
+    monkeypatch.delenv("REXAI_GENERATOR_SEED", raising=False)
+
 def test_append_inference_log_appends_without_reads(monkeypatch, tmp_path):
     monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
     logging_utils._INFERENCE_LOG_MANAGER.close()

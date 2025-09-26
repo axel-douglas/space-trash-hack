@@ -24,6 +24,23 @@ permanezca enfocado en su dominio (ingesta, generación y logging). El módulo
 modo que las pruebas pueden interceptar la ingesta o el logging sin tocar la
 arquitectura de ensamblado de candidatos.
 
+### Semillas reproducibles del generador
+
+El ensamblador de recetas ahora acepta una semilla explícita para repetir una
+sesión completa de generación. Podés fijarla de tres maneras equivalentes:
+
+- Cargar la app Streamlit y completar el campo **"Semilla (opcional)"** antes
+  de presionar "Generar recomendaciones".
+- Ejecutar el CLI `python scripts/generate_candidates.py --seed 1234` para
+  persistir los candidatos deterministas en `data/candidates.json`.
+- Definir la variable de entorno `REXAI_GENERATOR_SEED=1234` antes de invocar
+  cualquier entrypoint. El parámetro explícito siempre tiene prioridad sobre la
+  variable de entorno.
+
+La semilla inicializa tanto el RNG global como los RNG por tarea, de modo que
+los candidatos producidos (scores, combinaciones de residuos y desempates del
+optimizador) se mantengan iguales entre ejecuciones.
+
 > Nota: los helpers legacy `app/modules/branding.py`, `app/modules/charts.py`
 > y `app/modules/embeddings.py` fueron eliminados. La app se apoya en
 > `app/modules/ui_blocks.py` para el layout y en los modelos entrenados para

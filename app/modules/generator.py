@@ -14,7 +14,7 @@ candidate assembly.
 
 from __future__ import annotations
 
-import itertools
+import atexit
 import logging
 import math
 import os
@@ -73,6 +73,10 @@ from app.modules.data_sources import (
 )
 from app.modules.logging_utils import append_inference_log
 
+logger = logging.getLogger(__name__)
+
+_SEED_ENV_VAR = "REXAI_GENERATOR_SEED"
+
 # The demo previously collapsed multiple NASA inventory families (Packaging,
 # Other Packaging, Gloves, Foam Packaging, Food Packaging, Structural Elements
 # and EVA Waste) into a single "other packaging glove" bucket.  The updated
@@ -104,8 +108,10 @@ _CATEGORY_FAMILY_FALLBACKS: Dict[str, tuple[str, ...]] = {
 }
 try:  # Optional heavy dependencies; used for fast vectorization
     import pyarrow as pa
+    import pyarrow.parquet as pq
 except Exception:  # pragma: no cover - pyarrow is expected in production
     pa = None  # type: ignore[assignment]
+    pq = None  # type: ignore[assignment]
 
 from app.modules.execution import (
     DEFAULT_PARALLEL_THRESHOLD,
@@ -3023,24 +3029,34 @@ def generate_candidates(
     use_ml: bool = True,
     backend: ExecutionBackend | None = None,
     backend_kind: str | None = None,
+    seed: int | None = None,
 ):
-    """Generate *n* candidate recycling plans plus optional optimization history."""
+    """Generate *n* candidate recycling plans plus optional optimization history.
+
+    When *seed* is provided (or :envvar:`REXAI_GENERATOR_SEED` is set) the
+    pseudo-random sequences that drive candidate assembly become reproducible.
+    """
 
     if waste_df is None or waste_df.empty or proc_df is None or proc_df.empty:
         return [], pd.DataFrame()
 
     df = prepare_waste_frame(waste_df)
-    rng = random.Random()
+    resolved_seed = seed
+    if resolved_seed is None:
+        env_seed = os.getenv(_SEED_ENV_VAR)
+        if env_seed:
+            try:
+                resolved_seed = int(env_seed, 0)
+            except ValueError:
+                logger.warning("Ignoring invalid %s value: %s", _SEED_ENV_VAR, env_seed)
+    rng = random.Random(resolved_seed)
     process_ids = sorted(proc_df["process_id"].astype(str).unique().tolist()) if not proc_df.empty else []
 
-    base_seed = rng.randint(0, 2**31 - 1)
-    seed_counter = itertools.count()
     seed_lock = threading.Lock()
 
     def _next_seed() -> int:
         with seed_lock:
-            idx = next(seed_counter)
-        return (base_seed + idx * 9973) % (2**32 - 1)
+            return rng.getrandbits(32)
 
     def sampler(
         override: dict[str, Any] | None = None,
