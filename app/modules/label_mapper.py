@@ -11,7 +11,9 @@ import pandas as pd
 
 # Paths -----------------------------------------------------------------------
 
-ROOT = Path(__file__).resolve().parents[2]
+from .paths import DATA_ROOT
+
+ROOT = DATA_ROOT.parent
 DATASETS_ROOT = ROOT / "datasets"
 GOLD_DIR = DATASETS_ROOT / "gold"
 GOLD_LABELS_PATH = GOLD_DIR / "labels.parquet"

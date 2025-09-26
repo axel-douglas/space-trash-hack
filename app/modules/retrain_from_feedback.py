@@ -21,9 +21,8 @@ from typing import Iterable, Sequence
 
 from app.modules import model_training
 
-ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = ROOT / "data"
-LOGS_DIR = DATA_DIR / "logs"
+from .paths import LOGS_DIR
+
 DEFAULT_PATTERN = LOGS_DIR / "feedback_*.parquet"
 
 
