@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 from deltalake import DeltaTable
@@ -10,6 +11,8 @@ import pandas as pd
 import pytest
 
 from app.modules import generator
+
+pl = generator.pl
 
 
 def test_load_waste_summary_data_polars(tmp_path, monkeypatch):
@@ -144,6 +147,8 @@ def test_official_features_bundle_polars_pipeline(tmp_path, monkeypatch):
     assert "leo_savings_pct" in bundle.value_columns
     assert "propellant_benefit" in bundle.value_columns
     assert bundle.direct_map["other packaging glove|foam"]["value_kg"] == pytest.approx(2.5)
+    assert "category_norm" in bundle.table.columns
+    assert "subitem_norm" in bundle.table.columns
     assert bundle.mission_totals["artemis"] == pytest.approx(13.0)
     assert bundle.processing_metrics["processing"]["processing_output_kg"] == pytest.approx(3.0)
 
@@ -320,7 +325,6 @@ def test_generate_candidates_appends_inference_log(monkeypatch, tmp_path):
     shutil.rmtree(log_dir.parent, ignore_errors=True)
 
 def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch, tmp_path):
-def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch):
     calls: list[str] = []
 
     class NoCallRegistry:
@@ -490,6 +494,13 @@ def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
                 (frozenset({"rehydratable", "pouch"}), {"dummy_col": 1.0}, match_key)
             ]
         },
+        table=pl.DataFrame(
+            {
+                "category_norm": ["food packaging"],
+                "subitem_norm": ["rehydratable pouch"],
+                "dummy_col": [1.0],
+            }
+        ),
         mission_mass={
             match_key: {"gateway_i": 200.0},
             "food packaging": {"gateway_i": 300.0},
@@ -550,6 +561,13 @@ def test_prepare_waste_frame_injects_l2l_features(monkeypatch):
                 (frozenset({"rehydratable", "pouch"}), {"dummy_col": 1.0}, match_key)
             ]
         },
+        table=pl.DataFrame(
+            {
+                "category_norm": ["food packaging"],
+                "subitem_norm": ["rehydratable pouch"],
+                "dummy_col": [1.0],
+            }
+        ),
         mission_mass={},
         mission_totals={},
         processing_metrics={},
@@ -583,6 +601,8 @@ def test_prepare_waste_frame_injects_l2l_features(monkeypatch):
     prepared = generator.prepare_waste_frame(waste_df)
     row = prepared.iloc[0]
 
+    assert "dummy_col" in row.index
+    assert pytest.approx(row["dummy_col"], rel=1e-6) == 1.0
     assert pytest.approx(row["l2l_geometry_panel_area_m2"], rel=1e-6) == 5.0
     assert pytest.approx(row["l2l_ops_random_access_required"], rel=1e-6) == 1.0
     assert "_l2l_page_hints" in row.index
@@ -598,6 +618,14 @@ def test_compute_feature_vector_uses_l2l_packaging_ratio(monkeypatch):
         composition_columns=(),
         direct_map={},
         category_tokens={},
+        table=pl.DataFrame(
+            schema={
+                "category_norm": pl.Utf8,
+                "subitem_norm": pl.Utf8,
+                "dummy_col": pl.Float64,
+            },
+            data=[],
+        ),
         mission_mass={},
         mission_totals={},
         processing_metrics={},
