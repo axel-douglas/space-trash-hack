@@ -1,17 +1,10 @@
 # app/pages/0_Project_Brief.py
-# --- path guard universal ---
-import sys, pathlib
-_here = pathlib.Path(__file__).resolve()
-p = _here.parent
-while p.name != "app" and p.parent != p:
-    p = p.parent
-repo_root = p.parent if p.name == "app" else _here.parent
-if str(repo_root) not in sys.path:
-    sys.path.insert(0, str(repo_root))
-# --------------------------------
+import app  # noqa: F401
 
 import streamlit as st
 from pathlib import Path
+
+repo_root = Path(app.ROOT)
 
 # ⚠️ PRIMER comando Streamlit:
 st.set_page_config(page_title="REX-AI Mars — Brief", page_icon="🛰️", layout="wide")
