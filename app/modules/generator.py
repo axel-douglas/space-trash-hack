@@ -29,6 +29,12 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, NamedTuple, Sequence, Tuple
 
 from functools import lru_cache
+from functools import lru_cache
+from pathlib import Path
+from datetime import UTC, datetime
+from pathlib import Path
+from functools import lru_cache
+from typing import Any, Dict, Iterable, Mapping, NamedTuple, Sequence, Tuple
 
 try:
     import jax.numpy as jnp
@@ -58,6 +64,8 @@ from app.modules.data_sources import (
     MEAN_REUSE,
     REGOLITH_VECTOR,
     load_l2l_parameters as _load_l2l_parameters,
+    OfficialFeaturesBundle,
+    load_l2l_parameters,
     normalize_category,
     normalize_item,
     official_features_bundle,
@@ -82,13 +90,121 @@ DATASETS_ROOT = Path(__file__).resolve().parents[2] / "datasets"
 LOGS_ROOT = Path(__file__).resolve().parents[2] / "data" / "logs"
 _OFFICIAL_FEATURES_PATH = DATASETS_ROOT / "rexai_nasa_waste_features.csv"
 
-_INFERENCE_LOG_LOCK = threading.Lock()
-_INFERENCE_LOG_STATE: Dict[str, Any] = {
-    "date": None,
-    "path": None,
-    "schema": None,
-    "writer": None,
-}
+
+@dataclass(slots=True)
+class _InferenceWriterState:
+    """Book-keeping for an active Parquet writer."""
+
+    date_token: str
+    path: Path
+    schema: "pa.Schema"
+    writer: Any
+
+
+class _InferenceLogWriterManager:
+    """Manage a single append-only Parquet writer with daily rotation."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._state: _InferenceWriterState | None = None
+
+    def close(self) -> None:
+        """Close the active writer, if any."""
+
+        if pq is None:
+            return
+        with self._lock:
+            self._close_locked()
+
+    def _close_locked(self) -> None:
+        state = self._state
+        if state is None:
+            return
+        try:
+            state.writer.close()
+        except Exception:  # pragma: no cover - best effort cleanup
+            pass
+        self._state = None
+
+    def _open_locked(
+        self, timestamp: datetime, field_names: Iterable[str]
+    ) -> _InferenceWriterState | None:
+        if pa is None or pq is None:
+            return None
+
+        desired_fields = sorted(set(str(name) for name in field_names))
+        if not desired_fields:
+            return None
+
+        log_dir = _resolve_inference_log_dir(timestamp)
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            return None
+
+        date_token = timestamp.strftime("%Y%m%d")
+        path = log_dir / f"inference_{date_token}.parquet"
+        schema = pa.schema(pa.field(name, pa.string()) for name in desired_fields)
+
+        try:
+            writer = pq.ParquetWriter(str(path), schema=schema)
+        except Exception:
+            return None
+
+        state = _InferenceWriterState(
+            date_token=date_token,
+            path=path,
+            schema=schema,
+            writer=writer,
+        )
+        self._state = state
+        return state
+
+    def _ensure_state_locked(
+        self, timestamp: datetime, field_names: Iterable[str]
+    ) -> _InferenceWriterState | None:
+        state = self._state
+        desired_fields = sorted(set(str(name) for name in field_names))
+        if not desired_fields:
+            return None
+
+        date_token = timestamp.strftime("%Y%m%d")
+        if state is not None:
+            if state.date_token != date_token or set(state.schema.names) != set(
+                desired_fields
+            ):
+                self._close_locked()
+                state = None
+
+        if state is None:
+            state = self._open_locked(timestamp, desired_fields)
+
+        return state
+
+    def write_event(
+        self, timestamp: datetime, payload: Mapping[str, str | None]
+    ) -> None:
+        if pa is None or pq is None:
+            return
+
+        with self._lock:
+            state = self._ensure_state_locked(timestamp, payload.keys())
+            if state is None:
+                return
+
+            arrays = []
+            for field in state.schema:
+                arrays.append(pa.array([payload.get(field.name)], type=field.type))
+
+            table = pa.Table.from_arrays(arrays, schema=state.schema)
+
+            try:
+                state.writer.write_table(table)
+            except Exception:
+                self._close_locked()
+
+
+_INFERENCE_LOG_MANAGER = _InferenceLogWriterManager()
 
 
 def _to_lazy_frame(
@@ -166,102 +282,8 @@ def _resolve_inference_log_dir(timestamp: datetime) -> Path:
     return LOGS_ROOT / "inference" / timestamp.strftime("%Y%m%d")
 
 
-def _close_inference_log_writer_locked() -> None:
-    state = _INFERENCE_LOG_STATE
-    writer = state.get("writer")
-    if writer is not None:
-        try:
-            writer.close()
-        except Exception:
-            pass
-    state["writer"] = None
-    state["schema"] = None
-    state["date"] = None
-    state["path"] = None
-
-
-def _close_inference_log_writer() -> None:
-    if pq is None:
-        return
-    with _INFERENCE_LOG_LOCK:
-        _close_inference_log_writer_locked()
-
-
-def _next_inference_log_path(log_dir: Path, date_token: str) -> Path:
-    base_name = f"inference_{date_token}"
-    candidate = log_dir / f"{base_name}.parquet"
-    if not candidate.exists():
-        return candidate
-
-    index = 1
-    while True:
-        candidate = log_dir / f"{base_name}_{index:03d}.parquet"
-        if not candidate.exists():
-            return candidate
-        index += 1
-
-
-def _ensure_inference_log_writer_locked(
-    timestamp: datetime, field_names: Iterable[str]
-) -> tuple[pa.Schema | None, Any | None]:
-    if pa is None or pq is None:
-        return None, None
-
-    desired_fields = sorted(set(str(name) for name in field_names))
-    state = _INFERENCE_LOG_STATE
-
-    current_date = state.get("date")
-    date_token = timestamp.strftime("%Y%m%d")
-    schema: pa.Schema | None = state.get("schema")
-
-    if current_date != date_token:
-        _close_inference_log_writer_locked()
-        schema = None
-
-    if schema is not None:
-        existing_fields = list(schema.names)
-    else:
-        existing_fields = []
-
-    if set(existing_fields) != set(desired_fields):
-        if state.get("writer") is not None:
-            _close_inference_log_writer_locked()
-        all_fields = sorted(set(existing_fields) | set(desired_fields))
-        schema = pa.schema((pa.field(name, pa.string()) for name in all_fields))
-
-        log_dir = _resolve_inference_log_dir(timestamp)
-        log_dir.mkdir(parents=True, exist_ok=True)
-        path = _next_inference_log_path(log_dir, date_token)
-
-        try:
-            writer = pq.ParquetWriter(str(path), schema=schema)
-        except Exception:
-            return None, None
-
-        state["date"] = date_token
-        state["path"] = path
-        state["schema"] = schema
-        state["writer"] = writer
-        return schema, writer
-
-    writer = state.get("writer")
-    if writer is None:
-        log_dir = _resolve_inference_log_dir(timestamp)
-        log_dir.mkdir(parents=True, exist_ok=True)
-        path = _next_inference_log_path(log_dir, date_token)
-        try:
-            writer = pq.ParquetWriter(str(path), schema=schema)
-        except Exception:
-            return None, None
-        state["date"] = date_token
-        state["path"] = path
-        state["writer"] = writer
-
-    return schema, writer
-
-
 if pq is not None:  # pragma: no branch - guard for optional dependency
-    atexit.register(_close_inference_log_writer)
+    atexit.register(_INFERENCE_LOG_MANAGER.close)
 
 
 def _prepare_inference_event(
@@ -309,11 +331,6 @@ def _append_inference_log(
     if pa is None or pq is None:  # pragma: no cover - dependencies should exist
         return
 
-    try:
-        LOGS_ROOT.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        return
-
     event_time, event_payload = _prepare_inference_event(
         input_features=input_features,
         prediction=prediction,
@@ -321,24 +338,7 @@ def _append_inference_log(
         model_registry=model_registry,
     )
 
-    with _INFERENCE_LOG_LOCK:
-        schema, writer = _ensure_inference_log_writer_locked(
-            event_time, event_payload.keys()
-        )
-        if schema is None or writer is None:
-            return
-
-        arrays = []
-        for field in schema:
-            value = event_payload.get(field.name)
-            arrays.append(pa.array([value], type=field.type))
-
-        table = pa.Table.from_arrays(arrays, schema=schema)
-
-        try:
-            writer.write_table(table)
-        except Exception:
-            _close_inference_log_writer_locked()
+    _INFERENCE_LOG_MANAGER.write_event(event_time, event_payload)
 
 
 def _load_regolith_vector() -> Dict[str, float]:
@@ -692,8 +692,7 @@ def _normalize_text(value: Any) -> str:
 
 
 def _normalize_category(value: Any) -> str:
-    normalized = _normalize_text(value)
-    return _CATEGORY_SYNONYMS.get(normalized, normalized)
+    return normalize_category(value)
 def _build_match_key(category: Any, subitem: Any | None = None) -> str:
     """Return the canonical key used to match NASA reference tables."""
 
@@ -736,7 +735,7 @@ def _estimate_density_from_row(row: pd.Series) -> float | None:
 
     return None
 def _normalize_item(value: Any) -> str:
-    return _normalize_text(value)
+    return normalize_item(value)
 
 
 def _token_set(value: Any) -> frozenset[str]:
@@ -744,6 +743,18 @@ def _token_set(value: Any) -> frozenset[str]:
     if not normalized:
         return frozenset()
     return frozenset(normalized.split())
+
+
+_L2L_PARAMETERS = load_l2l_parameters()
+def _load_l2l_parameters() -> Mapping[str, Any]:
+    """Return optional Life-to-Life process parameters.
+
+    The production deployment sources these from reference datasets; the
+    open-source snapshot defaults to an empty mapping so the module can be
+    imported during tests without additional assets.
+    """
+
+    return {}
 
 
 _L2L_PARAMETERS = _load_l2l_parameters()
@@ -1111,6 +1122,7 @@ def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
     if "category" in existing_columns:
         norm_exprs.append(
             pl.col("category")
+            .map_elements(normalize_category)
             .map_elements(_normalize_category, return_dtype=pl.String)
             .alias("category_norm")
         )
@@ -1125,6 +1137,7 @@ def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
         if source in existing_columns:
             norm_exprs.append(
                 pl.col(source)
+                .map_elements(normalize_item)
                 .map_elements(_normalize_item, return_dtype=pl.String)
                 .alias(alias)
             )
@@ -1513,18 +1526,54 @@ def prepare_waste_frame(waste_df: pd.DataFrame) -> pd.DataFrame:
     if "key_materials" not in out.columns:
         out["key_materials"] = out["material"].astype(str)
 
-    out["tokens"] = (
-        out["material"].astype(str).str.lower()
-        + " "
-        + out["category"].astype(str).str.lower()
-        + " "
-        + out["flags"].astype(str).str.lower()
-        + " "
-        + out["key_materials"].astype(str).str.lower()
-    )
+    # ------------------------------------------------------------------
+    # Vectorised token assembly and heuristic flags
+    # ------------------------------------------------------------------
+    for column in ("material", "category", "flags", "key_materials"):
+        if column not in out.columns:
+            out[column] = ""
+    material_lower = out["material"].astype(str).str.lower()
+    category_lower = out["category"].astype(str).str.lower()
+    flags_lower = out["flags"].astype(str).str.lower()
+    key_materials_lower = out["key_materials"].astype(str).str.lower()
+
+    tokens = material_lower.str.cat(category_lower, sep=" ", na_rep="")
+    tokens = tokens.str.cat(flags_lower, sep=" ", na_rep="")
+    tokens = tokens.str.cat(key_materials_lower, sep=" ", na_rep="")
+    out["tokens"] = tokens
 
     if "_problematic" not in out.columns:
-        out["_problematic"] = out.apply(_is_problematic, axis=1)
+        material_family_series = out.get("material_family")
+        if isinstance(material_family_series, pd.Series):
+            material_family_series = material_family_series.astype(str)
+        else:
+            material_family_series = pd.Series("", index=out.index, dtype=str)
+        family_tokens = material_lower.str.cat(
+            material_family_series.fillna("").str.lower(),
+            sep=" ",
+            na_rep="",
+        )
+
+        problematic_rules = (
+            category_lower.str.contains("pouches", na=False)
+            | flags_lower.str.contains("multilayer", na=False)
+            | family_tokens.str.contains("pe-pet-al", na=False)
+            | category_lower.str.contains("foam", na=False)
+            | family_tokens.str.contains("zotek", na=False)
+            | flags_lower.str.contains("closed_cell", na=False)
+            | category_lower.str.contains("eva", na=False)
+            | flags_lower.str.contains("ctb", na=False)
+            | family_tokens.str.contains("nomex", na=False)
+            | family_tokens.str.contains("nylon", na=False)
+            | family_tokens.str.contains("polyester", na=False)
+            | category_lower.str.contains("glove", na=False)
+            | family_tokens.str.contains("nitrile", na=False)
+            | flags_lower.str.contains("wipe", na=False)
+            | category_lower.str.contains("textile", na=False)
+        )
+        out["_problematic"] = problematic_rules.astype(bool)
+    else:
+        out["_problematic"] = out["_problematic"].astype(bool)
 
     out["_source_id"] = out["id"].astype(str)
     out["_source_category"] = out["category"].astype(str)
@@ -1535,22 +1584,63 @@ def prepare_waste_frame(waste_df: pd.DataFrame) -> pd.DataFrame:
     mass = pd.to_numeric(out["kg"], errors="coerce").fillna(0.0)
     volume_l = pd.to_numeric(out.get("volume_l"), errors="coerce")
     volume_m3 = volume_l / 1000.0
-    density = pd.Series(np.nan, index=out.index, dtype=float)
-    with_volume = volume_m3.notna() & (volume_m3 > 0)
-    density.loc[with_volume] = mass.loc[with_volume] / volume_m3.loc[with_volume]
 
-    missing_density = density.isna() | ~np.isfinite(density)
-    if missing_density.any():
-        for idx, row in out.loc[missing_density].iterrows():
-            estimate = _estimate_density_from_row(row)
-            if estimate is not None:
-                density.at[idx] = estimate
+    density = mass.divide(volume_m3).where((volume_m3 > 0) & volume_m3.notna())
+
+    cat_mass = pd.to_numeric(out.get("category_total_mass_kg"), errors="coerce")
+    if not isinstance(cat_mass, pd.Series):
+        cat_mass = pd.Series(cat_mass, index=out.index, dtype=float)
+    cat_volume = pd.to_numeric(out.get("category_total_volume_m3"), errors="coerce")
+    if not isinstance(cat_volume, pd.Series):
+        cat_volume = pd.Series(cat_volume, index=out.index, dtype=float)
+    cat_density = cat_mass.divide(cat_volume).where((cat_volume > 0) & cat_volume.notna())
+    density = density.fillna(cat_density)
+
+    composition_columns: dict[str, pd.Series] = {}
+    for column in _COMPOSITION_DENSITY_MAP:
+        if column in out.columns:
+            composition_columns[column] = pd.to_numeric(out[column], errors="coerce").fillna(0.0)
+        else:
+            composition_columns[column] = pd.Series(0.0, index=out.index, dtype=float)
+
+    composition_df = pd.DataFrame(composition_columns, index=out.index)
+    composition_frac = composition_df.div(100.0)
+    frac_total = composition_frac.sum(axis=1)
+    density_weights = composition_frac.mul(pd.Series(_COMPOSITION_DENSITY_MAP))
+    weighted_density = density_weights.sum(axis=1).div(frac_total).where(frac_total > 0)
+
+    normalized_category = _vectorized_normalize_category(out["category"])
+    foam_mask = normalized_category == "foam packaging"
+    foam_default = _CATEGORY_DENSITY_DEFAULTS.get("foam packaging")
+    if foam_default is not None:
+        weighted_density = weighted_density.where(
+            ~foam_mask,
+            weighted_density.clip(upper=float(foam_default)),
+        )
+
+    density = density.fillna(weighted_density)
+
+    category_defaults = normalized_category.map(_CATEGORY_DENSITY_DEFAULTS).astype(float)
+    density = density.fillna(category_defaults)
 
     default_density = float(_CATEGORY_DENSITY_DEFAULTS.get("other packaging glove", 500.0))
     density = density.fillna(default_density)
     out["density_kg_m3"] = density.clip(lower=20.0, upper=4000.0)
 
     return out
+
+
+def _vectorized_normalize_category(series: pd.Series) -> pd.Series:
+    """Return :func:`normalize_category` values without row-wise ``apply``."""
+
+    if not isinstance(series, pd.Series) or series.empty:
+        return pd.Series([], dtype=str)
+
+    values = series.astype(str)
+    unique_values = pd.unique(values)
+    mapping = {value: normalize_category(value) for value in unique_values}
+    normalized = values.map(mapping)
+    return normalized.fillna("")
 
 
 def _is_problematic(row: pd.Series) -> bool:
