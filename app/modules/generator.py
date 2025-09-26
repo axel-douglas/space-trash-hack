@@ -21,6 +21,7 @@ import math
 import os
 import random
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import threading
@@ -1869,6 +1870,16 @@ def _build_candidate(
 # ---------------------------------------------------------------------------
 
 
+_PARALLEL_THRESHOLD = 4
+
+
+def _max_workers_for(task_count: int) -> int:
+    if task_count <= 1:
+        return 1
+    cpu = os.cpu_count() or 1
+    return max(1, min(cpu, task_count))
+
+
 def generate_candidates(
     waste_df: pd.DataFrame,
     proc_df: pd.DataFrame,
@@ -1887,17 +1898,44 @@ def generate_candidates(
     rng = random.Random()
     process_ids = sorted(proc_df["process_id"].astype(str).unique().tolist()) if not proc_df.empty else []
 
-    def sampler(override: dict[str, Any] | None = None) -> dict | None:
+    base_seed = rng.randint(0, 2**31 - 1)
+    seed_counter = itertools.count()
+    seed_lock = threading.Lock()
+
+    def _next_seed() -> int:
+        with seed_lock:
+            idx = next(seed_counter)
+        return (base_seed + idx * 9973) % (2**32 - 1)
+
+    def sampler(
+        override: dict[str, Any] | None = None,
+        *,
+        seed: int | None = None,
+    ) -> dict | None:
         override = override or {}
+        seed_value = seed if seed is not None else _next_seed()
+        local_rng = random.Random(seed_value)
         bias = float(override.get("problematic_bias", 2.0))
-        picks = _pick_materials(df, rng, n=rng.choice([2, 3]), bias=bias)
-        return _build_candidate(picks, proc_df, rng, target, crew_time_low, use_ml, override)
+        picks = _pick_materials(df, local_rng, n=local_rng.choice([2, 3]), bias=bias)
+        return _build_candidate(picks, proc_df, local_rng, target, crew_time_low, use_ml, override)
 
     candidates: list[dict] = []
-    for _ in range(n):
-        candidate = sampler({})
-        if candidate:
-            candidates.append(candidate)
+    seeds = [_next_seed() for _ in range(n)]
+    worker_count = _max_workers_for(n) if n >= _PARALLEL_THRESHOLD else 1
+    executor: ThreadPoolExecutor | None = None
+    if worker_count > 1:
+        executor = ThreadPoolExecutor(max_workers=worker_count)
+    try:
+        if executor is not None:
+            results = executor.map(lambda seed: sampler({}, seed=seed), seeds)
+        else:
+            results = (sampler({}, seed=seed) for seed in seeds)
+        for candidate in results:
+            if candidate:
+                candidates.append(candidate)
+    finally:
+        if executor is not None:
+            executor.shutdown()
 
     history = pd.DataFrame()
     if optimizer_evals and optimizer_evals > 0:
