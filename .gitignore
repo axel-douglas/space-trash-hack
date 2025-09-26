@@ -11,7 +11,8 @@ __pycache__/
 # Processed datasets
 /data/processed/
 !/data/processed/
-/data/logs/
+/data/logs/*
+!/data/logs/.gitkeep
 /datasets/processed/
 !/datasets/processed/
 /datasets/derived/

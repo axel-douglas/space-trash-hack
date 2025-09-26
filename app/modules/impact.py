@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, asdict, field
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 import json
 import uuid
@@ -16,8 +15,7 @@ except Exception:  # pragma: no cover - pyarrow is optional at runtime
     pa = None  # type: ignore[assignment]
     pq = None  # type: ignore[assignment]
 
-DATA_DIR = Path(__file__).resolve().parents[2] / "data"
-LOGS_DIR = DATA_DIR / "logs"
+from .paths import LOGS_DIR
 
 
 @dataclass

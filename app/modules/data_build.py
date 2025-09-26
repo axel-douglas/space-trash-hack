@@ -25,8 +25,9 @@ from app.modules import generator
 from app.modules.data_pipeline import GoldFeatureRow, GoldLabelRow
 from app.modules.model_training import FEATURE_COLUMNS
 from app.modules.label_mapper import derive_recipe_id
+from .paths import DATA_ROOT
 
-DATASETS_ROOT = Path(__file__).resolve().parents[2] / "datasets"
+DATASETS_ROOT = DATA_ROOT.parent / "datasets"
 RAW_DIR = DATASETS_ROOT / "raw"
 GOLD_DIR = DATASETS_ROOT / "gold"
 
@@ -225,7 +226,7 @@ def _build_gold_records() -> Iterator[GoldRecord]:
     trash_to_gas = _load_trash_to_gas()
     logistics = _load_logistics().set_index("scenario")
     regolith = _load_regolith_properties()
-    process_catalog = pd.read_csv(Path(__file__).resolve().parents[2] / "data" / "process_catalog.csv")
+    process_catalog = pd.read_csv(DATA_ROOT / "process_catalog.csv")
 
     for _, row in trash_to_gas.iterrows():
         mission = str(row["mission"])
