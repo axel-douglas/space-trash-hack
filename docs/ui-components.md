@@ -51,6 +51,59 @@ ChipRow([
 - `size` (`"sm"`, `"md"`, `"lg"`) controla tipografía y padding.
 - Con `render=False` devuelve el HTML para incrustarlo dentro de otro componente (por ejemplo en un `GlassCard`).
 
+### `TimelineHologram`
+Timeline lateral con animaciones Framer Motion y estados accesibles.
+
+```python
+from app.modules.luxe_components import (
+    TimelineHologram,
+    TimelineHologramItem,
+    TimelineHologramMetric,
+)
+
+hologram = TimelineHologram(
+    items=[
+        TimelineHologramItem(
+            title="Moldeado orbital",
+            subtitle="ID RX-01",
+            score=0.82,
+            icon="🛠️",
+            badges=("🛡️ Seal ready", "♻️ Problemáticos"),
+            metrics=(
+                TimelineHologramMetric(label="Rigidez", value="0.76", tone="positive"),
+                TimelineHologramMetric(
+                    label="Agua",
+                    value="0.38 L · 38% máx",
+                    tone="info",
+                    sr_label="Agua 0.38 litros, 38 por ciento del máximo permitido.",
+                ),
+            ),
+        ),
+        TimelineHologramItem(
+            title="Impulso EVA",
+            subtitle="ID RX-02",
+            score=0.77,
+            icon="🚀",
+            metrics=(
+                TimelineHologramMetric(label="Rigidez", value="0.70"),
+                TimelineHologramMetric(label="Agua", value="0.55 L · 55% máx", tone="warning"),
+            ),
+        ),
+    ],
+    priority_label="Prioridad rigidez ↔ agua",
+    priority_value=0.6,
+    priority_detail="Valores altos favorecen rigidez; bajos priorizan agua.",
+    caption="Orden sugerido según la ponderación elegida. Cada nodo resume score, rigidez y agua.",
+)
+
+hologram.render()
+```
+
+- **Accesibilidad**: cada `TimelineHologramItem` expone `aria_label`, foco con `tabindex` y marca el elemento recomendado con `aria-current`.
+- **Animaciones**: se importa Framer Motion (vía CDN) una sola vez. Si el usuario tiene `prefers-reduced-motion`, la timeline evita las transiciones.
+- **Badges y métricas**: pasá `badges` (tupla/lista de strings) y `TimelineHologramMetric` para mostrar valores secundarios con `tone` (`"neutral"`, `"info"`, `"positive"` o `"warning"`).
+- **Prioridad**: `priority_label`, `priority_value` y `priority_detail` dibujan el chip contextual que explica la ponderación aplicada.
+
 ### `MetricGalaxy`
 Cuadrícula de métricas con brillo dinámico.
 

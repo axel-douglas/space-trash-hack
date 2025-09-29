@@ -7,6 +7,11 @@ from typing import Any, Iterable, Sequence
 
 import streamlit as st
 
+from app.modules.luxe_components import (
+    TimelineHologram,
+    TimelineHologramItem,
+    TimelineHologramMetric,
+)
 from app.modules.safety import check_safety, safety_badge
 from app.modules.ui_blocks import futuristic_button
 
@@ -98,10 +103,12 @@ def render_candidate_showroom(
 
     with col_timeline:
         st.markdown("#### 🛰️ Timeline comparativa")
-        st.caption(
-            "Orden sugerido según la ponderación elegida. Cada punto resume score, rigidez y agua."
+        timeline_hologram = _build_timeline_hologram(
+            timeline_sorted,
+            target,
+            priority=priority,
         )
-        st.markdown(_build_timeline_html(timeline_sorted, target), unsafe_allow_html=True)
+        timeline_hologram.render()
 
     with col_cards:
         for idx, cand in enumerate(filtered):
@@ -262,33 +269,85 @@ def _render_candidate_card(
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-def _build_timeline_html(candidates: Sequence[dict], target: dict) -> str:
-    items = []
+def _build_timeline_hologram(
+    candidates: Sequence[dict],
+    target: dict,
+    *,
+    priority: float,
+) -> TimelineHologram:
+    items: list[TimelineHologramItem] = []
+    max_water = _safe_number(target.get("max_water_l"), default=1.0) or 1.0
+    target_rigidity = _safe_number(target.get("rigidity"), default=0.0)
+
     for idx, cand in enumerate(candidates, start=1):
         props = cand.get("props")
+        aux = cand.get("auxiliary") or {}
         rigidity = _safe_number(getattr(props, "rigidity", None))
         water = _safe_number(getattr(props, "water_l", None))
-        water_max = _safe_number(target.get("max_water_l"), default=1.0) or 1.0
-        water_ratio = min(max(water / water_max if water_max else 0.0, 0.0), 1.0)
+        water_ratio = min(max(water / max_water if max_water else 0.0, 0.0), 1.2)
         score = _safe_number(cand.get("score"))
-        process = f"{cand.get('process_id', '')} · {cand.get('process_name', '')}".strip()
-        items.append(
-            f"""
-            <li class='timeline-item'>
-              <div class='timeline-index'>#{idx:02d}</div>
-              <div class='timeline-body'>
-                <strong>{score:.3f}</strong>
-                <span>{process or 'Proceso'}</span>
-                <div class='timeline-bars'>
-                  <div class='timeline-pill'>Rigidez {rigidity:.2f}</div>
-                  <div class='timeline-pill pill-water'>Agua {water:.2f} ({water_ratio*100:.0f}% máx)</div>
-                </div>
-              </div>
-            </li>
-            """
+        process_name = str(cand.get("process_name") or "Proceso")
+        process_id = str(cand.get("process_id") or "—")
+        icon = str(aux.get("icon") or cand.get("icon") or "🛰️")
+
+        badge_sources: list[str] = []
+        badge_sources.extend(str(b) for b in cand.get("timeline_badges", []))
+        badge_sources.extend(_collect_badges(cand, aux))
+        seen_badges: set[str] = set()
+        badges: list[str] = []
+        for badge in badge_sources:
+            if badge and badge not in seen_badges:
+                badges.append(badge)
+                seen_badges.add(badge)
+
+        rigidity_tone = "positive" if rigidity >= target_rigidity else "neutral"
+        water_tone = "info" if water_ratio <= 1.0 else "warning"
+        metrics = [
+            TimelineHologramMetric(
+                label="Rigidez",
+                value=f"{rigidity:.2f}",
+                tone=rigidity_tone,
+                sr_label=(
+                    f"Rigidez {rigidity:.2f} frente al objetivo {target_rigidity:.2f}."
+                ),
+            ),
+            TimelineHologramMetric(
+                label="Agua",
+                value=f"{water:.2f} L · {water_ratio * 100:.0f}% máx",
+                tone=water_tone,
+                sr_label=(
+                    f"Consumo de agua {water:.2f} litros, {water_ratio * 100:.0f} por ciento del máximo permitido."
+                ),
+            ),
+        ]
+
+        aria_label = (
+            f"Opción {idx:02d}: {process_name}, score {score:.3f}. Rigidez {rigidity:.2f}. "
+            f"Agua {water:.2f} litros ({water_ratio * 100:.0f}% del máximo)."
         )
 
-    return "<ul class='timeline'>" + "".join(items) + "</ul>"
+        items.append(
+            TimelineHologramItem(
+                title=process_name,
+                subtitle=f"ID {process_id}",
+                score=score,
+                icon=icon,
+                rank=idx,
+                badges=tuple(badges),
+                metrics=tuple(metrics),
+                aria_label=aria_label,
+            )
+        )
+
+    return TimelineHologram(
+        items=items,
+        priority_label="Prioridad rigidez ↔ agua",
+        priority_value=priority,
+        priority_detail="Valores altos favorecen rigidez; bajos priorizan agua.",
+        caption=(
+            "Orden sugerido según la ponderación elegida. Cada nodo resume score, rigidez y agua."
+        ),
+    )
 
 
 def _sort_for_timeline(candidates: Iterable[dict], priority: float, target: dict) -> list[dict]:
@@ -628,60 +687,6 @@ def _inject_css() -> None:
             margin-top:10px;
             font-size:0.76rem;
             opacity:0.7;
-        }
-        .timeline {
-            list-style:none;
-            padding:0 0 0 20px;
-            margin:22px 0 0;
-            border-left:2px solid rgba(148,163,184,0.25);
-        }
-        .timeline-item {
-            position:relative;
-            margin-bottom:18px;
-        }
-        .timeline-item::before {
-            content:"";
-            position:absolute;
-            left:-27px;
-            top:6px;
-            width:12px;
-            height:12px;
-            border-radius:50%;
-            background:linear-gradient(135deg, rgba(59,130,246,0.9), rgba(45,212,191,0.9));
-            box-shadow:0 0 12px rgba(56,189,248,0.6);
-        }
-        .timeline-index {
-            font-size:0.75rem;
-            opacity:0.65;
-            letter-spacing:0.1em;
-        }
-        .timeline-body {
-            padding-left:6px;
-        }
-        .timeline-body strong {
-            display:block;
-            font-size:1.05rem;
-        }
-        .timeline-body span {
-            display:block;
-            font-size:0.82rem;
-            opacity:0.75;
-        }
-        .timeline-bars {
-            display:flex;
-            gap:8px;
-            flex-wrap:wrap;
-            margin-top:8px;
-        }
-        .timeline-pill {
-            padding:4px 10px;
-            border-radius:999px;
-            font-size:0.72rem;
-            background:rgba(59,130,246,0.15);
-            border:1px solid rgba(148,163,184,0.24);
-        }
-        .timeline-pill.pill-water {
-            background:rgba(14,165,233,0.15);
         }
         .safety-line {
             margin:22px 0 12px;
