@@ -65,6 +65,7 @@ scipy==1.16.2
 six==1.17.0
 skl2onnx==1.17.0
 smmap==5.0.2
+streamlit-sortables==0.3.1
 streamlit==1.38.0
 sympy==1.14.0
 tenacity==8.5.0
