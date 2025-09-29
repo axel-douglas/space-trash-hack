@@ -9,13 +9,18 @@ import streamlit as st
 from app.modules.generator import generate_candidates
 from app.modules.io import load_waste_df, load_process_df  # si tu IO usa load_process_catalog, cámbialo aquí
 from app.modules.ml_models import get_model_registry
+from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.process_planner import choose_process
 from app.modules.safety import check_safety, safety_badge
 from app.modules.ui_blocks import load_theme
 
 st.set_page_config(page_title="Rex-AI • Generador", page_icon="🤖", layout="wide")
 
+set_active_step("generator")
+
 load_theme()
+
+render_breadcrumbs("generator")
 
 # ----------------------------- CSS local -----------------------------
 st.markdown(
