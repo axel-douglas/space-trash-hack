@@ -6,3 +6,6 @@ MGS-1,amorphous_fraction,0.35,fraction,Recovered from Cannon et al. 2019
 MGS-1,water_release,3.2,wt%,Released between 30-500C
 MGS-1,co2_release,2.0,wt%,From siderite breakdown
 MGS-1,so2_release_temp,950,C,Decomposition of sulfates
+MGS-1,spectral_slope_1um,0.18,%/100nm,Basaltic slope from lab spectra (CRISM analog)
+MGS-1,mass_loss_400c,3.2,wt%,Mass loss attributed to bound water below 400C
+MGS-1,h2o_peak_temp,360,C,Thermogravimetric peak for hydrated phases

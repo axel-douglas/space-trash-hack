@@ -22,6 +22,7 @@ import numpy as np
 import pandas as pd
 
 from app.modules import generator
+from app.modules.data_sources import REGOLITH_CHARACTERIZATION
 from app.modules.data_pipeline import GoldFeatureRow, GoldLabelRow
 from app.modules.model_training import FEATURE_COLUMNS
 from app.modules.label_mapper import derive_recipe_id
@@ -257,6 +258,9 @@ def _build_gold_records() -> Iterator[GoldRecord]:
         features["num_items"] = int(len(picks))
         features["mission"] = mission
         features["scenario"] = scenario_name
+
+        for feature_name, baseline in REGOLITH_CHARACTERIZATION.feature_items:
+            features.setdefault(feature_name, float(baseline) * float(regolith_pct))
 
         recipe_id = derive_recipe_id(picks, process["process_id"], features)
         features["recipe_id"] = recipe_id

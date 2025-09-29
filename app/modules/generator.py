@@ -22,6 +22,7 @@ import math
 import os
 import random
 import re
+import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -82,8 +83,10 @@ from app.modules.data_sources import (
     MEAN_REUSE,
     REGOLITH_VECTOR,
     L2LParameters as _L2LParameters,
+    RegolithCharacterization,
     from_lazy_frame,
     load_l2l_parameters as _load_l2l_parameters,
+    load_regolith_characterization as _load_regolith_characterization,
     normalize_category,
     normalize_item,
     official_features_bundle as _load_official_features_bundle,
@@ -155,6 +158,11 @@ except Exception:  # pragma: no cover - fallback when models are not available
 _REGOLITH_OXIDE_ITEMS = tuple(REGOLITH_VECTOR.items())
 _REGOLITH_OXIDE_NAMES = tuple(f"oxide_{name}" for name, _ in _REGOLITH_OXIDE_ITEMS)
 _REGOLITH_OXIDE_VALUES = np.asarray([float(value) for _, value in _REGOLITH_OXIDE_ITEMS], dtype=float)
+
+_REGOLITH_CHARACTERIZATION: RegolithCharacterization = _load_regolith_characterization()
+_REGOLITH_FEATURE_ITEMS = _REGOLITH_CHARACTERIZATION.feature_items
+_REGOLITH_FEATURE_NAMES = tuple(name for name, _ in _REGOLITH_FEATURE_ITEMS)
+_REGOLITH_FEATURE_VALUES = np.asarray([float(value) for _, value in _REGOLITH_FEATURE_ITEMS], dtype=float)
 
 
 _INFERENCE_LOG_MANAGER = logging_utils._INFERENCE_LOG_MANAGER
@@ -2230,6 +2238,13 @@ def _compute_features_from_batch(batch: FeatureTensorBatch) -> list[Dict[str, An
             oxide_values = _REGOLITH_OXIDE_VALUES * features["regolith_pct"]
             for oxide_name, oxide_value in zip(_REGOLITH_OXIDE_NAMES, oxide_values, strict=False):
                 features[oxide_name] = float(oxide_value)
+
+        if _REGOLITH_FEATURE_VALUES.size:
+            regolith_values = _REGOLITH_FEATURE_VALUES * features["regolith_pct"]
+            for feature_name, feature_value in zip(
+                _REGOLITH_FEATURE_NAMES, regolith_values, strict=False
+            ):
+                features[feature_name] = float(feature_value)
 
         features_list.append(features)
 
