@@ -2,21 +2,25 @@
 import _bootstrap  # noqa: F401
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Mapping, Sequence
 
 import pandas as pd
 import streamlit as st
 
 from app.modules.luxe_components import (
+    ActionCard,
+    ActionDeck,
     BriefingCard,
+    CarouselItem,
+    CarouselRail,
+    GlassCard,
+    GlassStack,
     HeroFlowStage,
+    MetricGalaxy,
+    MissionMetrics,
+    TeslaHero,
     TimelineMilestone,
     guided_demo,
     orbital_timeline,
-    GlassCard,
-    GlassStack,
-    MetricGalaxy,
-    TeslaHero,
 )
 from app.modules.ml_models import get_model_registry
 from app.modules.navigation import set_active_step
@@ -49,35 +53,6 @@ def format_mass(value: float | int | None) -> str:
     if value >= 1000:
         return f"{value/1000:.1f} t"
     return f"{value:.0f} kg"
-
-
-def render_metric_panel_html(
-    metrics: Sequence[Mapping[str, Any]], highlight_key: str | None
-) -> str:
-    cards = []
-    for metric in metrics:
-        classes = "metric highlight" if metric.get("stage_key") == highlight_key else "metric"
-        details_html = "".join(
-            f"<p>{detail}</p>" for detail in metric.get("details", [])
-        )
-        cards.append(
-            f"""
-            <div class="{classes}">
-              <h5>{metric.get('label', '')}</h5>
-              <strong>{metric.get('value', '')}</strong>
-              {details_html}
-            </div>
-            """
-        )
-
-    return (
-        """
-        <aside class="sticky-panel reveal" id="sticky-metrics">
-          <h3>Panel de misión</h3>
-        """
-        + "".join(cards)
-        + "\n        </aside>"
-    )
 
 
 # ──────────── Lectura segura de metadata del modelo ────────────
@@ -285,8 +260,12 @@ with metrics_col:
     metrics_placeholder = st.empty()
 
 mission_metric_payload = hero_scene.metrics_payload()
+mission_metrics_component = MissionMetrics.from_payload(
+    mission_metric_payload,
+    title="Panel de misión",
+)
 metrics_placeholder.markdown(
-    render_metric_panel_html(mission_metric_payload, None),
+    mission_metrics_component.markup(),
     unsafe_allow_html=True,
 )
 
@@ -303,7 +282,7 @@ st.markdown(
 
 inventory_df = load_inventory_sample()
 
-category_cards = ""
+category_items = []
 if inventory_df is not None and not inventory_df.empty:
     category_summary = (
         inventory_df.groupby("category")[["mass_kg", "volume_l"]]
@@ -312,23 +291,16 @@ if inventory_df is not None and not inventory_df.empty:
         .head(6)
     )
     for category, row in category_summary.iterrows():
-        category_cards += (
-            f"<div class='carousel-card'>"
-            f"<h4>{category}</h4>"
-            f"<div class='value'>{format_mass(row['mass_kg'])}</div>"
-            f"<p>Volumen: {row['volume_l']:.0f} L</p>"
-            f"</div>"
+        category_items.append(
+            CarouselItem(
+                title=category,
+                value=format_mass(row["mass_kg"]),
+                description=f"Volumen: {row['volume_l']:.0f} L",
+            )
         )
 
-if category_cards:
-    st.markdown(
-        f"""
-        <div class="carousel reveal" data-carousel="categorias">
-          {category_cards}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+if category_items:
+    CarouselRail(items=category_items, data_track="categorias").render()
 
 col_lab_a, col_lab_b = st.columns([1.6, 1], gap="large")
 
@@ -401,7 +373,7 @@ active_stage_key = (
     else None
 )
 metrics_placeholder.markdown(
-    render_metric_panel_html(mission_metric_payload, active_stage_key),
+    mission_metrics_component.markup(highlight_key=active_stage_key),
     unsafe_allow_html=True,
 )
 
@@ -441,6 +413,17 @@ st.markdown(
 
 cta_col1, cta_col2 = st.columns(2, gap="large")
 with cta_col1:
+    ActionDeck(
+        cards=[
+            ActionCard(
+                title="Exportar receta y telemetría",
+                body="Descargá reportes con Sankey, contribuciones y feedback para seguimiento.",
+                icon="📤",
+            )
+        ],
+        columns_min="18rem",
+    ).render()
+    if st.button("📤 Exportar", use_container_width=True):
     st.markdown(
         """
         <div class="cta-grid">
@@ -468,27 +451,18 @@ with cta_col1:
     ):
         st.session_state[export_state_key] = "loading"
         st.switch_page("pages/4_Results_and_Tradeoffs.py")
-
-metric_grid_html = "".join(
-    f"""
-    <div class='metric{' highlight' if metric.get('stage_key') == active_stage_key else ''}'>
-        <h5>{metric.get('label', '')}</h5>
-        <strong>{metric.get('value', '')}</strong>
-        {''.join(f'<p>{detail}</p>' for detail in metric.get('details', [])[:2])}
-    </div>
-    """
-    for metric in mission_metric_payload
-)
-
-st.markdown(
-    f"""
-    <div class="metric-grid">
-      {metric_grid_html}
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
 with cta_col2:
+    ActionDeck(
+        cards=[
+            ActionCard(
+                title="Simular escenarios",
+                body="Prueba configuraciones de energía, crew y materiales para stress tests.",
+                icon="🧮",
+            )
+        ],
+        columns_min="18rem",
+    ).render()
+    if st.button("🧮 Simular escenarios", use_container_width=True):
     st.markdown(
         """
         <div class="cta-grid">
@@ -518,27 +492,54 @@ with cta_col2:
         st.switch_page("pages/2_Target_Designer.py")
 
 st.markdown(
-    """
-    <div class="mission-grid">
-      <div><h3>1. Inventario NASA</h3><p>Trabajá sobre <code>data/waste_inventory_sample.csv</code> o subí tu CSV normalizado.</p></div>
-      <div><h3>2. Objetivo</h3><p>Usá presets (container, utensil, tool, interior) o definí límites manuales.</p></div>
-      <div><h3>3. Generador con IA</h3><p>Revisá contribuciones de features y compará heurística vs modelo.</p></div>
-      <div><h3>4. Reportar</h3><p>Exportá recetas, Sankey y feedback/impact para seguir entrenando Rex-AI.</p></div>
-    <div class="cta-grid" style="margin-top: 12px;">
-      <div class="cta-card reveal">
-        <span class="icon">🧱</span>
-        <strong>Construir inventario</strong>
-        <p>Normalizá residuos NASA y etiquetá flags EVA, multilayer y nitrilo.</p>
-      </div>
-      <div class="cta-card reveal">
-        <span class="icon">🤖</span>
-        <strong>Generador IA vs heurística</strong>
-        <p>Compara recetas propuestas, trade-offs y bandas de confianza.</p>
-      </div>
-    </div>
-    """,
+    mission_metrics_component.markup(
+        layout="grid",
+        highlight_key=active_stage_key,
+        detail_limit=2,
+        show_title=False,
+    ),
     unsafe_allow_html=True,
 )
+
+ActionDeck(
+    cards=[
+        ActionCard(
+            title="1. Inventario NASA",
+            body="Trabajá sobre <code>data/waste_inventory_sample.csv</code> o subí tu CSV normalizado.",
+        ),
+        ActionCard(
+            title="2. Objetivo",
+            body="Usá presets (container, utensil, tool, interior) o definí límites manuales.",
+        ),
+        ActionCard(
+            title="3. Generador con IA",
+            body="Revisá contribuciones de features y compará heurística vs modelo.",
+        ),
+        ActionCard(
+            title="4. Reportar",
+            body="Exportá recetas, Sankey y feedback/impact para seguir entrenando Rex-AI.",
+        ),
+    ],
+    columns_min="15rem",
+    density="cozy",
+).render()
+
+ActionDeck(
+    cards=[
+        ActionCard(
+            title="Construir inventario",
+            body="Normalizá residuos NASA y etiquetá flags EVA, multilayer y nitrilo.",
+            icon="🧱",
+        ),
+        ActionCard(
+            title="Generador IA vs heurística",
+            body="Compara recetas propuestas, trade-offs y bandas de confianza.",
+            icon="🤖",
+        ),
+    ],
+    columns_min="14rem",
+    density="cozy",
+).render()
 
 # ──────────── CTA navegación ────────────
 st.markdown("### Siguiente acción")
