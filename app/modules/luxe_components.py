@@ -536,6 +536,194 @@ _LUXE_COMPONENT_CSS = """
   color: var(--luxe-muted);
 }
 
+.luxe-mission-panel {
+  position: sticky;
+  top: 84px;
+  border-radius: 22px;
+  border: 1px solid color-mix(in srgb, var(--border-soft) 72%, transparent);
+  padding: var(--mission-panel-padding, 24px 26px);
+  background: color-mix(in srgb, var(--surface-panel) 92%, transparent);
+  backdrop-filter: blur(18px);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.luxe-mission-panel__title {
+  margin: 0;
+}
+
+.luxe-mission-panel__metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.luxe-mission-metric {
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--border-soft) 60%, transparent);
+  background: color-mix(in srgb, var(--surface-card) 85%, transparent);
+  padding: var(--mission-metric-padding, 14px 16px);
+  transition: border 280ms ease, box-shadow 280ms ease;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.luxe-mission-metric.is-active {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.luxe-mission-metric__icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-size: 1.1rem;
+  margin-bottom: 2px;
+}
+
+.luxe-mission-metric h5 {
+  margin: 0;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: color-mix(in srgb, var(--muted) 90%, transparent);
+}
+
+.luxe-mission-metric strong {
+  font-size: 1.32rem;
+}
+
+.luxe-mission-metric p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.luxe-mission-metric__caption {
+  margin: 0;
+  color: color-mix(in srgb, var(--muted) 85%, transparent);
+  font-size: 0.8rem;
+}
+
+.luxe-mission-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--mission-grid-min, 14rem), 1fr));
+  gap: var(--mission-grid-gap, 1rem);
+  margin-top: 1.5rem;
+}
+
+.luxe-mission-grid .luxe-mission-metric {
+  border-radius: 18px;
+  padding: var(--mission-grid-card-padding, 18px 20px);
+  background: var(--metric-bg, color-mix(in srgb, var(--surface-panel) 88%, transparent));
+  border: 1px solid var(--metric-border, color-mix(in srgb, var(--border-soft) 65%, transparent));
+}
+
+.luxe-carousel {
+  display: flex;
+  gap: var(--carousel-gap, 1rem);
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
+  scroll-snap-type: x mandatory;
+}
+
+.luxe-carousel::-webkit-scrollbar {
+  height: 6px;
+}
+
+.luxe-carousel::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 999px;
+}
+
+.luxe-carousel-card {
+  min-width: var(--carousel-min, 15rem);
+  scroll-snap-align: start;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--border-soft) 64%, transparent);
+  padding: var(--carousel-card-padding, 18px);
+  background: color-mix(in srgb, var(--surface-card) 82%, transparent);
+  display: grid;
+  gap: 0.4rem;
+}
+
+.luxe-carousel-card h4 {
+  margin: 0;
+  font-size: 1.02rem;
+}
+
+.luxe-carousel-card__value {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.luxe-carousel-card__description {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.luxe-carousel-card__icon {
+  font-size: 1.4rem;
+  opacity: 0.75;
+}
+
+.luxe-action-deck {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--action-min, 16rem), 1fr));
+  gap: var(--action-gap, 1.1rem);
+}
+
+.luxe-action-card {
+  position: relative;
+  border-radius: 22px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  padding: var(--action-card-padding, 22px 24px);
+  background: linear-gradient(160deg, color-mix(in srgb, var(--accent) 16%, transparent), color-mix(in srgb, var(--surface-panel) 78%, transparent));
+  color: var(--ink);
+  box-shadow: 0 24px 48px -32px rgba(15, 23, 42, 0.55);
+  overflow: hidden;
+}
+
+.luxe-action-card__icon {
+  position: absolute;
+  top: 16px;
+  right: 18px;
+  font-size: 1.4rem;
+  opacity: 0.85;
+}
+
+.luxe-action-card__title {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.16rem;
+}
+
+.luxe-action-card__body {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.94rem;
+}
+
+.luxe-action-card__tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.32rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: color-mix(in srgb, var(--accent) 90%, transparent);
+  margin-bottom: 0.8rem;
+}
+
 .luxe-stack {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(var(--stack-min, 16rem), 1fr));
@@ -1606,6 +1794,297 @@ class MetricGalaxy:
 
 
 @dataclass
+class MissionMetric:
+    key: str
+    label: str
+    value: str
+    details: Sequence[str] = field(default_factory=tuple)
+    caption: str | None = None
+    icon: str | None = None
+    stage_key: str | None = None
+
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, Any]) -> "MissionMetric":
+        details: Sequence[str] | str | None = payload.get("details")
+        if details is None:
+            normalized: Sequence[str] = ()
+        elif isinstance(details, str):
+            normalized = (details,)
+        else:
+            normalized = tuple(str(item) for item in details)
+        return cls(
+            key=str(payload.get("key", payload.get("stage_key", ""))),
+            label=str(payload.get("label", "")),
+            value=str(payload.get("value", "")),
+            details=normalized,
+            caption=payload.get("caption"),
+            icon=payload.get("icon"),
+            stage_key=payload.get("stage_key"),
+        )
+
+
+@dataclass
+class MissionMetrics:
+    metrics: Sequence[MissionMetric]
+    title: str = "Panel de misión"
+    panel_density: str = "cozy"
+    grid_density: str = "cozy"
+    columns_min: str = "14rem"
+    animate: bool = True
+
+    @classmethod
+    def from_payload(
+        cls,
+        payload: Sequence[Mapping[str, Any]],
+        *,
+        title: str = "Panel de misión",
+        panel_density: str = "cozy",
+        grid_density: str = "cozy",
+        columns_min: str = "14rem",
+        animate: bool = True,
+    ) -> "MissionMetrics":
+        metrics = [MissionMetric.from_mapping(item) for item in payload]
+        return cls(
+            metrics=metrics,
+            title=title,
+            panel_density=panel_density,
+            grid_density=grid_density,
+            columns_min=columns_min,
+            animate=animate,
+        )
+
+    def markup(
+        self,
+        *,
+        highlight_key: str | None = None,
+        layout: Literal["panel", "grid"] = "panel",
+        detail_limit: int | None = None,
+        show_title: bool | None = None,
+    ) -> str:
+        variant = layout
+        highlight = highlight_key
+        limit = max(detail_limit, 0) if detail_limit is not None else None
+
+        def metric_markup(metric: MissionMetric) -> str:
+            classes = ["luxe-mission-metric"]
+            if highlight and metric.stage_key == highlight:
+                classes.append("is-active")
+            icon_html = (
+                f"<span class='luxe-mission-metric__icon'>{metric.icon}</span>"
+                if metric.icon
+                else ""
+            )
+            details = metric.details
+            if limit is not None:
+                details = tuple(details)[:limit]
+            detail_html = "".join(f"<p>{text}</p>" for text in details)
+            caption_html = (
+                f"<p class='luxe-mission-metric__caption'>{metric.caption}</p>"
+                if metric.caption and limit is None
+                else ""
+            )
+            return (
+                f"<div class='{_class_names(classes)}' data-key='{metric.key}'>"
+                f"{icon_html}"
+                f"<h5>{metric.label}</h5>"
+                f"<strong>{metric.value}</strong>"
+                f"{detail_html}"
+                f"{caption_html}"
+                "</div>"
+            )
+
+        if variant == "grid":
+            gap_map = {"compact": "0.85rem", "cozy": "1rem", "roomy": "1.3rem"}
+            padding_map = {"compact": "16px 18px", "cozy": "18px 20px", "roomy": "20px 22px"}
+            style = {
+                "--mission-grid-min": self.columns_min,
+                "--mission-grid-gap": gap_map.get(self.grid_density, gap_map["cozy"]),
+                "--mission-grid-card-padding": padding_map.get(
+                    self.grid_density, padding_map["cozy"]
+                ),
+            }
+            classes = ["luxe-mission-grid"]
+            if self.animate:
+                classes.append("reveal")
+            metrics_html = "".join(metric_markup(metric) for metric in self.metrics)
+            return (
+                f"<div class='{_class_names(classes)}' style='{_merge_styles(style, {})}'>"
+                f"{metrics_html}"
+                "</div>"
+            )
+
+        padding_map = {"compact": "20px 22px", "cozy": "24px 26px", "roomy": "28px 30px"}
+        metric_padding_map = {"compact": "12px 14px", "cozy": "14px 16px", "roomy": "16px 18px"}
+        style = {
+            "--mission-panel-padding": padding_map.get(self.panel_density, padding_map["cozy"]),
+            "--mission-metric-padding": metric_padding_map.get(
+                self.panel_density, metric_padding_map["cozy"]
+            ),
+        }
+        classes = ["luxe-mission-panel"]
+        if self.animate:
+            classes.append("reveal")
+        show_heading = self.title if show_title is None else show_title
+        heading_html = (
+            f"<h3 class='luxe-mission-panel__title'>{self.title}</h3>"
+            if show_heading
+            else ""
+        )
+        metrics_html = "".join(metric_markup(metric) for metric in self.metrics)
+        return (
+            f"<aside class='{_class_names(classes)}' id='sticky-metrics' style='{_merge_styles(style, {})}'>"
+            f"{heading_html}"
+            "<div class='luxe-mission-panel__metrics'>"
+            f"{metrics_html}"
+            "</div>"
+            "</aside>"
+        )
+
+    def render(
+        self,
+        *,
+        highlight_key: str | None = None,
+        layout: Literal["panel", "grid"] = "panel",
+        detail_limit: int | None = None,
+        show_title: bool | None = None,
+    ) -> None:
+        _load_css()
+        st.markdown(
+            self.markup(
+                highlight_key=highlight_key,
+                layout=layout,
+                detail_limit=detail_limit,
+                show_title=show_title,
+            ),
+            unsafe_allow_html=True,
+        )
+
+
+@dataclass
+class CarouselItem:
+    title: str
+    value: str | None = None
+    description: str | None = None
+    icon: str | None = None
+
+    def markup(self) -> str:
+        icon_html = (
+            f"<div class='luxe-carousel-card__icon'>{self.icon}</div>"
+            if self.icon
+            else ""
+        )
+        value_html = (
+            f"<div class='luxe-carousel-card__value'>{self.value}</div>"
+            if self.value
+            else ""
+        )
+        description_html = (
+            f"<p class='luxe-carousel-card__description'>{self.description}</p>"
+            if self.description
+            else ""
+        )
+        return (
+            "<div class='luxe-carousel-card'>"
+            f"{icon_html}"
+            f"<h4>{self.title}</h4>"
+            f"{value_html}"
+            f"{description_html}"
+            "</div>"
+        )
+
+
+@dataclass
+class CarouselRail:
+    items: Sequence[CarouselItem]
+    data_track: str | None = None
+    reveal: bool = True
+    min_width: str = "15rem"
+    density: str = "cozy"
+
+    def markup(self) -> str:
+        gap_map = {"compact": "0.75rem", "cozy": "1rem", "roomy": "1.25rem"}
+        padding_map = {"compact": "16px", "cozy": "18px", "roomy": "20px"}
+        style = {
+            "--carousel-min": self.min_width,
+            "--carousel-gap": gap_map.get(self.density, gap_map["cozy"]),
+            "--carousel-card-padding": padding_map.get(self.density, padding_map["cozy"]),
+        }
+        classes = ["luxe-carousel"]
+        if self.reveal:
+            classes.append("reveal")
+        metrics_html = "".join(item.markup() for item in self.items)
+        data_attr = f" data-carousel='{self.data_track}'" if self.data_track else ""
+        return (
+            f"<div class='{_class_names(classes)}' style='{_merge_styles(style, {})}'{data_attr}>"
+            f"{metrics_html}"
+            "</div>"
+        )
+
+    def render(self) -> None:
+        _load_css()
+        st.markdown(self.markup(), unsafe_allow_html=True)
+
+
+@dataclass
+class ActionCard:
+    title: str
+    body: str
+    icon: str | None = None
+    tag: str | None = None
+
+    def markup(self) -> str:
+        tag_html = (
+            f"<div class='luxe-action-card__tag'>{self.tag}</div>"
+            if self.tag
+            else ""
+        )
+        icon_html = (
+            f"<span class='luxe-action-card__icon'>{self.icon}</span>"
+            if self.icon
+            else ""
+        )
+        return (
+            "<div class='luxe-action-card'>"
+            f"{icon_html}"
+            f"{tag_html}"
+            f"<h3 class='luxe-action-card__title'>{self.title}</h3>"
+            f"<p class='luxe-action-card__body'>{self.body}</p>"
+            "</div>"
+        )
+
+
+@dataclass
+class ActionDeck:
+    cards: Sequence[ActionCard]
+    columns_min: str = "16rem"
+    density: str = "cozy"
+    gap: str | None = None
+    reveal: bool = True
+
+    def markup(self) -> str:
+        gap_map = {"compact": "0.9rem", "cozy": "1.1rem", "roomy": "1.4rem"}
+        padding_map = {"compact": "18px 20px", "cozy": "22px 24px", "roomy": "26px 28px"}
+        style = {
+            "--action-min": self.columns_min,
+            "--action-gap": self.gap or gap_map.get(self.density, gap_map["cozy"]),
+            "--action-card-padding": padding_map.get(self.density, padding_map["cozy"]),
+        }
+        classes = ["luxe-action-deck"]
+        if self.reveal:
+            classes.append("reveal")
+        cards_html = "".join(card.markup() for card in self.cards)
+        return (
+            f"<div class='{_class_names(classes)}' style='{_merge_styles(style, {})}'>"
+            f"{cards_html}"
+            "</div>"
+        )
+
+    def render(self) -> None:
+        _load_css()
+        st.markdown(self.markup(), unsafe_allow_html=True)
+
+
+@dataclass
 class GlassCard:
     title: str
     body: str
@@ -1664,10 +2143,16 @@ __all__ = [
     "render_card",
     "render_pill",
     "ChipRow",
-    "TeslaHero",
+    "TeslaHero", 
     "TeslaHeroBriefingScene",
     "MetricGalaxy",
     "MetricItem",
+    "MissionMetric",
+    "MissionMetrics",
+    "CarouselItem",
+    "CarouselRail",
+    "ActionCard",
+    "ActionDeck",
     "GlassStack",
     "GlassCard",
 ]
