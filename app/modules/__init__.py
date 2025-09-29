@@ -20,6 +20,10 @@ from .io import (
     save_waste_df,
     load_targets,
     load_process_catalog,
+    invalidate_waste_cache,
+    invalidate_process_cache,
+    invalidate_targets_cache,
+    invalidate_all_io_caches,
 )
 
 __all__ = [
@@ -28,6 +32,10 @@ __all__ = [
     "save_waste_df",
     "load_targets",
     "load_process_catalog",
+    "invalidate_waste_cache",
+    "invalidate_process_cache",
+    "invalidate_targets_cache",
+    "invalidate_all_io_caches",
     # Generación
     "generate_candidates",
     "PredProps",

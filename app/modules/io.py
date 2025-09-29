@@ -1,6 +1,9 @@
 # app/modules/io.py
 from __future__ import annotations
+
+import copy
 import json
+from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
@@ -27,7 +30,8 @@ def _ensure_exists():
         if not p.exists():
             raise FileNotFoundError(f"Falta archivo de datos: {p}")
 
-def load_waste_df() -> pd.DataFrame:
+@lru_cache(maxsize=1)
+def _load_waste_df_cached() -> pd.DataFrame:
     """
     Lee el CSV NASA `waste_inventory_sample.csv` con columnas:
       id,category,material_family,mass_kg,volume_l,flags
@@ -94,6 +98,11 @@ def load_waste_df() -> pd.DataFrame:
     )
 
     return result.to_pandas(use_pyarrow_extension_array=False)
+
+
+def load_waste_df() -> pd.DataFrame:
+    """Return a defensive copy of the cached waste inventory."""
+    return _load_waste_df_cached().copy(deep=True)
 
 def save_waste_df(df: pd.DataFrame | pl.DataFrame) -> None:
     """
@@ -190,8 +199,10 @@ def save_waste_df(df: pd.DataFrame | pl.DataFrame) -> None:
     )
 
     out.write_csv(WASTE_CSV, include_header=True)
+    invalidate_waste_cache()
 
-def load_process_df() -> pd.DataFrame:
+@lru_cache(maxsize=1)
+def _load_process_df_cached() -> pd.DataFrame:
     _ensure_exists()
     return pd.read_csv(PROC_CSV)
 
@@ -200,6 +211,33 @@ def load_process_catalog() -> pd.DataFrame:
     """Alias legada para compatibilidad."""
     return load_process_df()
 
-def load_targets() -> list[dict]:
+@lru_cache(maxsize=1)
+def _load_targets_cached() -> list[dict]:
     _ensure_exists()
     return json.loads(TARGETS_JSON.read_text(encoding="utf-8"))
+
+
+def load_targets() -> list[dict]:
+    return copy.deepcopy(_load_targets_cached())
+
+
+def load_process_df() -> pd.DataFrame:
+    return _load_process_df_cached().copy()
+
+
+def invalidate_waste_cache() -> None:
+    _load_waste_df_cached.cache_clear()
+
+
+def invalidate_process_cache() -> None:
+    _load_process_df_cached.cache_clear()
+
+
+def invalidate_targets_cache() -> None:
+    _load_targets_cached.cache_clear()
+
+
+def invalidate_all_io_caches() -> None:
+    invalidate_waste_cache()
+    invalidate_process_cache()
+    invalidate_targets_cache()
