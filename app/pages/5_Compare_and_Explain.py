@@ -1,18 +1,75 @@
 import _bootstrap  # noqa: F401
 
+import numpy as np
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from streamlit_sortables import sort_items
 
 from app.modules.explain import compare_table, score_breakdown
+from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.ui_blocks import load_theme
+
+
+def _generate_storytelling(
+    df: pd.DataFrame, target_payload: dict, duel_annotations: list[dict[str, str]]
+) -> list[str]:
+    """Construye insights en lenguaje natural usando reglas heurísticas."""
+    insights: list[str] = []
+    if df.empty:
+        return insights
+
+    top = df.sort_values("Score", ascending=False).iloc[0]
+    insights.append(
+        f"🥇 **#{int(top['Opción'])}** domina el score con {top['Score']:.2f}, impulsado por {top['Proceso']}."
+    )
+
+    for metric in ["Agua (L)", "Energía (kWh)", "Crew (min)"]:
+        if metric in df.columns:
+            best_idx = df[metric].astype(float).idxmin()
+            best_row = df.loc[best_idx]
+            insights.append(
+                f"🔎 En {metric.lower()}, la opción #{int(best_row['Opción'])} consume {best_row[metric]:.2f}, el menor del set."
+            )
+
+    if "Rigidez" in df.columns:
+        rigidity_idx = df["Rigidez"].astype(float).idxmax()
+        rigid_row = df.loc[rigidity_idx]
+        insights.append(
+            f"🧱 Si la misión prioriza rigidez, la opción #{int(rigid_row['Opción'])} alcanza {rigid_row['Rigidez']:.2f}."
+        )
+
+    if target_payload:
+        limites = {
+            "Energía (kWh)": float(target_payload.get("max_energy_kwh", 0)),
+            "Agua (L)": float(target_payload.get("max_water_l", 0)),
+            "Crew (min)": float(target_payload.get("max_crew_min", 0)),
+        }
+        for metric, limit in limites.items():
+            if limit and metric in df.columns:
+                peor = df[metric].astype(float).max()
+                if peor > limit:
+                    insights.append(
+                        f"⚠️ Algunas opciones superan el límite de {metric} ({limit:.1f}). Ajustá recetas para bajar a {limit:.1f}."
+                    )
+                    break
+
+    if duel_annotations:
+        best = duel_annotations[0]
+        insights.append(
+            f"⚔️ En el duelo, destaca {best['metric']} con ventaja para {best['advantage']} ({best['diff_text']})."
+        )
+
+    return insights
 
 # ⚠️ Debe ser la PRIMERA llamada de Streamlit en la página
 st.set_page_config(page_title="Comparar & Explicar", page_icon="🧪", layout="wide")
+set_active_step("compare")
 
 load_theme()
 
+render_breadcrumbs("compare")
 # ======== estado requerido ========
 cands  = st.session_state.get("candidates", [])
 target = st.session_state.get("target", None)
@@ -57,8 +114,185 @@ with colC:
 with colD:
     st.markdown(f'<div class="kpi"><h3>Energía mínima</h3><div class="v">{df_base["Energía (kWh)"].min():.2f} kWh</div><div class="hint">Entre todas las opciones</div></div>', unsafe_allow_html=True)
 
-st.markdown("### Tabla consolidada")
-st.dataframe(df_base, use_container_width=True, hide_index=True)
+# ======== Panel Comparómetro interactivo ========
+st.markdown("## 🧭 Comparómetro side-by-side")
+st.caption("Arrastrá para priorizar candidatos y obtener visualizaciones con sombreado adaptativo.")
+
+candidate_labels = [
+    f"#{row.Opción} · {row.Proceso} · Score {row.Score:.2f}"
+    for _, row in df_base.iterrows()
+]
+label_to_index = {label: i for i, label in enumerate(candidate_labels)}
+sorted_labels = sort_items(
+    candidate_labels,
+    header="Arrastrá para elegir prioridad",
+    direction="vertical",
+    key="comparometer_sort_order",
+)
+top_labels = sorted_labels[:2] if sorted_labels else candidate_labels[:2]
+selected_indices = [label_to_index.get(lbl, 0) for lbl in top_labels]
+
+metric_config = [
+    ("Score", "Score", True, "Mayor score = mejor balance global"),
+    ("Rigidez", "Rigidez", True, "Más rigidez significa estructura robusta"),
+    ("Estanqueidad", "Estanqueidad", True, "Más estanqueidad protege atmósfera interna"),
+    ("Energía (kWh)", "Energía (kWh)", False, "Menos kWh libera capacidad energética"),
+    ("Agua (L)", "Agua (L)", False, "Menos agua consumida facilita logística"),
+    ("Crew (min)", "Crew (min)", False, "Menos minutos libera crew-time"),
+    ("Masa (kg)", "Masa (kg)", False, "Menor masa reduce penalización de lanzamiento"),
+]
+
+metric_cols = [m[1] for m in metric_config if m[1] in df_base.columns]
+if metric_cols:
+    df_metrics = df_base[["Opción"] + metric_cols].copy()
+else:
+    df_metrics = pd.DataFrame({"Opción": df_base["Opción"]})
+
+if metric_cols:
+    norm_matrix = []
+    for name, col, higher_is_better, _ in metric_config:
+        if col not in df_metrics.columns:
+            continue
+        series = df_metrics[col].astype(float)
+        if series.nunique(dropna=True) <= 1:
+            norm = np.ones_like(series, dtype=float)
+        else:
+            min_v = series.min()
+            max_v = series.max()
+            span = max(max_v - min_v, 1e-6)
+            norm = (series - min_v) / span
+            if not higher_is_better:
+                norm = 1 - norm
+        norm_matrix.append(norm)
+
+    norm_matrix = np.vstack(norm_matrix) if norm_matrix else np.empty((0, len(df_metrics)))
+    heatmap_values = df_metrics[metric_cols].astype(float).values
+    hover_text = []
+    for row in df_metrics.itertuples():
+        texts = []
+        for name, col, higher_is_better, desc in metric_config:
+            if col not in df_metrics.columns:
+                continue
+            attr_name = col.replace(" ", "_").replace("(", "").replace(")", "")
+            value = getattr(row, attr_name, np.nan)
+            base_series = df_metrics[col].astype(float)
+            if higher_is_better:
+                delta = value - base_series.mean()
+                direction = "por encima" if delta >= 0 else "por debajo"
+            else:
+                delta = base_series.mean() - value
+                direction = "ahorra" if delta >= 0 else "consume más"
+            delta_text = f"{abs(delta):.2f}" if np.isfinite(delta) else "N/A"
+            narrative = f"{desc}. Se ubica {direction} vs. promedio ({delta_text})."
+            texts.append(
+                f"<b>Opción {row.Opción}</b><br>{name}: {value:.2f}<br>{narrative}"
+            )
+        hover_text.append(texts)
+
+    z_values = norm_matrix.T if norm_matrix.size else np.zeros_like(heatmap_values, dtype=float)
+
+    fig_matrix = go.Figure(
+        data=go.Heatmap(
+            z=z_values,
+            x=[cfg[0] for cfg in metric_config if cfg[1] in df_metrics.columns],
+            y=[f"#{row.Opción}" for row in df_metrics.itertuples()],
+            customdata=heatmap_values,
+            text=np.round(heatmap_values, 2),
+            texttemplate="%{text}",
+            hoverinfo="text",
+            hovertext=hover_text,
+            colorscale="RdYlGn",
+            reversescale=True,
+            showscale=True,
+            zmin=0,
+            zmax=1,
+        )
+    )
+    fig_matrix.update_layout(
+        title="Matrix heatmap de desempeño",
+        height=max(360, 160 + 28 * len(df_metrics)),
+        margin=dict(l=10, r=10, t=60, b=10),
+    )
+    st.plotly_chart(fig_matrix, use_container_width=True)
+
+    st.caption("La escala aplica shading condicional: verde = desempeño competitivo, rojo = zona de riesgo.")
+else:
+    st.info("No se encontraron métricas cuantitativas para renderizar la heatmap.")
+
+if selected_indices:
+    comp_cols = st.columns(2)
+    for slot, idx in enumerate(selected_indices[:2]):
+        cand = cands[idx]
+        col_slot = comp_cols[slot]
+        with col_slot:
+            st.markdown(f"### Candidato {'A' if slot == 0 else 'B'} — #{idx+1}")
+            st.markdown(f"**Proceso:** {cand['process_id']} · {cand['process_name']}")
+            st.markdown(f"**Score:** {cand['score']:.2f}")
+            props = cand["props"]
+            metric_vals = []
+            heat_vals = []
+            hover_vals = []
+            labels = []
+            for name, col, higher_is_better, desc in metric_config:
+                if col not in df_metrics.columns:
+                    continue
+                labels.append(name)
+                if col == "Score":
+                    val = cand["score"]
+                elif col == "Rigidez":
+                    val = props.rigidity
+                elif col == "Estanqueidad":
+                    val = props.tightness
+                elif col == "Energía (kWh)":
+                    val = props.energy_kwh
+                elif col == "Agua (L)":
+                    val = props.water_l
+                elif col == "Crew (min)":
+                    val = props.crew_min
+                elif col == "Masa (kg)":
+                    val = getattr(props, "mass_final_kg", np.nan)
+                else:
+                    val = np.nan
+                metric_vals.append(val)
+                series = df_metrics[col].astype(float)
+                min_v, max_v = series.min(), series.max()
+                span = max(max_v - min_v, 1e-6)
+                normalized = (val - min_v) / span
+                if not higher_is_better:
+                    normalized = 1 - normalized
+                heat_vals.append(normalized)
+                hover_vals.append(
+                    f"{name}: {val:.2f} — {'mejor' if normalized >= 0.66 else ('alerta' if normalized <= 0.33 else 'estable')}"
+                )
+
+            fig_card = go.Figure(
+                data=go.Heatmap(
+                    z=[heat_vals],
+                    x=labels,
+                    y=["Desempeño"],
+                    text=np.round(metric_vals, 2),
+                    texttemplate="%{text}",
+                    hoverinfo="text",
+                    hovertext=[hover_vals],
+                    colorscale=[[0, "#ff5f6d"], [0.5, "#f5f7fa"], [1, "#35d07f"]],
+                    showscale=False,
+                    zmin=0,
+                    zmax=1,
+                )
+            )
+            fig_card.update_layout(
+                margin=dict(l=10, r=10, t=10, b=10),
+                height=180,
+                title="Mapa de performance",
+            )
+            st.plotly_chart(fig_card, use_container_width=True)
+
+            if heat_vals:
+                st.progress(
+                    min(max(float(np.nanmean(heat_vals)), 0.0), 1.0),
+                    text="Índice holográfico de salud",
+                )
+
 
 # ======== gráficos de vista general ========
 st.markdown("### Vistas rápidas")
@@ -97,6 +331,7 @@ with g2:
     st.plotly_chart(fig_bar, use_container_width=True)
 
 # ======== Tabs de análisis profundo ========
+duel_annotations: list[dict[str, str]] = []
 tab1, tab2, tab3 = st.tabs(["🔍 Inspector de candidato", "⚔️ Duelo (A vs B)", "📖 Explicación didáctica"])
 
 # --- TAB 1: Inspector de candidato ---
@@ -172,59 +407,145 @@ with tab2:
         b_idx = st.number_input("Candidato B (#)", min_value=1, max_value=len(cands), value=min(2, len(cands)), step=1, key="duel_b")
         B = cands[b_idx-1]
 
-    # Cuadro comparativo simple
-    def _row(k, fa, fb, suffix=""):
-        return f"| **{k}** | {fa}{suffix} | {fb}{suffix} |"
-
     Ap, Bp = A["props"], B["props"]
-    table_md = "\n".join([
-        "| Métrica | A | B |",
-        "|---|---:|---:|",
-        _row("Score", A["score"], B["score"]),
-        _row("Energía (kWh)", f"{Ap.energy_kwh:.2f}", f"{Bp.energy_kwh:.2f}"),
-        _row("Agua (L)",      f"{Ap.water_l:.2f}",    f"{Bp.water_l:.2f}"),
-        _row("Crew (min)",    f"{Ap.crew_min:.0f}",   f"{Bp.crew_min:.0f}"),
-        _row("Rigidez",       f"{Ap.rigidity:.2f}",   f"{Bp.rigidity:.2f}"),
-        _row("Estanqueidad",  f"{Ap.tightness:.2f}",  f"{Bp.tightness:.2f}"),
-        _row("Masa final (kg)", f"{Ap.mass_final_kg:.2f}", f"{Bp.mass_final_kg:.2f}"),
+
+    duel_metrics = [
+        ("Score", A["score"], B["score"], True, "⭐ Equilibrio global"),
+        ("Energía (kWh)", Ap.energy_kwh, Bp.energy_kwh, False, "⚡ Demanda energética"),
+        ("Agua (L)", Ap.water_l, Bp.water_l, False, "💧 Consumo hídrico"),
+        ("Crew (min)", Ap.crew_min, Bp.crew_min, False, "👩‍🚀 Minutos tripulación"),
+        ("Rigidez", Ap.rigidity, Bp.rigidity, True, "🧱 Resistencia estructural"),
+        ("Estanqueidad", Ap.tightness, Bp.tightness, True, "🧴 Sellado"),
+        ("Masa (kg)", getattr(Ap, "mass_final_kg", np.nan), getattr(Bp, "mass_final_kg", np.nan), False, "🚀 Impacto de masa"),
+    ]
+
+    duel_df = pd.DataFrame([
+        {
+            "Métrica": name,
+            "A": val_a,
+            "B": val_b,
+            "Mayor_es_mejor": higher,
+            "Narrativa": narrative,
+        }
+        for name, val_a, val_b, higher, narrative in duel_metrics
+        if np.isfinite(val_a) and np.isfinite(val_b)
     ])
-    st.markdown(table_md)
 
-    # Visual complementaria: barras apiladas “recursos”
-    res_df = pd.DataFrame([
-        {"Candidato":"A","Energía (kWh)":Ap.energy_kwh,"Agua (L)":Ap.water_l,"Crew (min)":Ap.crew_min},
-        {"Candidato":"B","Energía (kWh)":Bp.energy_kwh,"Agua (L)":Bp.water_l,"Crew (min)":Bp.crew_min},
-    ])
-    fig_res = go.Figure(data=[
-        go.Bar(name="Energía (kWh)", x=res_df["Candidato"], y=res_df["Energía (kWh)"]),
-        go.Bar(name="Agua (L)",      x=res_df["Candidato"], y=res_df["Agua (L)"]),
-        go.Bar(name="Crew (min)",    x=res_df["Candidato"], y=res_df["Crew (min)"]),
-    ])
-    fig_res.update_layout(barmode="group", margin=dict(l=10,r=10,t=10,b=10), height=360)
-    st.plotly_chart(fig_res, use_container_width=True)
+    holographic_palette = ["#08f7fe", "#fe53bb"]
 
-    # Conclusión en criollo (reglas simples)
-    concl = []
-    if A["score"] > B["score"]:
-        concl.append("🟢 **A** gana en Score global.")
-    elif B["score"] > A["score"]:
-        concl.append("🟢 **B** gana en Score global.")
-    else:
-        concl.append("⚖️ Empate en Score.")
+    frames = []
+    annotations = []
+    for row in duel_df.itertuples():
+        if row.A == 0 and row.B == 0:
+            pct_diff = 0.0
+        else:
+            baseline = row.A if row.A != 0 else 1e-6
+            pct_diff = ((row.B - row.A) / baseline) * 100
+        advantage = "B" if ((row.B > row.A) == row.Mayor_es_mejor) else "A"
+        diff_text = f"{pct_diff:+.1f}% vs A" if advantage == "B" else f"{(-pct_diff):+.1f}% vs B"
+        annotations.append({
+            "metric": row.Métrica,
+            "advantage": advantage,
+            "diff_text": diff_text,
+            "narrative": row.Narrativa,
+        })
+        frames.append(
+            go.Frame(
+                name=row.Métrica,
+                data=[
+                    go.Bar(
+                        x=["A", "B"],
+                        y=[row.A, row.B],
+                        marker=dict(color=holographic_palette, line=dict(color="#0c0c2d", width=1.5)),
+                        text=[f"{row.A:.2f}", f"{row.B:.2f}"],
+                        textposition="outside",
+                        hovertemplate=(
+                            "%{x} → %{y:.2f}<br>" + row.Narrativa + "<extra>" + row.Métrica + "</extra>"
+                        ),
+                    )
+                ],
+                layout=go.Layout(
+                    annotations=[
+                        dict(
+                            x=0.5,
+                            y=max(row.A, row.B) * 1.15 if max(row.A, row.B) != 0 else 1,
+                            xref="paper",
+                            yref="y",
+                            text=f"{row.Métrica}: ventaja {advantage} ({diff_text})",
+                            showarrow=False,
+                            font=dict(color="#d4f1f4", size=16, family="Space Mono"),
+                        )
+                    ]
+                ),
+            )
+        )
 
-    if Ap.energy_kwh < Bp.energy_kwh: concl.append("⚡ A usa **menos energía**.")
-    elif Ap.energy_kwh > Bp.energy_kwh: concl.append("⚡ B usa **menos energía**.")
-    if Ap.water_l < Bp.water_l: concl.append("💧 A usa **menos agua**.")
-    elif Ap.water_l > Bp.water_l: concl.append("💧 B usa **menos agua**.")
-    if Ap.crew_min < Bp.crew_min: concl.append("👩‍🚀 A consume **menos crew-time**.")
-    elif Ap.crew_min > Bp.crew_min: concl.append("👩‍🚀 B consume **menos crew-time**.")
-    if Ap.rigidity > Bp.rigidity: concl.append("🧱 A ofrece **más rigidez**.")
-    elif Ap.rigidity < Bp.rigidity: concl.append("🧱 B ofrece **más rigidez**.")
-    if Ap.tightness > Bp.tightness: concl.append("🧴 A ofrece **más estanqueidad**.")
-    elif Ap.tightness < Bp.tightness: concl.append("🧴 B ofrece **más estanqueidad**.")
+    initial_frame = frames[0] if frames else None
+    base_data = initial_frame.data if initial_frame else []
 
-    st.markdown("**Conclusión rápida:**")
-    st.markdown("- " + "\n- ".join(concl))
+    duel_annotations = annotations
+
+    duel_fig = go.Figure(
+        data=base_data,
+        frames=frames,
+        layout=go.Layout(
+            template="plotly_dark",
+            title="Duelo holográfico — animación métrica a métrica",
+            xaxis=dict(title="Candidato", showgrid=False),
+            yaxis=dict(title="Valor", showgrid=True, gridcolor="#23395d"),
+            paper_bgcolor="#060613",
+            plot_bgcolor="rgba(6,6,19,0.95)",
+            margin=dict(l=40, r=20, t=80, b=40),
+            updatemenus=[
+                dict(
+                    type="buttons",
+                    showactive=False,
+                    buttons=[
+                        dict(label="▶️ Reproducir", method="animate", args=[[frame.name for frame in frames], {"frame": {"duration": 900, "redraw": True}, "fromcurrent": True}]),
+                        dict(label="⏸ Pausa", method="animate", args=[[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate", "transition": {"duration": 0}}]),
+                    ],
+                    x=0.02,
+                    y=1.2,
+                    bgcolor="#111636",
+                    bordercolor="#08f7fe",
+                )
+            ],
+            sliders=[
+                dict(
+                    active=0,
+                    x=0.05,
+                    y=1.08,
+                    len=0.9,
+                    currentvalue=dict(prefix="Métrica: ", font=dict(color="#08f7fe", size=14)),
+                    steps=[
+                        dict(
+                            label=frame.name,
+                            method="animate",
+                            args=[[frame.name], {"frame": {"duration": 600, "redraw": True}, "mode": "immediate"}],
+                        )
+                        for frame in frames
+                    ],
+                )
+            ],
+        ),
+    )
+
+    st.plotly_chart(duel_fig, use_container_width=True)
+
+    if annotations:
+        best = annotations[0]
+        st.success(
+            f"**{best['metric']}**: ventaja para **{best['advantage']}** ({best['diff_text']}). {best['narrative']}."
+        )
+
+    st.dataframe(
+        duel_df[["Métrica", "A", "B"]].assign(
+            Diferencia=lambda d: d["B"] - d["A"],
+            Diferencia_pct=lambda d: np.where(d["A"] == 0, np.nan, ((d["B"] - d["A"]) / d["A"]) * 100),
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
 
     pop_duel = st.popover("¿Cómo usar este duelo?")
     with pop_duel:
@@ -251,3 +572,15 @@ with tab3:
 - Si el límite es **agua**, buscá burbujas **abajo**; si es **energía**, buscá **izquierda**.
 - Si te falta rigidez, favorecé mezclas con **Al** o procesos **P02/P03**; si te falta estanqueidad, **pouches multilayer** ayudan tras laminado.
 """)
+
+# ======== Módulo de storytelling ========
+st.markdown("## 🧠 Storytelling asistido por IA (beta)")
+story_toggle = st.toggle("Activar narrativas automáticas", value=True)
+if story_toggle:
+    insights = _generate_storytelling(df_base, target, duel_annotations)
+    if insights:
+        st.markdown("\n".join(f"- {text}" for text in insights))
+    else:
+        st.info("No se encontraron insights adicionales para narrar.")
+else:
+    st.caption("Activalo para recibir insights automatizados y atajos de decisión.")

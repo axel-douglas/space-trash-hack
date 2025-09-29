@@ -6,16 +6,28 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
+from app.modules.candidate_showroom import render_candidate_showroom
 from app.modules.generator import generate_candidates
 from app.modules.io import load_waste_df, load_process_df  # si tu IO usa load_process_catalog, cámbialo aquí
 from app.modules.ml_models import get_model_registry
+from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.process_planner import choose_process
 from app.modules.safety import check_safety, safety_badge
-from app.modules.ui_blocks import load_theme
+from app.modules.ui_blocks import load_theme, futuristic_button
 
 st.set_page_config(page_title="Rex-AI • Generador", page_icon="🤖", layout="wide")
 
+from app.modules.ui_blocks import load_theme, layout_block
+from app.modules.ui_blocks import load_theme
+from app.modules.luxe_components import TeslaHero, ChipRow
+
+st.set_page_config(page_title="Rex-AI • Generador", page_icon="🤖", layout="wide")
+
+set_active_step("generator")
+
 load_theme()
+
+render_breadcrumbs("generator")
 
 # ----------------------------- CSS local -----------------------------
 st.markdown(
@@ -88,7 +100,7 @@ def _format_label_summary(summary: dict[str, dict[str, float]] | None) -> str:
 # ----------------------------- Hero -----------------------------
 st.markdown(
     """
-    <div class="hero-gen">
+    <section class="hero-gen layer-glow fade-in">
       <h1>🤖 Generador asistido por IA</h1>
       <p>Rex-AI explora combinaciones de residuos NASA, optimiza parámetros y explica cada predicción con bandas de confianza e importancias de features.</p>
       <div class="chipline">
@@ -97,10 +109,31 @@ st.markdown(
         <span>Comparación heurística vs IA</span>
         <span>Trazabilidad NASA + MGS-1</span>
       </div>
-    </div>
+    </section>
     """,
     unsafe_allow_html=True,
 )
+TeslaHero(
+    title="Generador asistido por IA",
+    subtitle=(
+        "Rex-AI explora combinaciones de residuos NASA, optimiza parámetros y "
+        "explica cada predicción con bandas de confianza e importancias de features."
+    ),
+    chips=[
+        {"label": "RandomForest + XGBoost (alternativo)", "tone": "accent"},
+        {"label": "Confianza 95%", "tone": "info"},
+        {"label": "Comparación heurística vs IA", "tone": "accent"},
+        {"label": "Trazabilidad NASA + MGS-1", "tone": "info"},
+    ],
+    icon="🤖",
+    gradient="linear-gradient(135deg, rgba(59,130,246,0.2), rgba(14,165,233,0.08))",
+    glow="rgba(56,189,248,0.45)",
+    density="cozy",
+    parallax_icons=[
+        {"icon": "🛰️", "top": "18%", "left": "75%", "size": "4rem", "speed": "20s"},
+        {"icon": "🧪", "top": "64%", "left": "82%", "size": "3.5rem", "speed": "26s"},
+    ],
+).render()
 
 # ----------------------------- Pre-condición: target -----------------------------
 target = st.session_state.get("target")
@@ -147,7 +180,40 @@ with col_control:
     st.session_state["generator_seed_input"] = seed_input
     crew_low = target.get("crew_time_low", False)
     st.caption("Los resultados privilegian %s" % ("tiempo de tripulación" if crew_low else "un balance general"))
-    run = st.button("Generar recomendaciones", type="primary", use_container_width=True)
+    generator_state_key = "generator_button_state"
+    generator_trigger_key = "generator_button_trigger"
+    generator_error_key = "generator_button_error"
+    button_state = st.session_state.get(generator_state_key, "idle")
+    button_error = st.session_state.get(generator_error_key)
+
+    run = futuristic_button(
+        "Generar recomendaciones",
+        key="generator_run_button",
+        state=button_state,
+        width="full",
+        help_text="Ax + BoTorch: 18 iteraciones recomendadas",
+        loading_label="Generando…",
+        success_label="Candidatos listos",
+        error_label="Reintentar",
+        enable_vibration=True,
+        status_hints={
+            "idle": "",
+            "loading": "Corriendo optimizador",
+            "success": "Resultados actualizados",
+            "error": "Revisá semilla o parámetros",
+        },
+    )
+
+    if run and button_state != "loading":
+        st.session_state[generator_state_key] = "loading"
+        st.session_state[generator_trigger_key] = True
+        st.session_state.pop(generator_error_key, None)
+        st.experimental_rerun()
+
+    if button_error and st.session_state.get(generator_state_key) == "error":
+        st.error(button_error)
+    elif st.session_state.get(generator_state_key) == "success":
+        st.caption("✅ Última corrida lista abajo. Volvé a ejecutar si cambias parámetros.")
     if not use_ml:
         st.info("Modo heurístico activo: las métricas se basan en reglas físicas y no en ML.")
 
@@ -191,43 +257,124 @@ with col_ai:
     if label_summary_text and label_summary_text != "—":
         st.caption(f"Fuentes de labels: {label_summary_text}")
 
+with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None) as grid:
+    with layout_block("side-panel layer-shadow fade-in", parent=grid) as control:
+        control.markdown("### 🎛️ Configuración")
+        stored_mode = st.session_state.get("prediction_mode", "Modo Rex-AI (ML)")
+        mode = control.radio(
+            "Motor de predicción",
+            ("Modo Rex-AI (ML)", "Modo heurístico"),
+            index=0 if stored_mode == "Modo Rex-AI (ML)" else 1,
+            help="Usá Rex-AI para predicciones ML o quedate con la estimación heurstica reproducible.",
+        )
+        st.session_state["prediction_mode"] = mode
+        use_ml = mode == "Modo Rex-AI (ML)"
+        n_candidates = control.slider("Recetas a explorar", 3, 12, 6)
+        opt_evals = control.slider(
+            "Iteraciones de optimización (Ax/BoTorch)",
+            0, 60, 18,
+            help="Loop bayesiano para maximizar score sin violar límites de recursos.",
+        )
+        seed_default = st.session_state.get("generator_seed_input", "")
+        seed_input = control.text_input(
+            "Semilla (opcional)",
+            value=seed_default,
+            help="Fijá una semilla entera para repetir los mismos candidatos en sesiones futuras.",
+        )
+        st.session_state["generator_seed_input"] = seed_input
+        crew_low = target.get("crew_time_low", False)
+        control.caption("Los resultados privilegian %s" % ("tiempo de tripulación" if crew_low else "un balance general"))
+        run = control.button("Generar recomendaciones", type="primary", use_container_width=True)
+        if not use_ml:
+            control.info("Modo heurístico activo: las métricas se basan en reglas físicas y no en ML.")
+
+        if isinstance(proc_filtered, pd.DataFrame) and not proc_filtered.empty:
+            preview_map = [
+                ("process_id", "ID"),
+                ("name", "Proceso"),
+                ("match_score", "Score"),
+                ("crew_min_per_batch", "Crew (min)"),
+                ("match_reason", "Por qué")
+            ]
+            cols_present = [col for col, _ in preview_map if col in proc_filtered.columns]
+            if cols_present:
+                control.markdown("#### Procesos sugeridos")
+                control.caption("Filtrado según residuo/flags y escenario seleccionado.")
+                preview_df = proc_filtered[cols_present].head(5).rename(columns=dict(preview_map))
+                control.dataframe(preview_df, hide_index=True, use_container_width=True)
+
+    with layout_block("depth-stack layer-glow fade-in-delayed", parent=grid) as ai_panel:
+        ai_panel.markdown("### 🧠 Modelo Rex-AI")
+        model_registry = get_model_registry()
+        trained_at = model_registry.metadata.get("trained_at", "—")
+        n_samples = model_registry.metadata.get("n_samples", "—")
+        top_features = model_registry.feature_importance_avg[:5]
+        if top_features:
+            df_feat = pd.DataFrame(top_features, columns=["feature", "weight"])
+            chart = alt.Chart(df_feat).mark_bar(color="#60a5fa").encode(
+                x=alt.X("weight", title="Importancia promedio"),
+                y=alt.Y("feature", sort="-x", title="Feature"),
+                tooltip=["feature", alt.Tooltip("weight", format=".3f")],
+            ).properties(height=180)
+            ai_panel.altair_chart(chart, use_container_width=True)
+        ai_panel.caption(f"Entrenado: {trained_at} · Muestras: {n_samples} · Features: {len(model_registry.feature_names)}")
+        if model_registry.metadata.get("random_forest", {}).get("metrics", {}).get("overall"):
+            overall = model_registry.metadata["random_forest"]["metrics"]["overall"]
+            try:
+                ai_panel.caption(
+                    f"MAE promedio: {overall.get('mae', float('nan')):.3f} · RMSE: {overall.get('rmse', float('nan')):.3f} · R²: {overall.get('r2', float('nan')):.3f}"
+                )
+            except Exception:
+                pass
+        label_summary_text = model_registry.label_distribution_label()
+        if label_summary_text and label_summary_text != "—":
+            ai_panel.caption(f"Fuentes de labels: {label_summary_text}")
 # ----------------------------- Generación -----------------------------
-if run:
+if st.session_state.get("generator_button_trigger"):
     seed_value: int | None = None
     seed_raw = st.session_state.get("generator_seed_input", "").strip()
     if seed_raw:
         try:
             seed_value = int(seed_raw, 0)
         except ValueError:
-            st.error("Ingresá un entero válido para la semilla (por ejemplo 42 o 0x2A).")
+            st.session_state["generator_button_state"] = "error"
+            st.session_state["generator_button_error"] = "Ingresá un entero válido para la semilla (por ejemplo 42 o 0x2A)."
+            st.session_state["generator_button_trigger"] = False
             st.stop()
-    result = generate_candidates(
-        waste_df,
-        proc_filtered,
-        target,
-        n=n_candidates,
-        crew_time_low=target.get("crew_time_low", False),
-        optimizer_evals=opt_evals,
-        use_ml=use_ml,
-        seed=seed_value,
-    )
-    if isinstance(result, tuple):
-        cands, history = result
-    else:
-        cands, history = result, pd.DataFrame()
-    # normalizar a lista de dicts
-    if isinstance(cands, pd.DataFrame):
-        cands = cands.to_dict("records")
-    elif isinstance(cands, dict):
-        cands = [cands]
-    else:
-        cands = [dict(c) for c in cands]
-    history_df = history if isinstance(history, pd.DataFrame) else pd.DataFrame()
-    st.session_state["candidates"] = cands
-    st.session_state["optimizer_history"] = history_df
+    try:
+        result = generate_candidates(
+            waste_df,
+            proc_filtered,
+            target,
+            n=n_candidates,
+            crew_time_low=target.get("crew_time_low", False),
+            optimizer_evals=opt_evals,
+            use_ml=use_ml,
+            seed=seed_value,
+        )
+        if isinstance(result, tuple):
+            cands, history = result
+        else:
+            cands, history = result, pd.DataFrame()
+        if isinstance(cands, pd.DataFrame):
+            cands = cands.to_dict("records")
+        elif isinstance(cands, dict):
+            cands = [cands]
+        else:
+            cands = [dict(c) for c in cands]
+        history_df = history if isinstance(history, pd.DataFrame) else pd.DataFrame()
+        st.session_state["candidates"] = cands
+        st.session_state["optimizer_history"] = history_df
+        st.session_state["generator_button_state"] = "success"
+        st.session_state["generator_button_trigger"] = False
+        st.session_state.pop("generator_button_error", None)
+    except Exception as exc:  # noqa: BLE001
+        st.session_state["generator_button_state"] = "error"
+        st.session_state["generator_button_error"] = f"Error generando candidatos: {exc}"
+        st.session_state["generator_button_trigger"] = False
 
 # ----------------------------- Si no hay candidatos aún -----------------------------
-st.markdown('<div class="hr-micro"></div>', unsafe_allow_html=True)
+st.divider()
 cands = st.session_state.get("candidates", [])
 history_df = st.session_state.get("optimizer_history", pd.DataFrame())
 
@@ -247,12 +394,6 @@ if not cands:
         )
     st.stop()
 
-# ----------------------------- Helpers -----------------------------
-def _res_bar(current: float, limit: float) -> float:
-    if limit is None or float(limit) <= 0:
-        return 0.0
-    return max(0.0, min(1.0, current/float(limit)))
-
 # ----------------------------- Historial del optimizador -----------------------------
 if isinstance(history_df, pd.DataFrame) and not history_df.empty:
     st.subheader("Convergencia del optimizador")
@@ -260,10 +401,14 @@ if isinstance(history_df, pd.DataFrame) and not history_df.empty:
     valid_hist = history_df.dropna(subset=["hypervolume"])
     if not valid_hist.empty:
         last = valid_hist.iloc[-1]
-        m1, m2, m3 = st.columns([1, 1, 1])
-        m1.metric("Hipervolumen", f"{last['hypervolume']:.3f}")
-        m2.metric("Dominancia", f"{last['dominance_ratio']*100:.1f}%")
-        m3.metric("Tamaño Pareto", f"{int(last['pareto_size'])}")
+        metric_cards = f"""
+        <div class=\"stat-band fade-in\">
+          <div class=\"stat-card layer-shadow\"><span>Hipervolumen</span><strong>{last['hypervolume']:.3f}</strong></div>
+          <div class=\"stat-card layer-shadow\"><span>Dominancia</span><strong>{last['dominance_ratio']*100:.1f}%</strong></div>
+          <div class=\"stat-card layer-shadow\"><span>Tamaño Pareto</span><strong>{int(last['pareto_size'])}</strong></div>
+        </div>
+        """
+        st.markdown(metric_cards, unsafe_allow_html=True)
         chart_data = valid_hist.set_index("iteration")[["hypervolume", "dominance_ratio"]]
         st.line_chart(chart_data)
 
@@ -295,13 +440,14 @@ if summary_rows:
     summary_df = pd.DataFrame(summary_rows)
     st.dataframe(summary_df, hide_index=True, use_container_width=True)
 
-# ----------------------------- Render de candidatos -----------------------------
+# ----------------------------- Showroom de candidatos -----------------------------
 st.subheader("Resultados del generador")
 st.caption(
-    "Cada ‘Opción’ es una combinación concreta de residuos + proceso, con predicción de propiedades y consumo de recursos. "
-    "Usá los expanders para ver detalles y trazabilidad NASA."
+    "Explorá cada receta como card 3D con tabs de propiedades, recursos y trazabilidad. "
+    "Ajustá el timeline lateral para priorizar rigidez o agua y filtrar rápidamente."
 )
 
+filtered_cands = render_candidate_showroom(cands, target)
 for i, c in enumerate(cands):
     p = c["props"]
     header = f"Opción {i+1} — Score {c['score']} — Proceso {c['process_id']} {c['process_name']}"
@@ -329,103 +475,113 @@ for i, c in enumerate(cands):
             if risk_label:
                 badges.append(f"🏷️ Riesgo {risk_label}")
         if badges:
-            st.markdown(" ".join([f'<span class="badge">{b}</span>' for b in badges]), unsafe_allow_html=True)
+            badges_html = "".join([f'<span class="badge">{b}</span>' for b in badges])
+            st.markdown(f"<div class='badge-group'>{badges_html}</div>", unsafe_allow_html=True)
+            ChipRow([{ "label": badge } for badge in badges], tone="accent")
 
         pred_error = c.get("prediction_error")
         if pred_error:
             st.error(f"Predicción ML no disponible: {pred_error}")
 
         # Resumen técnico
-        colA, colB = st.columns([1.1, 1])
-        with colA:
-            st.markdown("**🧪 Materiales**")
-            st.write(", ".join(c["materials"]))
-            st.markdown("**⚖️ Pesos en mezcla**")
-            st.write(c["weights"])
+        with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None) as detail_grid:
+            with layout_block("depth-stack layer-shadow", parent=detail_grid) as left_panel:
+                left_panel.markdown("**🧪 Materiales**")
+                left_panel.write(", ".join(c["materials"]))
+                left_panel.markdown("**⚖️ Pesos en mezcla**")
+                left_panel.write(c["weights"])
 
-            st.markdown("**🔬 Predicción**" if not pred_error else "**🔬 Estimación heurística**")
-            colA1, colA2, colA3 = st.columns(3)
-            if pred_error:
-                colA1.write(f"Rigidez: {p.rigidity:.2f}")
-                colA2.write(f"Estanqueidad: {p.tightness:.2f}")
-                colA3.write(f"Masa final: {p.mass_final_kg:.2f} kg")
-            else:
-                colA1.metric("Rigidez", f"{p.rigidity:.2f}")
-                colA2.metric("Estanqueidad", f"{p.tightness:.2f}")
-                colA3.metric("Masa final", f"{p.mass_final_kg:.2f} kg")
-            src = c.get("prediction_source", "heuristic")
-            meta_payload = {}
-            if isinstance(c.get("ml_prediction"), dict):
-                meta_payload = c["ml_prediction"].get("metadata", {}) or {}
-            if pred_error:
-                st.caption("Fallback heurístico mostrado por indisponibilidad del modelo.")
-            elif str(src).startswith("rexai"):
-                t_at = meta_payload.get("trained_at", "?")
-                latent = c.get("latent_vector", [])
-                latent_note = "" if not latent else f" · Vector latente {len(latent)}D"
-                st.caption(f"Predicción por modelo ML (**{src}**, entrenado {t_at}){latent_note}.")
-                summary_text = _format_label_summary(
-                    meta_payload.get("label_summary") or model_registry.label_summary
-                )
-                if summary_text:
-                    st.caption(f"Dataset Rex-AI: {summary_text}")
-            else:
-                st.caption("Predicción heurística basada en reglas.")
+                left_panel.markdown("**🔬 Predicción**" if not pred_error else "**🔬 Estimación heurística**")
+                if pred_error:
+                    metrics_html = (
+                        f"<div class='metric-grid'>"
+                        f"<div class='stat-card'><span>Rigidez</span><strong>{p.rigidity:.2f}</strong></div>"
+                        f"<div class='stat-card'><span>Estanqueidad</span><strong>{p.tightness:.2f}</strong></div>"
+                        f"<div class='stat-card'><span>Masa final</span><strong>{p.mass_final_kg:.2f} kg</strong></div>"
+                        f"</div>"
+                    )
+                    left_panel.markdown(metrics_html, unsafe_allow_html=True)
+                else:
+                    metrics_html = (
+                        f"<div class='metric-grid fade-in'>"
+                        f"<div class='stat-card layer-glow'><span>Rigidez</span><strong>{p.rigidity:.2f}</strong></div>"
+                        f"<div class='stat-card layer-glow'><span>Estanqueidad</span><strong>{p.tightness:.2f}</strong></div>"
+                        f"<div class='stat-card layer-glow'><span>Masa final</span><strong>{p.mass_final_kg:.2f} kg</strong></div>"
+                        f"</div>"
+                    )
+                    left_panel.markdown(metrics_html, unsafe_allow_html=True)
+                src = c.get("prediction_source", "heuristic")
+                meta_payload = {}
+                if isinstance(c.get("ml_prediction"), dict):
+                    meta_payload = c["ml_prediction"].get("metadata", {}) or {}
+                if pred_error:
+                    left_panel.caption("Fallback heurístico mostrado por indisponibilidad del modelo.")
+                elif str(src).startswith("rexai"):
+                    t_at = meta_payload.get("trained_at", "?")
+                    latent = c.get("latent_vector", [])
+                    latent_note = "" if not latent else f" · Vector latente {len(latent)}D"
+                    left_panel.caption(f"Predicción por modelo ML (**{src}**, entrenado {t_at}){latent_note}.")
+                    summary_text = _format_label_summary(
+                        meta_payload.get("label_summary") or model_registry.label_summary
+                    )
+                    if summary_text:
+                        left_panel.caption(f"Dataset Rex-AI: {summary_text}")
+                else:
+                    left_panel.caption("Predicción heurística basada en reglas.")
 
-            ci = c.get("confidence_interval") or {}
-            unc = c.get("uncertainty") or {}
-            if ci:
-                rows: list[dict[str, float | str]] = []
-                for key, bounds in ci.items():
-                    label = TARGET_DISPLAY.get(key, key)
-                    try:
-                        lo_val, hi_val = float(bounds[0]), float(bounds[1])
-                    except (TypeError, ValueError, IndexError):
-                        lo_val, hi_val = float("nan"), float("nan")
-                    row: dict[str, float | str] = {
-                        "Variable": label,
-                        "Lo": lo_val,
-                        "Hi": hi_val,
-                    }
-                    sigma_val = unc.get(key)
-                    if sigma_val is not None:
+                ci = c.get("confidence_interval") or {}
+                unc = c.get("uncertainty") or {}
+                if ci:
+                    rows: list[dict[str, float | str]] = []
+                    for key, bounds in ci.items():
+                        label = TARGET_DISPLAY.get(key, key)
                         try:
-                            row["σ (std)"] = float(sigma_val)
-                        except (TypeError, ValueError):
-                            row["σ (std)"] = float("nan")
-                    rows.append(row)
-                if rows and not pred_error:
-                    st.markdown("**📉 Intervalos de confianza (95%)**")
-                    ci_df = pd.DataFrame(rows)
-                    st.dataframe(ci_df, hide_index=True, use_container_width=True)
+                            lo_val, hi_val = float(bounds[0]), float(bounds[1])
+                        except (TypeError, ValueError, IndexError):
+                            lo_val, hi_val = float("nan"), float("nan")
+                        row: dict[str, float | str] = {
+                            "Variable": label,
+                            "Lo": lo_val,
+                            "Hi": hi_val,
+                        }
+                        sigma_val = unc.get(key)
+                        if sigma_val is not None:
+                            try:
+                                row["σ (std)"] = float(sigma_val)
+                            except (TypeError, ValueError):
+                                row["σ (std)"] = float("nan")
+                        rows.append(row)
+                    if rows and not pred_error:
+                        left_panel.markdown("**📉 Intervalos de confianza (95%)**")
+                        ci_df = pd.DataFrame(rows)
+                        left_panel.dataframe(ci_df, hide_index=True, use_container_width=True)
 
-            feature_imp = c.get("feature_importance") or []
-            if feature_imp and not pred_error:
-                st.markdown("**🪄 Features que más influyen**")
-                fi_df = pd.DataFrame(feature_imp, columns=["feature", "impact"])
-                chart = alt.Chart(fi_df).mark_bar(color="#60a5fa").encode(
-                    x=alt.X("impact", title="Impacto relativo"),
-                    y=alt.Y("feature", sort="-x", title="Feature"),
-                    tooltip=["feature", alt.Tooltip("impact", format=".3f")],
-                ).properties(height=180)
-                st.altair_chart(chart, use_container_width=True)
+                feature_imp = c.get("feature_importance") or []
+                if feature_imp and not pred_error:
+                    left_panel.markdown("**🪄 Features que más influyen**")
+                    fi_df = pd.DataFrame(feature_imp, columns=["feature", "impact"])
+                    chart = alt.Chart(fi_df).mark_bar(color="#60a5fa").encode(
+                        x=alt.X("impact", title="Impacto relativo"),
+                        y=alt.Y("feature", sort="-x", title="Feature"),
+                        tooltip=["feature", alt.Tooltip("impact", format=".3f")],
+                    ).properties(height=180)
+                    left_panel.altair_chart(chart, use_container_width=True)
 
-        with colB:
-            st.markdown("**🔧 Proceso**")
-            st.write(f"{c['process_id']} — {c['process_name']}")
-            st.markdown("**📉 Recursos estimados**")
-            colB1, colB2, colB3 = st.columns([1,1,1])
-            colB1.write("Energía (kWh)")
-            colB1.progress(_res_bar(p.energy_kwh, target["max_energy_kwh"]))
-            colB1.caption(f"{p.energy_kwh:.2f} / {target['max_energy_kwh']}")
-
-            colB2.write("Agua (L)")
-            colB2.progress(_res_bar(p.water_l, target["max_water_l"]))
-            colB2.caption(f"{p.water_l:.2f} / {target['max_water_l']}")
-
-            colB3.write("Crew (min)")
-            colB3.progress(_res_bar(p.crew_min, target["max_crew_min"]))
-            colB3.caption(f"{p.crew_min:.0f} / {target['max_crew_min']}")
+            with layout_block("depth-stack layer-shadow", parent=detail_grid) as right_panel:
+                right_panel.markdown("**🔧 Proceso**")
+                right_panel.write(f"{c['process_id']} — {c['process_name']}")
+                right_panel.markdown("**📉 Recursos estimados**")
+                resources = [
+                    ("Energía (kWh)", p.energy_kwh, target["max_energy_kwh"], f"{p.energy_kwh:.2f} / {target['max_energy_kwh']}"),
+                    ("Agua (L)", p.water_l, target["max_water_l"], f"{p.water_l:.2f} / {target['max_water_l']}"),
+                    ("Crew (min)", p.crew_min, target["max_crew_min"], f"{p.crew_min:.0f} / {target['max_crew_min']}"),
+                ]
+                with layout_block("resource-grid", parent=right_panel) as res_grid:
+                    for label, value, limit, caption in resources:
+                        with layout_block("resource-card layer-shadow", parent=res_grid) as card:
+                            card.markdown(f"**{label}**")
+                            card.progress(_res_bar(value, limit))
+                            card.caption(caption)
 
         st.markdown('<div class="hr-micro"></div>', unsafe_allow_html=True)
 
@@ -459,17 +615,21 @@ for i, c in enumerate(cands):
         penalties = breakdown.get("penalties") or {}
         if contribs or penalties:
             st.markdown("**⚖️ Desglose del score**")
-            col_sc1, col_sc2 = st.columns(2)
-            if contribs:
-                contrib_df = pd.DataFrame([
-                    {"Factor": k, "+": float(v)} for k, v in contribs.items()
-                ]).sort_values("+", ascending=False)
-                col_sc1.dataframe(contrib_df, hide_index=True, use_container_width=True)
-            if penalties:
-                pen_df = pd.DataFrame([
-                    {"Penalización": k, "-": float(v)} for k, v in penalties.items()
-                ]).sort_values("-", ascending=False)
-                col_sc2.dataframe(pen_df, hide_index=True, use_container_width=True)
+            with layout_block("layout-grid layout-grid--balanced", parent=None) as score_grid:
+                if contribs:
+                    contrib_df = pd.DataFrame([
+                        {"Factor": k, "+": float(v)} for k, v in contribs.items()
+                    ]).sort_values("+", ascending=False)
+                    with layout_block("depth-stack layer-shadow", parent=score_grid) as positive_card:
+                        positive_card.markdown("**Contribuciones**")
+                        positive_card.dataframe(contrib_df, hide_index=True, use_container_width=True)
+                if penalties:
+                    pen_df = pd.DataFrame([
+                        {"Penalización": k, "-": float(v)} for k, v in penalties.items()
+                    ]).sort_values("-", ascending=False)
+                    with layout_block("depth-stack layer-shadow", parent=score_grid) as penalty_card:
+                        penalty_card.markdown("**Penalizaciones**")
+                        penalty_card.dataframe(pen_df, hide_index=True, use_container_width=True)
 
         # Seguridad
         flags = check_safety(c["materials"], c["process_name"], c["process_id"])
@@ -482,7 +642,7 @@ for i, c in enumerate(cands):
             st.success("Opción seleccionada. Abrí **4) Resultados**, **5) Comparar & Explicar** o **6) Pareto & Export**.")
 
 # ----------------------------- Explicación en criollo (popover global) -----------------------------
-top = cands[0] if cands else None
+top = filtered_cands[0] if filtered_cands else (cands[0] if cands else None)
 pop = st.popover("🧠 ¿Por qué estas recetas pintan bien? (explicación en criollo)")
 with pop:
     bullets = []

@@ -4,13 +4,17 @@ import _bootstrap  # noqa: F401
 import streamlit as st
 import pandas as pd
 
+from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.scenarios import PLAYBOOKS  # dict: {scenario: Playbook(name, summary, steps=[...])}
-from app.modules.ui_blocks import load_theme
 
 # ⚠️ Debe ser la primera llamada
 st.set_page_config(page_title="Scenario Playbooks", page_icon="📚", layout="wide")
 
+set_active_step("playbooks")
+
 load_theme()
+
+render_breadcrumbs("playbooks")
 
 # ======== Estado compartido ========
 target      = st.session_state.get("target", None)
