@@ -31,6 +31,7 @@ def compare_table(cands, target, crew_time_low: bool=False):
             "Energía (kWh)": round(p.energy_kwh,3),
             "Agua (L)": round(p.water_l,3),
             "Crew (min)": round(p.crew_min,1),
+            "Masa (kg)": round(getattr(p, "mass_final_kg", np.nan),3),
             "Proceso": f'{c["process_id"]} {c["process_name"]}',
             "Materiales": ", ".join(c["materials"])
         })
