@@ -73,18 +73,7 @@ def _write_constant_lightgbm_model(path: Path, values: list[float]) -> None:
 @responses.activate
 def test_model_bundle_download_skips_bootstrap(monkeypatch, tmp_path):
     models_dir = tmp_path / "models"
-    pipeline_path = models_dir / "rexai_regressor.joblib"
-    metadata_path = models_dir / "metadata_gold.json"
-
-    monkeypatch.setattr(ml_models, "MODEL_DIR", models_dir)
-    monkeypatch.setattr(ml_models, "PIPELINE_PATH", pipeline_path)
-    monkeypatch.setattr(ml_models, "METADATA_PATH", metadata_path)
-    monkeypatch.setattr(ml_models, "LEGACY_METADATA_PATH", models_dir / "metadata.json")
-    monkeypatch.setattr(ml_models, "XGBOOST_PATH", models_dir / "rexai_xgboost.joblib")
-    monkeypatch.setattr(ml_models, "AUTOENCODER_PATH", models_dir / "rexai_autoencoder.pt")
-    monkeypatch.setattr(ml_models, "TABTRANSFORMER_PATH", models_dir / "rexai_tabtransformer.pt")
-    monkeypatch.setattr(ml_models, "TIGHTNESS_CLASSIFIER_PATH", models_dir / "rexai_class_tightness.joblib")
-    monkeypatch.setattr(ml_models, "RIGIDITY_CLASSIFIER_PATH", models_dir / "rexai_class_rigidity.joblib")
+    artifacts = ml_models.resolve_artifact_paths(models_dir)
 
     payload, digest = _prepare_bundle(tmp_path)
     url = "https://example.com/model.zip"
@@ -97,7 +86,7 @@ def test_model_bundle_download_skips_bootstrap(monkeypatch, tmp_path):
 
     def fake_bootstrap():
         bootstrap_calls.append(True)
-        return str(pipeline_path)
+        return str(artifacts.pipeline)
 
     monkeypatch.setattr("app.modules.model_training.bootstrap_demo_model", fake_bootstrap)
 
@@ -105,18 +94,22 @@ def test_model_bundle_download_skips_bootstrap(monkeypatch, tmp_path):
 
     assert registry.ready is True
     assert isinstance(registry.pipeline, DummyPipeline)
+    assert registry.artifacts.pipeline == artifacts.pipeline
+    assert artifacts.pipeline.exists()
+    assert registry.metadata.get("trained_on") == "test"
     assert not bootstrap_calls
     responses.assert_call_count(url, 1)
 
 
-def test_model_registry_parses_label_summary(tmp_path, monkeypatch):
+def test_model_registry_parses_label_summary(tmp_path):
     models_dir = tmp_path / "models"
     models_dir.mkdir()
 
-    pipeline_path = models_dir / "rexai_regressor.joblib"
-    joblib.dump(DummyPipeline(), pipeline_path)
+    artifacts = ml_models.resolve_artifact_paths(models_dir)
 
-    metadata_path = models_dir / "metadata_gold.json"
+    joblib.dump(DummyPipeline(), artifacts.pipeline)
+
+    metadata_path = artifacts.metadata
     metadata_payload = {
         "trained_at": "2025-01-01T00:00:00Z",
         "trained_on": "gold_v1",
@@ -147,16 +140,6 @@ def test_model_registry_parses_label_summary(tmp_path, monkeypatch):
     }
     metadata_path.write_text(json.dumps(metadata_payload), encoding="utf-8")
 
-    monkeypatch.setattr(ml_models, "MODEL_DIR", models_dir)
-    monkeypatch.setattr(ml_models, "PIPELINE_PATH", pipeline_path)
-    monkeypatch.setattr(ml_models, "METADATA_PATH", metadata_path)
-    monkeypatch.setattr(ml_models, "LEGACY_METADATA_PATH", models_dir / "metadata.json")
-    monkeypatch.setattr(ml_models, "XGBOOST_PATH", models_dir / "rexai_xgboost.joblib")
-    monkeypatch.setattr(ml_models, "AUTOENCODER_PATH", models_dir / "rexai_autoencoder.pt")
-    monkeypatch.setattr(ml_models, "TABTRANSFORMER_PATH", models_dir / "rexai_tabtransformer.pt")
-    monkeypatch.setattr(ml_models, "TIGHTNESS_CLASSIFIER_PATH", models_dir / "rexai_class_tightness.joblib")
-    monkeypatch.setattr(ml_models, "RIGIDITY_CLASSIFIER_PATH", models_dir / "rexai_class_rigidity.joblib")
-
     registry = ml_models.ModelRegistry(model_dir=models_dir)
 
     assert registry.label_columns == {"source": "label_source", "weight": "label_weight"}
@@ -168,18 +151,19 @@ def test_model_registry_parses_label_summary(tmp_path, monkeypatch):
 
 
 @pytest.mark.skipif(not ml_models.HAS_ONNXRUNTIME, reason="onnxruntime not available")
-def test_model_registry_uses_lightgbm_variant(tmp_path, monkeypatch):
+def test_model_registry_uses_lightgbm_variant(tmp_path):
     models_dir = tmp_path / "models"
     models_dir.mkdir()
 
-    pipeline_path = models_dir / "rexai_regressor.joblib"
-    joblib.dump(DummyPipeline(), pipeline_path)
+    artifacts = ml_models.resolve_artifact_paths(models_dir)
 
-    onnx_path = models_dir / "rexai_lightgbm.onnx"
+    joblib.dump(DummyPipeline(), artifacts.pipeline)
+
+    onnx_path = artifacts.lightgbm
     constant_output = [0.72, 0.68, 4.5, 1.8, 18.0]
     _write_constant_lightgbm_model(onnx_path, constant_output)
 
-    metadata_path = models_dir / "metadata_gold.json"
+    metadata_path = artifacts.metadata
     metadata_payload = {
         "trained_at": "2025-01-01T00:00:00Z",
         "trained_on": "synthetic_v0",
@@ -195,17 +179,6 @@ def test_model_registry_uses_lightgbm_variant(tmp_path, monkeypatch):
         },
     }
     metadata_path.write_text(json.dumps(metadata_payload), encoding="utf-8")
-
-    monkeypatch.setattr(ml_models, "MODEL_DIR", models_dir)
-    monkeypatch.setattr(ml_models, "PIPELINE_PATH", pipeline_path)
-    monkeypatch.setattr(ml_models, "METADATA_PATH", metadata_path)
-    monkeypatch.setattr(ml_models, "LEGACY_METADATA_PATH", models_dir / "metadata.json")
-    monkeypatch.setattr(ml_models, "XGBOOST_PATH", models_dir / "rexai_xgboost.joblib")
-    monkeypatch.setattr(ml_models, "AUTOENCODER_PATH", models_dir / "rexai_autoencoder.pt")
-    monkeypatch.setattr(ml_models, "TABTRANSFORMER_PATH", models_dir / "rexai_tabtransformer.pt")
-    monkeypatch.setattr(ml_models, "TIGHTNESS_CLASSIFIER_PATH", models_dir / "rexai_class_tightness.joblib")
-    monkeypatch.setattr(ml_models, "RIGIDITY_CLASSIFIER_PATH", models_dir / "rexai_class_rigidity.joblib")
-    monkeypatch.setattr(ml_models, "LIGHTGBM_ONNX_PATH", onnx_path)
 
     registry = ml_models.ModelRegistry(model_dir=models_dir)
 

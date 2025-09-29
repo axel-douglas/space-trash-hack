@@ -50,21 +50,60 @@ LOGGER = logging.getLogger(__name__)
 
 # Rutas estándar
 MODEL_DIR = MODELS_DIR  # Backwards compatibility alias
-PIPELINE_PATH = MODEL_DIR / "rexai_regressor.joblib"
-METADATA_PATH = MODEL_DIR / "metadata_gold.json"
-LEGACY_METADATA_PATH = MODEL_DIR / "metadata.json"
-XGBOOST_PATH = MODEL_DIR / "rexai_xgboost.joblib"   # opcional
-AUTOENCODER_PATH = MODEL_DIR / "rexai_autoencoder.pt"
-TABTRANSFORMER_PATH = MODEL_DIR / "rexai_tabtransformer.pt"
-TIGHTNESS_CLASSIFIER_PATH = MODEL_DIR / "rexai_class_tightness.joblib"
-RIGIDITY_CLASSIFIER_PATH = MODEL_DIR / "rexai_class_rigidity.joblib"
-LIGHTGBM_ONNX_PATH = MODEL_DIR / "rexai_lightgbm.onnx"
+PIPELINE_FILENAME = "rexai_regressor.joblib"
+METADATA_FILENAME = "metadata_gold.json"
+LEGACY_METADATA_FILENAME = "metadata.json"
+XGBOOST_FILENAME = "rexai_xgboost.joblib"
+AUTOENCODER_FILENAME = "rexai_autoencoder.pt"
+TABTRANSFORMER_FILENAME = "rexai_tabtransformer.pt"
+TIGHTNESS_CLASSIFIER_FILENAME = "rexai_class_tightness.joblib"
+RIGIDITY_CLASSIFIER_FILENAME = "rexai_class_rigidity.joblib"
+LIGHTGBM_ONNX_FILENAME = "rexai_lightgbm.onnx"
+
+# Backwards compatibility paths (module level defaults)
+PIPELINE_PATH = MODEL_DIR / PIPELINE_FILENAME
+METADATA_PATH = MODEL_DIR / METADATA_FILENAME
+LEGACY_METADATA_PATH = MODEL_DIR / LEGACY_METADATA_FILENAME
+XGBOOST_PATH = MODEL_DIR / XGBOOST_FILENAME   # opcional
+AUTOENCODER_PATH = MODEL_DIR / AUTOENCODER_FILENAME
+TABTRANSFORMER_PATH = MODEL_DIR / TABTRANSFORMER_FILENAME
+TIGHTNESS_CLASSIFIER_PATH = MODEL_DIR / TIGHTNESS_CLASSIFIER_FILENAME
+RIGIDITY_CLASSIFIER_PATH = MODEL_DIR / RIGIDITY_CLASSIFIER_FILENAME
+LIGHTGBM_ONNX_PATH = MODEL_DIR / LIGHTGBM_ONNX_FILENAME
 
 # Orden y nombres de objetivos que espera la UI
 TARGET_COLUMNS: List[str] = ["rigidez", "estanqueidad", "energy_kwh", "water_l", "crew_min"]
 
 DEFAULT_TIGHTNESS_SCORE_MAP = {0: 0.35, 1: 0.85}
 DEFAULT_RIGIDITY_SCORE_MAP = {1: 0.35, 2: 0.65, 3: 0.9}
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactPaths:
+    pipeline: Path
+    metadata: Path
+    legacy_metadata: Path
+    xgboost: Path
+    autoencoder: Path
+    tabtransformer: Path
+    tightness_classifier: Path
+    rigidity_classifier: Path
+    lightgbm: Path
+
+
+def resolve_artifact_paths(model_dir: Path | str) -> ArtifactPaths:
+    base = Path(model_dir)
+    return ArtifactPaths(
+        pipeline=base / PIPELINE_FILENAME,
+        metadata=base / METADATA_FILENAME,
+        legacy_metadata=base / LEGACY_METADATA_FILENAME,
+        xgboost=base / XGBOOST_FILENAME,
+        autoencoder=base / AUTOENCODER_FILENAME,
+        tabtransformer=base / TABTRANSFORMER_FILENAME,
+        tightness_classifier=base / TIGHTNESS_CLASSIFIER_FILENAME,
+        rigidity_classifier=base / RIGIDITY_CLASSIFIER_FILENAME,
+        lightgbm=base / LIGHTGBM_ONNX_FILENAME,
+    )
 
 
 def _get_secret_value(key: str) -> str | None:
@@ -99,7 +138,8 @@ def ensure_model_bundle(model_dir: Path | str = MODEL_DIR) -> None:
     target_dir = Path(model_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    expected_pipeline = target_dir / PIPELINE_PATH.name
+    artifacts = resolve_artifact_paths(target_dir)
+    expected_pipeline = artifacts.pipeline
     if expected_pipeline.exists():
         return
 
@@ -210,6 +250,7 @@ class ModelRegistry:
 
     def __init__(self, model_dir: Path | str = MODEL_DIR) -> None:
         self.model_dir = Path(model_dir)
+        self.artifacts = resolve_artifact_paths(self.model_dir)
         self.pipeline = None                   # sklearn Pipeline
         self.preprocessor = None               # step 'preprocess' si existe
         self.metadata: Dict[str, Any] = {}     # metadata.json parseada
@@ -277,9 +318,9 @@ class ModelRegistry:
     def _load(self) -> None:
         ensure_model_bundle(self.model_dir)
         # Pipeline
-        pipeline_path = PIPELINE_PATH
+        pipeline_path = self.artifacts.pipeline
         if not pipeline_path.exists():
-            LOGGER.info("No hay modelo Rex-AI en %s, se inicializará uno demo", PIPELINE_PATH)
+            LOGGER.info("No hay modelo Rex-AI en %s, se inicializará uno demo", pipeline_path)
             generated_path: Path | str | None = None
             try:
                 from app.modules.model_training import bootstrap_demo_model
@@ -287,7 +328,7 @@ class ModelRegistry:
                 generated_path = bootstrap_demo_model()
             except Exception as exc:  # pragma: no cover - bootstrap opcional
                 LOGGER.warning(
-                    "Fallo bootstrap del modelo demo en %s: %s", PIPELINE_PATH, exc
+                    "Fallo bootstrap del modelo demo en %s: %s", pipeline_path, exc
                 )
             if generated_path:
                 pipeline_path = Path(generated_path)
@@ -305,7 +346,11 @@ class ModelRegistry:
             LOGGER.info("No hay modelo Rex-AI en %s", pipeline_path)
 
         # Metadata
-        metadata_path = METADATA_PATH if METADATA_PATH.exists() else LEGACY_METADATA_PATH
+        metadata_path = (
+            self.artifacts.metadata
+            if self.artifacts.metadata.exists()
+            else self.artifacts.legacy_metadata
+        )
         if metadata_path.exists():
             try:
                 self.metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -385,9 +430,10 @@ class ModelRegistry:
         self.feature_importance_avg = [(str(n), float(w)) for n, w in imp_avg]
 
         # Ensemble opcional XGBoost (si existe)
-        if XGBOOST_PATH.exists():
+        xgboost_path = self.artifacts.xgboost
+        if xgboost_path.exists():
             try:
-                payload = joblib.load(XGBOOST_PATH)
+                payload = joblib.load(xgboost_path)
                 self.xgb_models = payload.get("models", {})
             except Exception as exc:
                 LOGGER.warning("No se pudo cargar ensemble XGBoost: %s", exc)
@@ -805,8 +851,8 @@ class ModelRegistry:
             return
 
         path = meta.get("path")
-        model_path = self.model_dir / path if path else AUTOENCODER_PATH
-        if not model_path.exists():
+        model_path = self._resolve_artifact_path(path, self.artifacts.autoencoder)
+        if model_path is None:
             self.autoencoder = None
             return
 
@@ -845,8 +891,10 @@ class ModelRegistry:
         )
 
         tight_path = tight_meta.get("path") if isinstance(tight_meta, dict) else None
-        tight_model_path = self.model_dir / tight_path if tight_path else TIGHTNESS_CLASSIFIER_PATH
-        if tight_model_path.exists():
+        tight_model_path = self._resolve_artifact_path(
+            tight_path, self.artifacts.tightness_classifier
+        )
+        if tight_model_path is not None:
             try:
                 self.tightness_clf = joblib.load(tight_model_path)
                 classes = getattr(self.tightness_clf, "classes_", None)
@@ -860,8 +908,10 @@ class ModelRegistry:
             self.tightness_classes = np.array([])
 
         rigid_path = rigid_meta.get("path") if isinstance(rigid_meta, dict) else None
-        rigid_model_path = self.model_dir / rigid_path if rigid_path else RIGIDITY_CLASSIFIER_PATH
-        if rigid_model_path.exists():
+        rigid_model_path = self._resolve_artifact_path(
+            rigid_path, self.artifacts.rigidity_classifier
+        )
+        if rigid_model_path is not None:
             try:
                 self.rigidity_clf = joblib.load(rigid_model_path)
                 classes = getattr(self.rigidity_clf, "classes_", None)
@@ -888,8 +938,8 @@ class ModelRegistry:
             return
 
         path = meta.get("path") if isinstance(meta, dict) else None
-        model_path = self._resolve_artifact_path(path, LIGHTGBM_ONNX_PATH)
-        if model_path is None or not model_path.exists():
+        model_path = self._resolve_artifact_path(path, self.artifacts.lightgbm)
+        if model_path is None:
             return
 
         try:
