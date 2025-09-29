@@ -18,6 +18,7 @@ from app.modules.exporters import candidate_to_json, candidate_to_csv
 from app.modules.safety import check_safety, safety_badge  # recalcular badge al seleccionar
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.safety import check_safety  # recalcular badge al seleccionar
+from app.modules.ui_blocks import load_theme, futuristic_button
 from app.modules.ui_blocks import load_theme
 from app.modules.luxe_components import TeslaHero, MetricGalaxy, MetricItem
 
@@ -553,6 +554,50 @@ La capa “Pareto” marca los que no pueden mejorarse en un eje sin empeorar ot
         st.info("No hay puntos en la frontera con datos completos.")
 
     st.markdown('<h4 class="section-title">Seleccionar candidato</h4>', unsafe_allow_html=True)
+    opciones = table_pareto["Opción"].astype(int).tolist()
+    if opciones:
+        pick_opt = st.selectbox("Elegí Opción #", opciones, index=0, key="pick_from_pareto")
+        select_state_key = "pareto_select_state"
+        select_trigger_key = "pareto_select_trigger"
+        select_feedback_key = "pareto_select_feedback"
+        button_state = st.session_state.get(select_state_key, "idle")
+        if futuristic_button(
+            "✅ Usar como seleccionado",
+            key="pareto_select_button",
+            state=button_state,
+            width="full",
+            help_text="Habilita export JSON/CSV en la pestaña",
+            loading_label="Sincronizando…",
+            success_label="Listo para exportar",
+            error_label="Revisar opción",
+            enable_vibration=True,
+            status_hints={
+                "idle": "",
+                "loading": "Checando seguridad",
+                "success": "Disponible en Export Center",
+                "error": "Revisá la opción seleccionada",
+            },
+        ):
+            st.session_state[select_state_key] = "loading"
+            st.session_state[select_trigger_key] = True
+            st.session_state["pareto_select_value"] = st.session_state.get("pick_from_pareto", pick_opt)
+            st.session_state.pop(select_feedback_key, None)
+            st.experimental_rerun()
+    else:
+        st.info("No hay puntos en la frontera con datos completos.")
+
+    if st.session_state.get("pareto_select_trigger"):
+        current_selection = st.session_state.get(
+            "pareto_select_value", st.session_state.get("pick_from_pareto")
+        )
+        try:
+            pick_value = int(current_selection) if current_selection is not None else None
+        except (TypeError, ValueError):
+            pick_value = None
+        message_level = "error"
+        message_text = "No se pudo interpretar la opción seleccionada."
+        if pick_value is not None:
+            idx = pick_value - 1
     if pareto_options:
         default_index = 0
         if selected_option_number and int(selected_option_number) in pareto_options:
@@ -564,15 +609,32 @@ La capa “Pareto” marca los que no pueden mejorarse en un eje sin empeorar ot
                 selected = cands[idx]
                 flags = check_safety(selected["materials"], selected["process_name"], selected["process_id"])
                 st.session_state["selected"] = {"data": selected, "safety": flags}
+                message_level = "success"
+                message_text = (
+                    f"Candidato #{pick_value} seleccionado. Abrí **4) Resultados** o **5) Comparar & Explicar**."
+                )
                 st.session_state["selected_option_number"] = pick_opt
                 st.session_state["flight_flash"] = {"option": pick_opt}
                 st.session_state["export_wizard_step"] = 1
                 st.session_state["last_export_payload"] = None
                 st.success(f"Candidato #{pick_opt} seleccionado. Abrí **4) Resultados** o **5) Comparar & Explicar**.")
             else:
-                st.warning("Opción fuera de rango respecto a la lista de candidates.")
-    else:
-        st.info("No hay puntos en la frontera con datos completos.")
+                message_level = "warning"
+                message_text = "Opción fuera de rango respecto a la lista de candidates."
+        st.session_state["pareto_select_feedback"] = (message_level, message_text)
+        st.session_state["pareto_select_state"] = "success" if message_level == "success" else "error"
+        st.session_state["pareto_select_trigger"] = False
+        st.session_state.pop("pareto_select_value", None)
+
+    feedback_state = st.session_state.get("pareto_select_feedback")
+    if feedback_state:
+        level, message = feedback_state
+        if level == "success":
+            st.success(message)
+        elif level == "warning":
+            st.warning(message)
+        elif level == "error":
+            st.error(message)
 
 # ---------- TAB 2: Predicciones de ensayo (demo conectada a datos) ----------
 with tab_trials:

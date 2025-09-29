@@ -18,6 +18,7 @@ from app.modules.luxe_components import (
     TeslaHero,
 )
 from app.modules.ml_models import get_model_registry
+from app.modules.ui_blocks import load_theme, futuristic_button
 from app.modules.navigation import set_active_step
 from app.modules.ui_blocks import load_theme
 
@@ -451,6 +452,69 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ──────────── CTA navegación ────────────
+st.markdown("### Siguiente acción")
+c1, c2, c3, c4 = st.columns(4)
+with c1:
+    if futuristic_button(
+        "🧱 Inventario",
+        key="home_nav_inventory",
+        help_text="Subí o limpiá tu CSV base",
+        loading_label="Abriendo…",
+        success_label="Inventario listo",
+        status_hints={
+            "idle": "",
+            "loading": "Preparando pantalla",
+            "success": "UI cargada",
+            "error": "",
+        },
+    ):
+        st.switch_page("pages/1_Inventory_Builder.py")
+with c2:
+    if futuristic_button(
+        "🎯 Target",
+        key="home_nav_target",
+        help_text="Configura límites y objetivos",
+        loading_label="Abriendo…",
+        success_label="Target listo",
+        status_hints={
+            "idle": "",
+            "loading": "Cargando diseñador",
+            "success": "UI cargada",
+            "error": "",
+        },
+    ):
+        st.switch_page("pages/2_Target_Designer.py")
+with c3:
+    if futuristic_button(
+        "🤖 Generador",
+        key="home_nav_generator",
+        help_text="Corre IA o heurísticas",
+        loading_label="Abriendo…",
+        success_label="Generador listo",
+        status_hints={
+            "idle": "",
+            "loading": "Cargando modelo",
+            "success": "UI cargada",
+            "error": "",
+        },
+    ):
+        st.switch_page("pages/3_Generator.py")
+with c4:
+    if futuristic_button(
+        "📊 Resultados",
+        key="home_nav_results",
+        help_text="Analiza trade-offs y export",
+        loading_label="Abriendo…",
+        success_label="Resultados listos",
+        status_hints={
+            "idle": "",
+            "loading": "Abriendo dashboards",
+            "success": "UI cargada",
+            "error": "",
+        },
+    ):
+        st.switch_page("pages/4_Results_and_Tradeoffs.py")
 cta_buttons = st.columns(2)
 with cta_buttons[0]:
     if st.button("🧱 Abrir inventario", use_container_width=True, key="cta_inventory"):

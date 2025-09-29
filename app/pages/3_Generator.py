@@ -13,6 +13,7 @@ from app.modules.ml_models import get_model_registry
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.process_planner import choose_process
 from app.modules.safety import check_safety, safety_badge
+from app.modules.ui_blocks import load_theme, futuristic_button
 
 st.set_page_config(page_title="Rex-AI • Generador", page_icon="🤖", layout="wide")
 
@@ -152,6 +153,110 @@ if proc_filtered is None or proc_filtered.empty:
     proc_filtered = proc_df.copy()
 
 # ----------------------------- Panel de control + IA -----------------------------
+col_control, col_ai = st.columns([1.3, 0.9])
+with col_control:
+    st.markdown("### 🎛️ Configuración")
+    stored_mode = st.session_state.get("prediction_mode", "Modo Rex-AI (ML)")
+    mode = st.radio(
+        "Motor de predicción",
+        ("Modo Rex-AI (ML)", "Modo heurístico"),
+        index=0 if stored_mode == "Modo Rex-AI (ML)" else 1,
+        help="Usá Rex-AI para predicciones ML o quedate con la estimación heurística reproducible.",
+    )
+    st.session_state["prediction_mode"] = mode
+    use_ml = mode == "Modo Rex-AI (ML)"
+    n_candidates = st.slider("Recetas a explorar", 3, 12, 6)
+    opt_evals = st.slider(
+        "Iteraciones de optimización (Ax/BoTorch)",
+        0, 60, 18,
+        help="Loop bayesiano para maximizar score sin violar límites de recursos."
+    )
+    seed_default = st.session_state.get("generator_seed_input", "")
+    seed_input = st.text_input(
+        "Semilla (opcional)",
+        value=seed_default,
+        help="Fijá una semilla entera para repetir los mismos candidatos en sesiones futuras.",
+    )
+    st.session_state["generator_seed_input"] = seed_input
+    crew_low = target.get("crew_time_low", False)
+    st.caption("Los resultados privilegian %s" % ("tiempo de tripulación" if crew_low else "un balance general"))
+    generator_state_key = "generator_button_state"
+    generator_trigger_key = "generator_button_trigger"
+    generator_error_key = "generator_button_error"
+    button_state = st.session_state.get(generator_state_key, "idle")
+    button_error = st.session_state.get(generator_error_key)
+
+    run = futuristic_button(
+        "Generar recomendaciones",
+        key="generator_run_button",
+        state=button_state,
+        width="full",
+        help_text="Ax + BoTorch: 18 iteraciones recomendadas",
+        loading_label="Generando…",
+        success_label="Candidatos listos",
+        error_label="Reintentar",
+        enable_vibration=True,
+        status_hints={
+            "idle": "",
+            "loading": "Corriendo optimizador",
+            "success": "Resultados actualizados",
+            "error": "Revisá semilla o parámetros",
+        },
+    )
+
+    if run and button_state != "loading":
+        st.session_state[generator_state_key] = "loading"
+        st.session_state[generator_trigger_key] = True
+        st.session_state.pop(generator_error_key, None)
+        st.experimental_rerun()
+
+    if button_error and st.session_state.get(generator_state_key) == "error":
+        st.error(button_error)
+    elif st.session_state.get(generator_state_key) == "success":
+        st.caption("✅ Última corrida lista abajo. Volvé a ejecutar si cambias parámetros.")
+    if not use_ml:
+        st.info("Modo heurístico activo: las métricas se basan en reglas físicas y no en ML.")
+
+    if isinstance(proc_filtered, pd.DataFrame) and not proc_filtered.empty:
+        preview_map = [
+            ("process_id", "ID"),
+            ("name", "Proceso"),
+            ("match_score", "Score"),
+            ("crew_min_per_batch", "Crew (min)"),
+            ("match_reason", "Por qué")
+        ]
+        cols_present = [col for col, _ in preview_map if col in proc_filtered.columns]
+        if cols_present:
+            st.markdown("#### Procesos sugeridos")
+            st.caption("Filtrado según residuo/flags y escenario seleccionado.")
+            preview_df = proc_filtered[cols_present].head(5).rename(columns=dict(preview_map))
+            st.dataframe(preview_df, hide_index=True, use_container_width=True)
+
+with col_ai:
+    st.markdown("### 🧠 Modelo Rex-AI")
+    model_registry = get_model_registry()
+    trained_at = model_registry.metadata.get("trained_at", "—")
+    n_samples = model_registry.metadata.get("n_samples", "—")
+    top_features = model_registry.feature_importance_avg[:5]
+    if top_features:
+        df_feat = pd.DataFrame(top_features, columns=["feature", "weight"])
+        chart = alt.Chart(df_feat).mark_bar(color="#60a5fa").encode(
+            x=alt.X("weight", title="Importancia promedio"),
+            y=alt.Y("feature", sort="-x", title="Feature"),
+            tooltip=["feature", alt.Tooltip("weight", format=".3f")],
+        ).properties(height=180)
+        st.altair_chart(chart, use_container_width=True)
+    st.caption(f"Entrenado: {trained_at} · Muestras: {n_samples} · Features: {len(model_registry.feature_names)}")
+    if model_registry.metadata.get("random_forest", {}).get("metrics", {}).get("overall"):
+        overall = model_registry.metadata["random_forest"]["metrics"]["overall"]
+        try:
+            st.caption(f"MAE promedio: {overall.get('mae', float('nan')):.3f} · RMSE: {overall.get('rmse', float('nan')):.3f} · R²: {overall.get('r2', float('nan')):.3f}")
+        except Exception:
+            pass
+    label_summary_text = model_registry.label_distribution_label()
+    if label_summary_text and label_summary_text != "—":
+        st.caption(f"Fuentes de labels: {label_summary_text}")
+
 with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None) as grid:
     with layout_block("side-panel layer-shadow fade-in", parent=grid) as control:
         control.markdown("### 🎛️ Configuración")
@@ -225,39 +330,48 @@ with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None
         if label_summary_text and label_summary_text != "—":
             ai_panel.caption(f"Fuentes de labels: {label_summary_text}")
 # ----------------------------- Generación -----------------------------
-if run:
+if st.session_state.get("generator_button_trigger"):
     seed_value: int | None = None
     seed_raw = st.session_state.get("generator_seed_input", "").strip()
     if seed_raw:
         try:
             seed_value = int(seed_raw, 0)
         except ValueError:
-            st.error("Ingresá un entero válido para la semilla (por ejemplo 42 o 0x2A).")
+            st.session_state["generator_button_state"] = "error"
+            st.session_state["generator_button_error"] = "Ingresá un entero válido para la semilla (por ejemplo 42 o 0x2A)."
+            st.session_state["generator_button_trigger"] = False
             st.stop()
-    result = generate_candidates(
-        waste_df,
-        proc_filtered,
-        target,
-        n=n_candidates,
-        crew_time_low=target.get("crew_time_low", False),
-        optimizer_evals=opt_evals,
-        use_ml=use_ml,
-        seed=seed_value,
-    )
-    if isinstance(result, tuple):
-        cands, history = result
-    else:
-        cands, history = result, pd.DataFrame()
-    # normalizar a lista de dicts
-    if isinstance(cands, pd.DataFrame):
-        cands = cands.to_dict("records")
-    elif isinstance(cands, dict):
-        cands = [cands]
-    else:
-        cands = [dict(c) for c in cands]
-    history_df = history if isinstance(history, pd.DataFrame) else pd.DataFrame()
-    st.session_state["candidates"] = cands
-    st.session_state["optimizer_history"] = history_df
+    try:
+        result = generate_candidates(
+            waste_df,
+            proc_filtered,
+            target,
+            n=n_candidates,
+            crew_time_low=target.get("crew_time_low", False),
+            optimizer_evals=opt_evals,
+            use_ml=use_ml,
+            seed=seed_value,
+        )
+        if isinstance(result, tuple):
+            cands, history = result
+        else:
+            cands, history = result, pd.DataFrame()
+        if isinstance(cands, pd.DataFrame):
+            cands = cands.to_dict("records")
+        elif isinstance(cands, dict):
+            cands = [cands]
+        else:
+            cands = [dict(c) for c in cands]
+        history_df = history if isinstance(history, pd.DataFrame) else pd.DataFrame()
+        st.session_state["candidates"] = cands
+        st.session_state["optimizer_history"] = history_df
+        st.session_state["generator_button_state"] = "success"
+        st.session_state["generator_button_trigger"] = False
+        st.session_state.pop("generator_button_error", None)
+    except Exception as exc:  # noqa: BLE001
+        st.session_state["generator_button_state"] = "error"
+        st.session_state["generator_button_error"] = f"Error generando candidatos: {exc}"
+        st.session_state["generator_button_trigger"] = False
 
 # ----------------------------- Si no hay candidatos aún -----------------------------
 st.divider()
