@@ -18,9 +18,11 @@ from . import luxe_components as luxe
 
 
 _THEME_HASH_KEY = "__rexai_theme_hash__"
+_INTERACTIONS_HASH_KEY = "__rexai_interactions_hash__"
 _THEME_STATE_KEY = "hud_theme"
 _FONT_STATE_KEY = "hud_font"
 _COLORBLIND_STATE_KEY = "hud_colorblind"
+_REVEAL_FLAG_KEY = "__rexai_reveal_flag__"
 
 _THEME_LABELS = {
     "dark": "Oscuro",
@@ -91,7 +93,20 @@ def _inject_css_once() -> None:
     st.session_state[_THEME_HASH_KEY] = css_hash
 
 
+def _inject_interactions_script_once() -> None:
+    if not _INTERACTIONS_JS:
+        return
+
+    script_hash = hashlib.sha256(_INTERACTIONS_JS.encode("utf-8")).hexdigest()
+    if st.session_state.get(_INTERACTIONS_HASH_KEY) == script_hash:
+        return
+
+    st.markdown(f"<script>{_INTERACTIONS_JS}</script>", unsafe_allow_html=True)
+    st.session_state[_INTERACTIONS_HASH_KEY] = script_hash
+
+
 _MICRO_JS = _bootstrap.load_microinteractions_script()
+_INTERACTIONS_JS = _bootstrap.load_interactions_script()
 
 _BUTTON_STYLES = """
 .rexai-fx-wrapper{position:relative;display:flex;flex-direction:column;gap:6px;}
@@ -105,7 +120,11 @@ _BUTTON_STYLES = """
 .rexai-fx-wrapper[data-state="loading"] .rexai-fx-button{background:linear-gradient(135deg,rgba(59,130,246,0.78),rgba(14,165,233,0.55));box-shadow:0 10px 24px rgba(14,165,233,0.25);cursor:progress;}
 .rexai-fx-wrapper[data-state="success"] .rexai-fx-button{background:linear-gradient(135deg,rgba(16,185,129,0.95),rgba(59,130,246,0.65));box-shadow:0 14px 28px rgba(16,185,129,0.32);}
 .rexai-fx-wrapper[data-state="error"] .rexai-fx-button{background:linear-gradient(135deg,rgba(248,113,113,0.95),rgba(239,68,68,0.75));box-shadow:0 14px 28px rgba(248,113,113,0.35);}
-.rexai-fx-label{position:relative;z-index:2;display:block;text-align:center;letter-spacing:0.01em;}
+.rexai-fx-label{position:relative;z-index:2;display:flex;align-items:center;justify-content:center;gap:10px;text-align:center;letter-spacing:0.01em;flex-wrap:wrap;}
+.rexai-fx-label[data-layout="stack"]{flex-direction:column;gap:6px;}
+.rexai-fx-icon{font-size:1.25rem;line-height:1;filter:drop-shadow(0 0 6px rgba(14,165,233,0.18));}
+.rexai-fx-text{display:flex;flex-direction:column;gap:2px;line-height:1.2;align-items:center;text-align:center;}
+.rexai-fx-line{display:block;}
 .rexai-fx-status{font-size:0.78rem;letter-spacing:0.04em;text-transform:uppercase;color:rgba(148,163,184,0.92);text-align:center;transition:opacity 0.18s ease;opacity:0;height:0;}
 .rexai-fx-status[data-active="true"]{opacity:1;height:auto;}
 .rexai-fx-particles{position:absolute;inset:0;pointer-events:none;overflow:visible;}
@@ -123,10 +142,28 @@ def load_theme(*, show_hud: bool = True) -> None:
 
     _ensure_defaults()
     _inject_css_once()
+    _inject_interactions_script_once()
     _apply_runtime_theme()
 
     if show_hud:
         _render_hud()
+
+
+def enable_reveal_animation() -> None:
+    """Signal the front-end to activate scroll-based reveal animations."""
+
+    if st.session_state.get(_THEME_HASH_KEY):
+        load_theme(show_hud=False)
+    else:
+        load_theme()
+    if st.session_state.get(_REVEAL_FLAG_KEY):
+        return
+
+    st.markdown(
+        '<span data-rexai-interactions="reveal" style="display:none"></span>',
+        unsafe_allow_html=True,
+    )
+    st.session_state[_REVEAL_FLAG_KEY] = True
 
 
 def inject_css(show_hud: bool = False) -> None:
@@ -310,6 +347,7 @@ def futuristic_button(
     enable_vibration: bool = False,
     disabled: bool = False,
     status_hints: dict[str, str] | None = None,
+    icon: str | None = None,
 ) -> bool:
     """Render the futuristic CTA microinteraction button and return ``True`` on click."""
 
@@ -338,6 +376,30 @@ def futuristic_button(
     label_current = state_messages.get(state, label)
     button_id = f"rexai-fx-{uuid4().hex}"
 
+    def _label_lines(text: str) -> list[str]:
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        if not lines:
+            stripped = text.strip()
+            return [stripped or text]
+        return lines
+
+    label_lines = _label_lines(label_current)
+    line_count = max(1, len(label_lines))
+    layout_mode = "stack" if (len(label_lines) > 1 and not icon) else "inline"
+    icon_html = (
+        f'<span class="rexai-fx-icon" aria-hidden="true">{escape(icon)}</span>'
+        if icon
+        else ""
+    )
+    text_block = "".join(
+        f'<span class="rexai-fx-line">{escape(line)}</span>' for line in label_lines
+    )
+    label_html = (
+        f'<span class="rexai-fx-label" data-layout="{layout_mode}" '
+        f'data-lines="{line_count}">{icon_html}'
+        f'<span class="rexai-fx-text">{text_block}</span></span>'
+    )
+
     config: dict[str, Any] = {
         "state": state,
         "stateMessages": state_messages,
@@ -357,28 +419,30 @@ def futuristic_button(
     script_parts = []
     if _MICRO_JS:
         script_parts.append(_MICRO_JS)
-    script_parts.append(
-        "(function(){",
-        "const styleId='rexai-fx-style';",
-        f"const styleCSS={json.dumps(_BUTTON_STYLES)};",
-        "if(!document.getElementById(styleId)){const style=document.createElement('style');style.id=styleId;style.textContent=styleCSS;document.head.appendChild(style);}",
-        f"const cfg={json.dumps(config)};",
-        f"const wrapperId='{button_id}';",
-        "const Streamlit=window.parent && window.parent.Streamlit;",
-        "if(!Streamlit){return;}",
-        "const wrapper=document.getElementById(wrapperId);",
-        "if(!wrapper){return;}",
-        "Streamlit.setComponentReady();",
-        "const buttonEl=wrapper.querySelector('button');",
-        "if(buttonEl){buttonEl.disabled=cfg.disabled;}",
-        "const statusEl=wrapper.querySelector('.rexai-fx-status');",
-        "if(statusEl){const hint=(cfg.statusHints && cfg.statusHints[cfg.state])||'';statusEl.textContent=hint;statusEl.setAttribute('data-active',hint?'true':'false');}",
-        "if(window.RexAIMicro){const controller=window.RexAIMicro.mount(wrapper,cfg);if(controller){controller.applyState(cfg.state);}}else{wrapper.setAttribute('data-state',cfg.state);}",
-        "const send=(payload)=>Streamlit.setComponentValue(payload);",
-        "if(buttonEl && !cfg.disabled){buttonEl.addEventListener('click',()=>send({event:'click',ts:Date.now()}));}",
-        "const sync=()=>Streamlit.setFrameHeight(document.body.scrollHeight);",
-        "sync();window.addEventListener('resize',sync);",
-        "})();",
+    script_parts.extend(
+        [
+            "(function(){",
+            "const styleId='rexai-fx-style';",
+            f"const styleCSS={json.dumps(_BUTTON_STYLES)};",
+            "if(!document.getElementById(styleId)){const style=document.createElement('style');style.id=styleId;style.textContent=styleCSS;document.head.appendChild(style);}",
+            f"const cfg={json.dumps(config)};",
+            f"const wrapperId='{button_id}';",
+            "const Streamlit=window.parent && window.parent.Streamlit;",
+            "if(!Streamlit){return;}",
+            "const wrapper=document.getElementById(wrapperId);",
+            "if(!wrapper){return;}",
+            "Streamlit.setComponentReady();",
+            "const buttonEl=wrapper.querySelector('button');",
+            "if(buttonEl){buttonEl.disabled=cfg.disabled;}",
+            "const statusEl=wrapper.querySelector('.rexai-fx-status');",
+            "if(statusEl){const hint=(cfg.statusHints && cfg.statusHints[cfg.state])||'';statusEl.textContent=hint;statusEl.setAttribute('data-active',hint?'true':'false');}",
+            "if(window.RexAIMicro){const controller=window.RexAIMicro.mount(wrapper,cfg);if(controller){controller.applyState(cfg.state);}}else{wrapper.setAttribute('data-state',cfg.state);}",
+            "const send=(payload)=>Streamlit.setComponentValue(payload);",
+            "if(buttonEl && !cfg.disabled){buttonEl.addEventListener('click',()=>send({event:'click',ts:Date.now()}));}",
+            "const sync=()=>Streamlit.setFrameHeight(document.body.scrollHeight);",
+            "sync();window.addEventListener('resize',sync);",
+            "})();",
+        ]
     )
     script = "".join(script_parts)
 
@@ -386,7 +450,7 @@ def futuristic_button(
     <div id="{button_id}" class="rexai-fx-wrapper" data-state="{state}" data-width="{container_width}">
       <button type="button" class="rexai-fx-button" {'disabled="disabled"' if disabled else ''}>
         <span class="rexai-fx-particles"></span>
-        <span class="rexai-fx-label">{escape(label_current)}</span>
+        {label_html}
       </button>
       <span class="rexai-fx-status" data-active="{'true' if status_text else 'false'}">{escape(status_text)}</span>
       {help_html}
@@ -394,7 +458,13 @@ def futuristic_button(
     <script>{script}</script>
     """
 
-    result = components_html(html_markup, height=120 if help_text else 100, key=key)
+    base_height = 100 + max(0, line_count - 1) * 8
+    component_kwargs = {"height": base_height + (20 if help_text else 0), "key": key}
+    try:
+        result = components_html(html_markup, **component_kwargs)
+    except TypeError:
+        component_kwargs.pop("key", None)
+        result = components_html(html_markup, **component_kwargs)
     session_key = f"__rexai_fx_ts::{key}"
     if isinstance(result, dict) and result.get("event") == "click":
         ts = result.get("ts")

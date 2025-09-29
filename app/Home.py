@@ -24,7 +24,7 @@ from app.modules.luxe_components import (
 )
 from app.modules.ml_models import get_model_registry
 from app.modules.navigation import set_active_step
-from app.modules.ui_blocks import futuristic_button, load_theme
+from app.modules.ui_blocks import enable_reveal_animation, futuristic_button, load_theme
 
 st.set_page_config(
     page_title="Rex-AI • Mission Copilot",
@@ -85,6 +85,33 @@ model_name = model_registry.metadata.get("model_name", "rexai-rf-ensemble")
 feature_count = len(getattr(model_registry, "feature_names", []) or [])
 
 # ──────────── Hero interactivo ────────────
+mission_briefing(
+    title="Mission Briefing • Rex-AI en órbita marciana",
+    tagline="Sincronizá sensores, crew y modelo para reciclar basura orbital en hardware vital.",
+    video_path=Path(__file__).resolve().parent / "static" / "mission_briefing_loop.mp4",
+    cards=[
+        BriefingCard(
+            title="Crew Ops + IA",
+            body="La cabina recibe datos del inventario NASA, restricciones de crew-time y energía en tiempo real.",
+            accent="#38bdf8",
+        ),
+        BriefingCard(
+            title="Trazabilidad total",
+            body="Cada decisión enlaza features, flags de riesgo y la receta final exportable a ingeniería.",
+            accent="#a855f7",
+        ),
+        BriefingCard(
+            title="Seguridad primero",
+            body="Bandas de confianza, monitoreo de toxicidad EVA y comparadores heurísticos siempre visibles.",
+            accent="#f97316",
+        ),
+    ],
+    steps=[
+        ("Calibrá el inventario", "Normalizá residuos, detectá flags EVA y estructuras multi-layer."),
+        ("Seleccioná objetivo", "Define límites de agua, energía y logística con presets marcianos."),
+        ("Generá y valida", "Rex-AI mezcla, explica contribuciones y exporta procesos listos para la tripulación."),
+    ],
+)
 ready = "✅ Modelo listo" if model_registry.ready else "⚠️ Entrená localmente"
 
 mission_stages = [
@@ -397,6 +424,32 @@ with cta_col1:
         columns_min="18rem",
     ).render()
     if st.button("📤 Exportar", use_container_width=True):
+    st.markdown(
+        """
+        <div class="cta-grid">
+          <div class="cta-card reveal">
+            <span class="icon">📤</span>
+            <strong>Exportar receta y telemetría</strong>
+            <p>Descargá reportes con Sankey, contribuciones y feedback para seguimiento.</p>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    export_state_key = "home_cta_export_state"
+    if st.session_state.get(export_state_key) == "loading":
+        st.session_state[export_state_key] = "success"
+    export_state = st.session_state.setdefault(export_state_key, "idle")
+    if futuristic_button(
+        "Exportar\nreceta y telemetría",
+        key="home_cta_export",
+        icon="📤",
+        state=export_state,
+        loading_label="Generando reporte…",
+        success_label="Reporte enviado",
+        help_text="Descargá Sankey, contribuciones y feedback para seguimiento.",
+    ):
+        st.session_state[export_state_key] = "loading"
         st.switch_page("pages/4_Results_and_Tradeoffs.py")
 with cta_col2:
     ActionDeck(
@@ -410,6 +463,32 @@ with cta_col2:
         columns_min="18rem",
     ).render()
     if st.button("🧮 Simular escenarios", use_container_width=True):
+    st.markdown(
+        """
+        <div class="cta-grid">
+          <div class="cta-card reveal">
+            <span class="icon">🧮</span>
+            <strong>Simular escenarios</strong>
+            <p>Prueba configuraciones de energía, crew y materiales para stress tests.</p>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    sim_state_key = "home_cta_simulation_state"
+    if st.session_state.get(sim_state_key) == "loading":
+        st.session_state[sim_state_key] = "success"
+    sim_state = st.session_state.setdefault(sim_state_key, "idle")
+    if futuristic_button(
+        "Simular\nescenarios",
+        key="home_cta_simulation",
+        icon="🧮",
+        state=sim_state,
+        loading_label="Lanzando simulación…",
+        success_label="Escenarios listos",
+        help_text="Prueba configuraciones de energía, crew y materiales para stress tests.",
+    ):
+        st.session_state[sim_state_key] = "loading"
         st.switch_page("pages/2_Target_Designer.py")
 
 st.markdown(
@@ -527,10 +606,36 @@ with c4:
         st.switch_page("pages/4_Results_and_Tradeoffs.py")
 cta_buttons = st.columns(2)
 with cta_buttons[0]:
-    if st.button("🧱 Abrir inventario", use_container_width=True, key="cta_inventory"):
+    inventory_state_key = "home_cta_inventory_state"
+    if st.session_state.get(inventory_state_key) == "loading":
+        st.session_state[inventory_state_key] = "success"
+    inventory_state = st.session_state.setdefault(inventory_state_key, "idle")
+    if futuristic_button(
+        "Abrir\ninventario",
+        key="cta_inventory",
+        icon="🧱",
+        state=inventory_state,
+        loading_label="Abriendo inventario…",
+        success_label="Inventario listo",
+        width="full",
+    ):
+        st.session_state[inventory_state_key] = "loading"
         st.switch_page("pages/1_Inventory_Builder.py")
 with cta_buttons[1]:
-    if st.button("🤖 Abrir generador", use_container_width=True, key="cta_generator"):
+    generator_state_key = "home_cta_generator_state"
+    if st.session_state.get(generator_state_key) == "loading":
+        st.session_state[generator_state_key] = "success"
+    generator_state = st.session_state.setdefault(generator_state_key, "idle")
+    if futuristic_button(
+        "Abrir\ngenerador",
+        key="cta_generator",
+        icon="🤖",
+        state=generator_state,
+        loading_label="Activando Rex-AI…",
+        success_label="Generador listo",
+        width="full",
+    ):
+        st.session_state[generator_state_key] = "loading"
         st.switch_page("pages/3_Generator.py")
 
 # ──────────── Qué demuestra hoy ────────────
@@ -560,25 +665,9 @@ orbital_timeline(
             icon="📦",
         ),
     ]
-# ──────────── Animación de aparición por scroll ────────────
-st.markdown(
-    """
-    <script>
-      const observer = new IntersectionObserver((entries) => {
-        entries.forEach(entry => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add('is-visible');
-          }
-        });
-      }, {threshold: 0.2});
-
-      document.querySelectorAll('.reveal').forEach((element) => {
-        observer.observe(element);
-      });
-    </script>
-    """,
-    unsafe_allow_html=True,
 )
+# ──────────── Animación de aparición por scroll ────────────
+enable_reveal_animation()
 MetricGalaxy(
     metrics=hero_scene.metric_items(),
     density="cozy",

@@ -9,6 +9,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 _MICROINTERACTIONS_PATH = PROJECT_ROOT / "app" / "static" / "microinteractions.js"
+_INTERACTIONS_PATH = PROJECT_ROOT / "app" / "static" / "interactions.js"
 
 
 def load_microinteractions_script() -> str:
@@ -20,7 +21,20 @@ def load_microinteractions_script() -> str:
         return ""
 
 
-__all__ = ["PROJECT_ROOT", "load_microinteractions_script"]
+def load_interactions_script() -> str:
+    """Return shared UI interaction helpers stored in ``app/static``."""
+
+    try:
+        return _INTERACTIONS_PATH.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
+
+
+__all__ = [
+    "PROJECT_ROOT",
+    "load_microinteractions_script",
+    "load_interactions_script",
+]
 try:
     from app.modules.visual_theme import apply_global_visual_theme
 except Exception:  # pragma: no cover - theme setup should not break imports
