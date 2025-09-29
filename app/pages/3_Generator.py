@@ -21,6 +21,7 @@ from app.modules.ui_blocks import (
     micro_divider,
 )
 from app.modules.luxe_components import TeslaHero, ChipRow
+from app.modules.visualizations import ConvergenceScene
 
 st.set_page_config(page_title="Rex-AI • Generador", page_icon="🤖", layout="wide")
 
@@ -286,21 +287,14 @@ if not cands:
 
 # ----------------------------- Historial del optimizador -----------------------------
 if isinstance(history_df, pd.DataFrame) and not history_df.empty:
-    st.subheader("Convergencia del optimizador")
-    st.caption("Seguimiento rápido de hipervolumen y porcentaje de soluciones dominadas.")
-    valid_hist = history_df.dropna(subset=["hypervolume"])
-    if not valid_hist.empty:
-        last = valid_hist.iloc[-1]
-        metric_cards = f"""
-        <div class=\"stat-band fade-in\">
-          <div class=\"stat-card layer-shadow\"><span>Hipervolumen</span><strong>{last['hypervolume']:.3f}</strong></div>
-          <div class=\"stat-card layer-shadow\"><span>Dominancia</span><strong>{last['dominance_ratio']*100:.1f}%</strong></div>
-          <div class=\"stat-card layer-shadow\"><span>Tamaño Pareto</span><strong>{int(last['pareto_size'])}</strong></div>
-        </div>
-        """
-        st.markdown(metric_cards, unsafe_allow_html=True)
-        chart_data = valid_hist.set_index("iteration")[["hypervolume", "dominance_ratio"]]
-        st.line_chart(chart_data)
+    scene = ConvergenceScene(
+        history_df,
+        subtitle=(
+            "Pistas visuales sobre cómo evoluciona el frente Pareto tras cada iteración "
+            "(pasá el cursor para leer hipervolumen, dominancia y scores)."
+        ),
+    )
+    scene.render(st)
 
 # ----------------------------- Resumen de ranking -----------------------------
 summary_rows: list[dict[str, object]] = []
