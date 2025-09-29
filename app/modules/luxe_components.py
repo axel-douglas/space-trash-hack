@@ -6,7 +6,7 @@ import base64
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, List, Literal, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Literal, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import plotly.graph_objects as go
@@ -21,6 +21,23 @@ _CSS_KEY = "__rexai_luxe_css__"
 # ---------------------------------------------------------------------------
 _BRIEFING_AND_TARGET_CSS = """
 <style>
+.luxe-hero-scene {
+    display: grid;
+    gap: 32px;
+    margin-bottom: 16px;
+}
+.luxe-hero-scene__lead {
+    display: grid;
+    gap: 18px;
+}
+.luxe-hero-scene .briefing-grid {
+    margin-top: 0;
+}
+.luxe-hero__tagline {
+    margin: 0;
+    font-size: 1.02rem;
+    color: rgba(226, 232, 240, 0.78);
+}
 .briefing-grid {
     display: grid;
     grid-template-columns: minmax(280px, 1fr) minmax(320px, 1fr);
@@ -718,6 +735,28 @@ class TimelineMilestone:
     icon: str = "🛰️"
 
 
+@dataclass(frozen=True)
+class HeroFlowStage:
+    """Unified description for the mission flow used across hero layouts."""
+
+    key: str
+    order: int
+    name: str
+    hero_headline: str
+    hero_copy: str
+    card_body: str
+    icon: str
+    timeline_label: str
+    timeline_description: str
+    footer: str | None = None
+
+    def as_step(self) -> tuple[str, str]:
+        return (self.hero_headline, self.hero_copy)
+
+    @property
+    def card_title(self) -> str:
+        return f"{self.order} · {self.name}"
+
 @dataclass
 class TargetPresetMeta:
     """Metadata used to render the Tesla-style preset cards."""
@@ -1225,7 +1264,8 @@ def ChipRow(
 ) -> str:
     """Render a compact list of chips with luxe styling."""
 
-    _load_css()
+    if render:
+        _load_css()
 
     size_map: Mapping[str, tuple[str, str]] = {
         "sm": ("0.32rem 0.8rem", "0.74rem"),
@@ -1277,6 +1317,9 @@ class TeslaHero:
 
     def render(self) -> None:
         _load_css()
+        st.markdown(self._render_markup(), unsafe_allow_html=True)
+
+    def _render_markup(self) -> str:
         padding_map = {
             "compact": "1.9rem 2.2rem",
             "cozy": "2.5rem 2.9rem",
@@ -1315,7 +1358,7 @@ class TeslaHero:
             )
         layers_html = "".join(layers)
 
-        html = f"""
+        return f"""
         <div class='luxe-hero' style='{_merge_styles(hero_style, {})}'>
           {video_markup}
           {layers_html}
@@ -1327,7 +1370,186 @@ class TeslaHero:
           </div>
         </div>
         """
-        st.markdown(html, unsafe_allow_html=True)
+
+    @classmethod
+    def with_briefing(
+        cls,
+        *,
+        title: str,
+        subtitle: str,
+        tagline: str,
+        video_url: str | None = None,
+        chips: Sequence[str | Mapping[str, str]] = (),
+        icon: str | None = None,
+        gradient: str | None = None,
+        glow: str | None = None,
+        density: str = "cozy",
+        parallax_icons: Sequence[Mapping[str, str]] = (),
+        flow: Sequence[HeroFlowStage] = (),
+        briefing_video_path: Path | str | None = None,
+        briefing_cards: Sequence[BriefingCard] = (),
+        steps: Sequence[tuple[str, str]] | None = None,
+        metrics: Sequence[Mapping[str, Any]] = (),
+        render: bool = True,
+    ) -> "TeslaHeroBriefingScene":
+        hero = cls(
+            title=title,
+            subtitle=subtitle,
+            video_url=video_url,
+            chips=chips,
+            icon=icon,
+            gradient=gradient,
+            glow=glow,
+            density=density,
+            parallax_icons=parallax_icons,
+        )
+
+        normalized_steps: Sequence[tuple[str, str]]
+        if steps is not None:
+            normalized_steps = steps
+        elif flow:
+            normalized_steps = [stage.as_step() for stage in flow]
+        else:
+            normalized_steps = ()
+
+        media_src: str | None = None
+        if briefing_video_path:
+            path = Path(briefing_video_path)
+            media_src = _video_as_base64(path)
+
+        scene = TeslaHeroBriefingScene(
+            hero=hero,
+            tagline=tagline,
+            steps=normalized_steps,
+            cards=list(briefing_cards),
+            media_src=media_src,
+            flow=list(flow),
+            metrics=[dict(metric) for metric in metrics],
+        )
+
+        if render:
+            scene.render()
+        return scene
+
+
+@dataclass
+class TeslaHeroBriefingScene:
+    hero: TeslaHero
+    tagline: str
+    steps: Sequence[tuple[str, str]]
+    cards: Sequence[BriefingCard]
+    media_src: str | None
+    flow: Sequence[HeroFlowStage] = field(default_factory=tuple)
+    metrics: Sequence[Mapping[str, Any]] = field(default_factory=tuple)
+    _markup: str = field(init=False, default="")
+
+    def __post_init__(self) -> None:
+        self._markup = self._compose_markup()
+
+    @property
+    def markup(self) -> str:
+        return self._markup
+
+    def _compose_markup(self) -> str:
+        hero_markup = self.hero._render_markup()
+        tagline_html = (
+            f"<p class='luxe-hero__tagline'>{self.tagline}</p>" if self.tagline else ""
+        )
+        media_html = (
+            f"<video autoplay loop muted playsinline src='{self.media_src}'></video>"
+            if self.media_src
+            else "<div class='briefing-fallback'>Simulación orbital</div>"
+        )
+        cards_html = "".join(
+            f"""
+            <div class='briefing-card' style="--card-accent: {card.accent};">
+                <h3>{card.title}</h3>
+                <p>{card.body}</p>
+            </div>
+            """
+            for card in self.cards
+        )
+        steps_html = "".join(
+            f"""
+            <div class='briefing-step' style="animation-delay: {idx * 120}ms;">
+                <span>{idx + 1}</span>
+                <div>
+                    <strong>{title}</strong>
+                    <small>{copy}</small>
+                </div>
+            </div>
+            """
+            for idx, (title, copy) in enumerate(self.steps)
+        )
+
+        return f"""
+        <section class='luxe-hero-scene'>
+          <div class='luxe-hero-scene__lead'>
+            {hero_markup}
+            {tagline_html}
+          </div>
+          <div class='briefing-grid'>
+            <div class='briefing-video'>{media_html}</div>
+            <div class='briefing-cards'>
+              {cards_html}
+              <div class='briefing-stepper'>
+                {steps_html}
+              </div>
+            </div>
+          </div>
+        </section>
+        """
+
+    def render(self) -> None:
+        _load_css()
+        st.markdown(self._markup, unsafe_allow_html=True)
+
+    def glass_cards(self) -> list['GlassCard']:
+        cards: list['GlassCard'] = []
+        for stage in self.flow:
+            cards.append(
+                GlassCard(
+                    title=stage.card_title,
+                    body=stage.card_body,
+                    icon=stage.icon,
+                    footer=stage.footer,
+                )
+            )
+        return cards
+
+    def timeline_milestones(self) -> list[TimelineMilestone]:
+        return [
+            TimelineMilestone(
+                label=stage.timeline_label,
+                description=stage.timeline_description,
+                icon=stage.icon,
+            )
+            for stage in self.flow
+        ]
+
+    def metric_items(self) -> list['MetricItem']:
+        items: list['MetricItem'] = []
+        for metric in self.metrics:
+            items.append(
+                MetricItem(
+                    label=str(metric.get("label", "")),
+                    value=str(metric.get("value", "")),
+                    caption=metric.get("caption"),
+                    delta=metric.get("delta"),
+                    icon=metric.get("icon"),
+                    tone=metric.get("tone"),
+                )
+            )
+        return items
+
+    def metrics_payload(self) -> list[Mapping[str, Any]]:
+        return [dict(metric) for metric in self.metrics]
+
+    def stage_key_for_label(self, label: str) -> str | None:
+        for stage in self.flow:
+            if stage.timeline_label == label:
+                return stage.key
+        return None
 
 
 @dataclass
@@ -1433,6 +1655,7 @@ class GlassStack:
 __all__ = [
     "BriefingCard",
     "TimelineMilestone",
+    "HeroFlowStage",
     "TargetPresetMeta",
     "mission_briefing",
     "orbital_timeline",
@@ -1442,6 +1665,7 @@ __all__ = [
     "render_pill",
     "ChipRow",
     "TeslaHero",
+    "TeslaHeroBriefingScene",
     "MetricGalaxy",
     "MetricItem",
     "GlassStack",
