@@ -110,18 +110,27 @@ class LatentSpaceExplorer:
         if latent.size == 0:
             return []
 
+        if len(frame) < 2:
+            return []
+
+        latent_array = np.asarray(latent, dtype=float)
+        norms = np.sum(np.square(latent_array), axis=1, keepdims=True)
+        squared = norms + norms.T - 2.0 * latent_array @ latent_array.T
+        squared = np.maximum(squared, 0.0)
+        distances_matrix = np.sqrt(squared, dtype=float)
+
+        mask = distances_matrix <= float(threshold)
+        candidate_pairs = np.argwhere(np.triu(mask, k=1))
+
         distances: List[Dict[str, Any]] = []
-        for i in range(len(frame)):
-            for j in range(i + 1, len(frame)):
-                dist = float(np.linalg.norm(latent[i] - latent[j]))
-                if dist <= threshold:
-                    distances.append(
-                        {
-                            "left_index": str(frame.index[i]),
-                            "right_index": str(frame.index[j]),
-                            "distance": dist,
-                        }
-                    )
+        for left, right in candidate_pairs:
+            distances.append(
+                {
+                    "left_index": str(frame.index[left]),
+                    "right_index": str(frame.index[right]),
+                    "distance": float(distances_matrix[left, right]),
+                }
+            )
 
         return distances
 

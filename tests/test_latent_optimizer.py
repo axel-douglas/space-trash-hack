@@ -57,6 +57,42 @@ def test_detect_duplicates() -> None:
     assert dupes[0]["right_index"] == "1"
 
 
+def test_detect_duplicates_matches_manual_loop() -> None:
+    registry = DummyRegistry()
+    explorer = latent_optimizer.LatentSpaceExplorer(registry)
+    frame = pd.DataFrame(
+        [
+            {"a": 0.0, "b": 0.0, "process_id": "P01"},
+            {"a": 0.1, "b": 0.1, "process_id": "P02"},
+            {"a": 0.25, "b": 0.4, "process_id": "P03"},
+            {"a": 1.0, "b": 0.9, "process_id": "P04"},
+        ]
+    )
+    threshold = 0.15
+
+    dupes_vectorised = explorer.detect_duplicates(frame, threshold=threshold)
+
+    latent = registry.encode_matrix(registry.transform_features(frame))
+    dupes_manual = []
+    for i in range(len(frame)):
+        for j in range(i + 1, len(frame)):
+            dist = float(np.linalg.norm(latent[i] - latent[j]))
+            if dist <= threshold:
+                dupes_manual.append(
+                    {
+                        "left_index": str(frame.index[i]),
+                        "right_index": str(frame.index[j]),
+                        "distance": dist,
+                    }
+                )
+
+    assert len(dupes_vectorised) == len(dupes_manual)
+    for vec, manual in zip(dupes_vectorised, dupes_manual):
+        assert vec["left_index"] == manual["left_index"]
+        assert vec["right_index"] == manual["right_index"]
+        assert vec["distance"] == pytest.approx(manual["distance"])
+
+
 def test_propose_candidates_deduplicates(monkeypatch: pytest.MonkeyPatch) -> None:
     registry = DummyRegistry()
     explorer = latent_optimizer.LatentSpaceExplorer(registry)
