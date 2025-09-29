@@ -8,8 +8,6 @@ from textwrap import dedent
 import pandas as pd
 import streamlit as st
 
-import streamlit as st
-
 from app.modules.luxe_components import (
     BriefingCard,
     TimelineMilestone,
@@ -23,9 +21,8 @@ from app.modules.luxe_components import (
     TeslaHero,
 )
 from app.modules.ml_models import get_model_registry
-from app.modules.ui_blocks import load_theme, futuristic_button
 from app.modules.navigation import set_active_step
-from app.modules.ui_blocks import load_theme
+from app.modules.ui_blocks import futuristic_button, load_theme
 
 st.set_page_config(
     page_title="Rex-AI • Mission Copilot",
@@ -48,30 +45,6 @@ def load_inventory_sample() -> pd.DataFrame | None:
         return pd.read_csv(sample_path)
     except Exception:
         return None
-
-
-def tesla_hero(title: str, subtitle: str, chips: list[str], video_url: str) -> None:
-    chip_markup = "".join(f"<span class='chip'>{chip}</span>" for chip in chips)
-    st.markdown(
-        f"""
-        <section class="overview-block reveal" id="overview-cinematic">
-          <div class="tesla-hero">
-            <video class="tesla-hero__bg" autoplay muted loop playsinline>
-              <source src="{video_url}" type="video/mp4" />
-            </video>
-            <div class="tesla-hero__veil"></div>
-            <div class="tesla-hero__content">
-              <h1>{title}</h1>
-              <p>{subtitle}</p>
-              <div class="chip-row">{chip_markup}</div>
-            </div>
-          </div>
-        </section>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
 def format_mass(value: float | int | None) -> str:
     if value is None:
         return "—"
@@ -250,13 +223,13 @@ ready = "✅ Modelo listo" if model_registry.ready else "⚠️ Entrená localme
 # ──────────── Overview cinematográfico ────────────
 hero_col, metrics_col = st.columns([2.8, 1.2], gap="large")
 with hero_col:
-    tesla_hero(
+    TeslaHero(
         title="Rex-AI orquesta el reciclaje orbital y marciano",
         subtitle=(
             "Un loop autónomo que mezcla regolito MGS-1, polímeros EVA y residuos de carga "
             "para fabricar piezas listas para misión. El copiloto gestiona riesgos, "
-            "energía y trazabilidad sin perder contexto.")
-        ,
+            "energía y trazabilidad sin perder contexto."
+        ),
         chips=[
             "RandomForest multisalida",
             "Comparadores XGBoost / Tabular",
@@ -264,7 +237,7 @@ with hero_col:
             "Telemetría NASA · Crew safe",
         ],
         video_url="https://cdn.coverr.co/videos/coverr-into-the-blue-nebula-9071/1080p.mp4",
-    )
+    ).render()
 
 with metrics_col:
     st.markdown(
