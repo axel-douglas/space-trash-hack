@@ -6,51 +6,31 @@ import streamlit as st
 st.set_page_config(page_title="Objetivo", page_icon="🎯", layout="wide")
 
 from app.modules.io import load_targets
-from app.modules.ui_blocks import section
+from app.modules.luxe_components import target_configurator
+from app.modules.navigation import render_breadcrumbs, set_active_step
+from app.modules.ui_blocks import load_theme, section
+
+set_active_step("target")
+
+load_theme()
+
+render_breadcrumbs("target")
 
 st.title("2) Definir objetivo (TargetSpec)")
 
 presets = load_targets()
-names = [p["name"] for p in presets] if presets else []
-if not names:
+if not presets:
     st.error("No se encontraron presets de objetivos. Verifica `data/targets_presets.json`.")
     st.stop()
 
-colL, colR = st.columns([1,2])
+scenario_options = (
+    "Residence Renovations",
+    "Cosmic Celebrations",
+    "Daring Discoveries",
+)
 
-with colL:
-    choice = st.radio("¿Qué necesitás fabricar?", names, index=0)
+target = target_configurator(presets, scenario_options=scenario_options)
 
-    scenario = st.selectbox(
-        "Escenario del reto",
-        ["Residence Renovations","Cosmic Celebrations","Daring Discoveries"],
-        index=0
-    )
-
-    crew_low = st.toggle(
-        "Modo Crew-time Low (priorizar poco tiempo de tripulación)",
-        value=False,
-        help="Aumenta el peso del tiempo de tripulación en el score y filtra procesos más cortos."
-    )
-
-with colR:
-    preset = next(p for p in presets if p["name"]==choice)
-    section("Prioridades y límites", "Afiná requisitos del target y recursos máximos.")
-    rigidity = st.slider("Rigidez deseada", 0.0, 1.0, float(preset["rigidity"]), 0.05)
-    tight    = st.slider("Estanqueidad deseada", 0.0, 1.0, float(preset["tightness"]), 0.05)
-    max_w    = st.slider("Agua máx. (L)", 0.0, 3.0, float(preset["max_water_l"]), 0.1)
-    max_e    = st.slider("Energía máx. (kWh)", 0.0, 3.0, float(preset["max_energy_kwh"]), 0.1)
-    max_c    = st.slider("Tiempo tripulación máx. (min)", 5, 60, int(preset["max_crew_min"]), 1)
-
-st.session_state["target"] = {
-    "name": choice,
-    "rigidity": rigidity,
-    "tightness": tight,
-    "max_water_l": max_w,
-    "max_energy_kwh": max_e,
-    "max_crew_min": max_c,
-    "scenario": scenario,
-    "crew_time_low": crew_low
-}
-
-st.success("Objetivo listo. Abrí la página **3) Generador** para obtener recetas.")
+if target:
+    st.session_state["target"] = target
+    st.success("Objetivo listo. Abrí la página **3) Generador** para obtener recetas.")
