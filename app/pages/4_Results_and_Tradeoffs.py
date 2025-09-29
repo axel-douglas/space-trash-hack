@@ -5,7 +5,18 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+
 from app.modules.ui_blocks import load_theme, layout_block
+from app.modules.navigation import render_breadcrumbs, set_active_step
+from app.modules.ui_blocks import load_theme
+from app.modules.luxe_components import (
+    GlassCard,
+    GlassStack,
+    MetricGalaxy,
+    MetricItem,
+    TeslaHero,
+    ChipRow,
+)
 
 from app.modules.data_sources import (
     load_regolith_granulometry,
@@ -16,7 +27,11 @@ from app.modules.explain import score_breakdown
 
 st.set_page_config(page_title="Rex-AI • Resultados", page_icon="📊", layout="wide")
 
+set_active_step("results")
+
 load_theme()
+
+render_breadcrumbs("results")
 
 selected = st.session_state.get("selected")
 target = st.session_state.get("target")
@@ -58,6 +73,34 @@ st.markdown(
 )
 
 cards = []
+TeslaHero(
+    title=f"Resultado seleccionado · Score {score:.3f}",
+    subtitle=(
+        f"Proceso {cand['process_id']} · {cand['process_name']}. "
+        "La IA Rex-AI proporciona predicciones con trazabilidad NASA, bandas de confianza y comparación contra heurísticas originales."
+    ),
+    chips=[
+        {"label": f"Target: {target.get('name', '—')}", "tone": "accent"},
+        {"label": f"Crew priority: {'baja' if target.get('crew_time_low') else 'balance'}", "tone": "info"},
+    ],
+    icon="📊",
+    gradient="linear-gradient(135deg, rgba(20,184,166,0.22), rgba(14,165,233,0.08))",
+    glow="rgba(45,212,191,0.42)",
+    density="cozy",
+    parallax_icons=[
+        {"icon": "🧪", "top": "18%", "left": "78%", "size": "3.6rem", "speed": "21s"},
+        {"icon": "🛰️", "top": "60%", "left": "84%", "size": "4.2rem", "speed": "27s"},
+    ],
+).render()
+
+icon_map = {
+    "Rigidez": "🧱",
+    "Estanqueidad": "💧",
+    "Energía (kWh)": "⚡",
+    "Agua (L)": "🚰",
+    "Crew (min)": "🧑‍🚀",
+}
+metric_items: list[MetricItem] = []
 labels = [
     ("Rigidez", props.rigidity, heur.rigidity, ci.get("rigidez")),
     ("Estanqueidad", props.tightness, heur.tightness, ci.get("estanqueidad")),
@@ -79,6 +122,24 @@ for label, val_ml, val_h, interval in labels:
     )
 metrics_html = "<div class='metric-grid fade-in'>" + "".join(cards) + "</div>"
 st.markdown(metrics_html, unsafe_allow_html=True)
+    delta_value = val_ml - val_h
+    caption_bits = [f"Heurística: {val_h:.3f}"]
+    if interval:
+        try:
+            caption_bits.append(f"CI 95% [{interval[0]:.3f}, {interval[1]:.3f}]")
+        except (TypeError, ValueError, IndexError):
+            pass
+    metric_items.append(
+        MetricItem(
+            label=label,
+            value=f"{val_ml:.3f}",
+            delta=f"Δ {delta_value:+.3f}",
+            caption=" · ".join(caption_bits),
+            icon=icon_map.get(label),
+        )
+    )
+
+MetricGalaxy(metrics=metric_items, density="compact").render()
 if uncertainty:
     st.caption("Desviaciones modelo: " + ", ".join(f"{k} {v:.3f}" for k, v in uncertainty.items()))
 
@@ -121,30 +182,48 @@ st.altair_chart(chart_parts, use_container_width=True)
 with st.container():
     st.markdown("### 🛰️ Contexto y trazabilidad")
     context_data = _load_regolith_context()
-    st.markdown(
-        """
-        <div class="card">
-          <div class="chips">
-            <span>Seguridad: {safety}</span>
-            <span>Regolito MGS-1: {regolith}%</span>
-            <span>Entrenado: {trained}</span>
-            <span>Muestras: {samples}</span>
-          </div>
-          <p style="margin-top:12px;">Materiales: {materials}</p>
-          <p>Fuente IDs NASA: {ids}</p>
-          <p>Latent vector (autoencoder): {latent}</p>
-        </div>
-        """.format(
-            safety=f"{safety['level']} · {safety['detail']}",
-            regolith=int(regolith_pct * 100),
-            trained=metadata.get("trained_at", "—"),
-            samples=metadata.get("n_samples", "—"),
-            materials=", ".join(materials),
-            ids=", ".join(cand.get("source_ids", [])),
-            latent=", ".join(f"{v:.2f}" for v in latent[:8]) if latent else "—",
-        ),
-        unsafe_allow_html=True,
+    chips_html = ChipRow(
+        [
+            {
+                "label": f"Seguridad: {safety['level']} · {safety['detail']}",
+                "tone": "info",
+            },
+            {
+                "label": f"Regolito MGS-1: {int(regolith_pct * 100)}%",
+                "tone": "accent",
+            },
+            {
+                "label": f"Entrenado: {metadata.get('trained_at', '—')}",
+                "tone": "info",
+            },
+            {
+                "label": f"Muestras: {metadata.get('n_samples', '—')}",
+                "tone": "info",
+            },
+        ],
+        render=False,
     )
+    materials_text = ", ".join(materials) if materials else "—"
+    ids_text = ", ".join(cand.get("source_ids", [])) or "—"
+    latent_text = (
+        ", ".join(f"{v:.2f}" for v in latent[:8]) if latent else "—"
+    )
+    GlassStack(
+        cards=[
+            GlassCard(
+                title="Trazabilidad Rex-AI",
+                body=(
+                    f"{chips_html}"
+                    f"<p style='margin-top:12px;'>Materiales: {materials_text}</p>"
+                    f"<p>Fuente IDs NASA: {ids_text}</p>"
+                    f"<p>Latent vector (autoencoder): {latent_text}</p>"
+                ),
+                icon="🛰️",
+            )
+        ],
+        columns_min="22rem",
+        density="cozy",
+    ).render()
     src = getattr(props, "source", "heuristic")
     if src.startswith("rexai"):
         trained_at = metadata.get("trained_at", "?")

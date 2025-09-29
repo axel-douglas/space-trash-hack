@@ -3,6 +3,8 @@ import _bootstrap  # noqa: F401
 import streamlit as st
 import pandas as pd
 from app.modules.io import load_waste_df, save_waste_df
+from app.modules.navigation import set_active_step
+from app.modules.ui_blocks import load_theme
 
 _SAVE_SUCCESS_FLAG = "_inventory_save_success"
 
@@ -16,6 +18,10 @@ def _trigger_rerun() -> None:
 
 # ⚠️ Debe ser la PRIMERA llamada de Streamlit en la página
 st.set_page_config(page_title="Inventario", page_icon="🧱", layout="wide")
+
+set_active_step("inventory")
+
+load_theme()
 
 if st.session_state.pop(_SAVE_SUCCESS_FLAG, False):
     st.success("Inventario guardado.")
