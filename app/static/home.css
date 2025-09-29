@@ -1,0 +1,437 @@
+/* Home page specific layout and component styling */
+
+.main > div {
+  padding-top: 1.5rem;
+}
+
+section {
+  width: 100%;
+}
+
+.overview-block,
+.lab-block,
+.next-block {
+  margin-bottom: 4rem;
+}
+
+.reveal {
+  opacity: 0;
+  transform: translateY(42px);
+  transition: opacity 0.8s ease, transform 0.8s ease;
+}
+
+.reveal.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.hero {
+  position: relative;
+  border-radius: 28px;
+  padding: 36px 42px;
+  background: var(--hero-background);
+  border: 1px solid color-mix(in srgb, var(--hero-border) 32%, transparent);
+  color: var(--ink);
+  overflow: hidden;
+}
+
+.hero::after {
+  content: "";
+  position: absolute;
+  inset: -120px;
+  background: radial-gradient(circle at top right, color-mix(in srgb, var(--accent) 45%, transparent) 0%, transparent 55%);
+  pointer-events: none;
+}
+
+.hero h1 {
+  font-size: 2.25rem;
+  margin-bottom: 12px;
+  letter-spacing: 0.02em;
+}
+
+.hero p {
+  font-size: 1.04rem;
+  max-width: 720px;
+  color: var(--muted);
+}
+
+.tesla-hero {
+  position: relative;
+  border-radius: 28px;
+  overflow: hidden;
+  min-height: 360px;
+  display: flex;
+  align-items: flex-end;
+}
+
+.tesla-hero__bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: saturate(1.3) brightness(0.7);
+}
+
+.tesla-hero__veil {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.05) 10%, rgba(2, 6, 23, 0.85) 100%);
+}
+
+.tesla-hero__content {
+  position: relative;
+  padding: 48px;
+  max-width: 760px;
+}
+
+.tesla-hero__content h1 {
+  font-size: 2.6rem;
+  margin-bottom: 16px;
+  letter-spacing: 0.01em;
+}
+
+.tesla-hero__content p {
+  font-size: 1.05rem;
+  color: var(--muted);
+  margin-bottom: 18px;
+}
+
+.mission-grid {
+  display: grid;
+  gap: 18px;
+  margin-top: 26px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.mission-grid > div {
+  padding: 22px;
+  border-radius: 22px;
+  border: 1px solid var(--stroke);
+  background: color-mix(in srgb, var(--surface-panel) 88%, transparent);
+  color: var(--ink);
+}
+
+.mission-grid h3 {
+  margin-bottom: 8px;
+  font-size: 1.06rem;
+}
+
+.mission-grid p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.94rem;
+}
+
+.metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.metric {
+  border-radius: 18px;
+  padding: 18px 20px;
+  background: var(--metric-bg);
+  border: 1px solid var(--metric-border);
+  color: var(--ink);
+  box-shadow: var(--metric-shadow);
+  transition: border 300ms ease, box-shadow 300ms ease;
+}
+
+.metric.highlight {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.metric h5 {
+  margin: 0;
+  font-size: 0.92rem;
+  color: var(--muted);
+}
+
+.metric strong {
+  font-size: 1.4rem;
+  display: block;
+  margin-top: 6px;
+}
+
+.chip-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 18px;
+  flex-wrap: wrap;
+}
+
+.chip {
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  background: var(--chip-bg);
+  border: 1px solid var(--chip-border);
+  color: var(--chip-ink);
+  backdrop-filter: blur(12px);
+}
+
+.ghost-card {
+  margin-top: 38px;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.ghost-card > div {
+  padding: 20px 22px;
+  border-radius: 20px;
+  border: 1px solid var(--border-soft);
+  background: var(--surface-card);
+  color: var(--ink);
+}
+
+.ghost-card h3 {
+  margin-bottom: 6px;
+  font-size: 1.05rem;
+}
+
+.ghost-card p {
+  color: var(--muted);
+  font-size: 0.94rem;
+  margin: 0;
+}
+
+.stepper {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+  margin: 32px 0 18px;
+}
+
+.step {
+  border-radius: 18px;
+  border: 1px solid var(--step-border);
+  padding: 16px 18px;
+  background: var(--step-bg);
+}
+
+.step span {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  align-items: center;
+  justify-content: center;
+  background: var(--step-icon-bg);
+  color: var(--ink);
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.step h4 {
+  margin: 0 0 6px;
+}
+
+.step p {
+  color: var(--muted);
+  font-size: 0.9rem;
+  margin: 0;
+}
+
+.sticky-panel {
+  position: sticky;
+  top: 84px;
+  border-radius: 22px;
+  border: 1px solid color-mix(in srgb, var(--border-soft) 72%, transparent);
+  padding: 24px 26px;
+  background: color-mix(in srgb, var(--surface-panel) 92%, transparent);
+  backdrop-filter: blur(18px);
+}
+
+.sticky-panel h3 {
+  margin-bottom: 18px;
+}
+
+.sticky-panel .metric {
+  border-radius: 16px;
+  padding: 14px 16px;
+  background: color-mix(in srgb, var(--surface-card) 85%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-soft) 60%, transparent);
+  margin-bottom: 14px;
+}
+
+.sticky-panel .metric:last-child {
+  margin-bottom: 0;
+}
+
+.sticky-panel .metric h5 {
+  margin: 0;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: color-mix(in srgb, var(--muted) 90%, transparent);
+}
+
+.sticky-panel .metric strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 1.3rem;
+}
+
+.sticky-panel .metric p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.section-title span.icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  font-size: 1.1rem;
+}
+
+.lab-grid {
+  display: grid;
+  gap: 24px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.carousel {
+  display: flex;
+  gap: 16px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  scroll-snap-type: x mandatory;
+}
+
+.carousel::-webkit-scrollbar {
+  height: 6px;
+}
+
+.carousel::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 999px;
+}
+
+.carousel-card {
+  min-width: 240px;
+  scroll-snap-align: start;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--border-soft) 64%, transparent);
+  padding: 18px;
+  background: color-mix(in srgb, var(--surface-card) 82%, transparent);
+}
+
+.carousel-card h4 {
+  margin: 0 0 6px;
+  font-size: 1.02rem;
+}
+
+.carousel-card .value {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.carousel-card p {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.drawer {
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--border-soft) 70%, transparent);
+  padding: 18px 20px;
+  background: color-mix(in srgb, var(--surface-panel) 88%, transparent);
+  margin-top: 16px;
+}
+
+.drawer h4 {
+  margin-top: 0;
+}
+
+.drawer ul {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--muted);
+}
+
+.timeline {
+  margin-top: 18px;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  padding-left: 18px;
+}
+
+.timeline li {
+  margin-bottom: 14px;
+  color: var(--muted);
+}
+
+.cta-grid {
+  display: grid;
+  gap: 22px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.cta-card {
+  border-radius: 22px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  padding: 22px 24px;
+  background: linear-gradient(160deg, color-mix(in srgb, var(--accent) 16%, transparent), color-mix(in srgb, var(--surface-panel) 78%, transparent));
+  position: relative;
+}
+
+.cta-card strong {
+  display: block;
+  font-size: 1.18rem;
+  margin-bottom: 8px;
+}
+
+.cta-card p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.cta-card button {
+  margin-top: 18px;
+  width: 100%;
+}
+
+.cta-card .icon {
+  position: absolute;
+  top: 16px;
+  right: 18px;
+  font-size: 1.4rem;
+  opacity: 0.8;
+}
+
+.carousel,
+.chip-row {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--accent) 45%, transparent) transparent;
+}
+
+@media (max-width: 992px) {
+  .tesla-hero__content {
+    padding: 32px 24px;
+  }
+
+  .sticky-panel {
+    position: relative;
+    top: auto;
+    margin-top: 24px;
+  }
+}
