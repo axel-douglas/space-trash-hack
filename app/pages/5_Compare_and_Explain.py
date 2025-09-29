@@ -65,13 +65,11 @@ def _generate_storytelling(
 
 # ⚠️ Debe ser la PRIMERA llamada de Streamlit en la página
 st.set_page_config(page_title="Comparar & Explicar", page_icon="🧪", layout="wide")
-
 set_active_step("compare")
 
 load_theme()
 
 render_breadcrumbs("compare")
-
 # ======== estado requerido ========
 cands  = st.session_state.get("candidates", [])
 target = st.session_state.get("target", None)

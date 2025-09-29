@@ -13,6 +13,9 @@ from app.modules.ml_models import get_model_registry
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.process_planner import choose_process
 from app.modules.safety import check_safety, safety_badge
+
+st.set_page_config(page_title="Rex-AI • Generador", page_icon="🤖", layout="wide")
+
 from app.modules.ui_blocks import load_theme, layout_block
 from app.modules.ui_blocks import load_theme
 from app.modules.luxe_components import TeslaHero, ChipRow

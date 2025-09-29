@@ -3,6 +3,9 @@ import _bootstrap  # noqa: F401
 
 # ⚠️ Debe ser la PRIMERA llamada de Streamlit
 import streamlit as st
+
+st.set_page_config(page_title="Capacity Simulator", page_icon="🧮", layout="wide")
+
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.ui_blocks import load_theme
 

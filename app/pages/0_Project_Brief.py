@@ -6,7 +6,6 @@ from pathlib import Path
 
 from app.modules.navigation import set_active_step
 from app.modules.ui_blocks import load_theme
-
 repo_root = Path(__file__).resolve().parents[2]
 
 # ⚠️ PRIMER comando Streamlit:
@@ -15,7 +14,6 @@ st.set_page_config(page_title="REX-AI Mars — Brief", page_icon="🛰️", layo
 set_active_step("brief")
 
 load_theme()
-
 # ---------- Header ----------
 logo_svg = repo_root / "app" / "static" / "logo_rexai.svg"
 cols = st.columns([0.15, 0.85])

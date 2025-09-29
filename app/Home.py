@@ -30,7 +30,6 @@ st.set_page_config(
 set_active_step("brief")
 
 load_theme()
-
 model_registry = get_model_registry()
 
 
