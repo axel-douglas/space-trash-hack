@@ -423,22 +423,11 @@ with cta_col1:
         ],
         columns_min="18rem",
     ).render()
-    if st.button("📤 Exportar", use_container_width=True):
-    st.markdown(
-        """
-        <div class="cta-grid">
-          <div class="cta-card reveal">
-            <span class="icon">📤</span>
-            <strong>Exportar receta y telemetría</strong>
-            <p>Descargá reportes con Sankey, contribuciones y feedback para seguimiento.</p>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+
     export_state_key = "home_cta_export_state"
     if st.session_state.get(export_state_key) == "loading":
         st.session_state[export_state_key] = "success"
+
     export_state = st.session_state.setdefault(export_state_key, "idle")
     if futuristic_button(
         "Exportar\nreceta y telemetría",
@@ -451,6 +440,7 @@ with cta_col1:
     ):
         st.session_state[export_state_key] = "loading"
         st.switch_page("pages/4_Results_and_Tradeoffs.py")
+
 with cta_col2:
     ActionDeck(
         cards=[
@@ -462,22 +452,11 @@ with cta_col2:
         ],
         columns_min="18rem",
     ).render()
-    if st.button("🧮 Simular escenarios", use_container_width=True):
-    st.markdown(
-        """
-        <div class="cta-grid">
-          <div class="cta-card reveal">
-            <span class="icon">🧮</span>
-            <strong>Simular escenarios</strong>
-            <p>Prueba configuraciones de energía, crew y materiales para stress tests.</p>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+
     sim_state_key = "home_cta_simulation_state"
     if st.session_state.get(sim_state_key) == "loading":
         st.session_state[sim_state_key] = "success"
+
     sim_state = st.session_state.setdefault(sim_state_key, "idle")
     if futuristic_button(
         "Simular\nescenarios",

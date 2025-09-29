@@ -8,7 +8,6 @@ import streamlit as st
 
 from app.modules.ui_blocks import load_theme, layout_block
 from app.modules.navigation import render_breadcrumbs, set_active_step
-from app.modules.ui_blocks import load_theme
 from app.modules.luxe_components import (
     GlassCard,
     GlassStack,
@@ -112,6 +111,7 @@ for label, val_ml, val_h, interval in labels:
     ci_html = ""
     if interval:
         ci_html = f"<div class='delta'>CI 95%: [{interval[0]:.3f}, {interval[1]:.3f}]</div>"
+
     cards.append(
         f"<div class='stat-card layer-shadow'>"
         f"<span>{label}</span>"
@@ -120,8 +120,7 @@ for label, val_ml, val_h, interval in labels:
         f"{ci_html}"
         "</div>"
     )
-metrics_html = "<div class='metric-grid fade-in'>" + "".join(cards) + "</div>"
-st.markdown(metrics_html, unsafe_allow_html=True)
+
     delta_value = val_ml - val_h
     caption_bits = [f"Heurística: {val_h:.3f}"]
     if interval:
@@ -129,6 +128,7 @@ st.markdown(metrics_html, unsafe_allow_html=True)
             caption_bits.append(f"CI 95% [{interval[0]:.3f}, {interval[1]:.3f}]")
         except (TypeError, ValueError, IndexError):
             pass
+
     metric_items.append(
         MetricItem(
             label=label,
@@ -138,6 +138,9 @@ st.markdown(metrics_html, unsafe_allow_html=True)
             icon=icon_map.get(label),
         )
     )
+
+metrics_html = "<div class='metric-grid fade-in'>" + "".join(cards) + "</div>"
+st.markdown(metrics_html, unsafe_allow_html=True)
 
 MetricGalaxy(metrics=metric_items, density="compact").render()
 if uncertainty:
