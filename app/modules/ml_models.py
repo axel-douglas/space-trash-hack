@@ -1011,7 +1011,32 @@ class _Autoencoder(nn.Module if HAS_TORCH else object):
         return self.decoder(latent)
 
 
-# Instancia global usada por la app
-MODEL_REGISTRY = ModelRegistry()
+@st.cache_resource(show_spinner=False)
+def get_model_registry() -> "ModelRegistry":
+    """Return a cached instance of :class:`ModelRegistry` for the Streamlit app."""
 
-__all__ = ["MODEL_REGISTRY", "ModelRegistry", "PredictionResult"]
+    return ModelRegistry()
+
+
+class _ModelRegistryProxy:
+    """Pequeño proxy para compatibilidad con el import histórico ``MODEL_REGISTRY``."""
+
+    def __call__(self) -> "ModelRegistry":
+        return get_model_registry()
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(get_model_registry(), item)
+
+    def __repr__(self) -> str:  # pragma: no cover - solo para debug
+        registry = None
+        try:
+            registry = get_model_registry()
+        except Exception:
+            return "<ModelRegistryProxy unavailable>"
+        return f"<ModelRegistryProxy ready={getattr(registry, 'ready', False)!r}>"
+
+
+# Instancia perezosa usada por la app (compatibilidad retro)
+MODEL_REGISTRY = _ModelRegistryProxy()
+
+__all__ = ["MODEL_REGISTRY", "ModelRegistry", "PredictionResult", "get_model_registry"]

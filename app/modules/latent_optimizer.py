@@ -18,7 +18,7 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Sequence
 import numpy as np
 import pandas as pd
 
-from app.modules.ml_models import MODEL_REGISTRY, TARGET_COLUMNS, ModelRegistry
+from app.modules.ml_models import TARGET_COLUMNS, ModelRegistry, get_model_registry
 
 
 ScoreFunction = Callable[[Mapping[str, float]], float]
@@ -47,7 +47,12 @@ class LatentSpaceExplorer:
     """High-level API to interact with the Rex-AI autoencoder."""
 
     def __init__(self, registry: ModelRegistry | None = None) -> None:
-        self.registry = registry or MODEL_REGISTRY
+        if registry is None:
+            try:
+                registry = get_model_registry()
+            except Exception:  # pragma: no cover - cache unavailable in minimal envs
+                registry = None
+        self.registry = registry
 
     # ------------------------------------------------------------------
     # Availability & preprocessing helpers

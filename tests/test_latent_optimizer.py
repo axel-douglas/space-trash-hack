@@ -42,7 +42,7 @@ class DummyRegistry:
 def test_available_without_autoencoder(monkeypatch: pytest.MonkeyPatch) -> None:
     explorer = latent_optimizer.LatentSpaceExplorer(registry=None)
     # Force the global registry to None to simulate missing artefact
-    monkeypatch.setattr(latent_optimizer, "MODEL_REGISTRY", None)
+    monkeypatch.setattr(latent_optimizer, "get_model_registry", lambda: None)
     explorer.registry = None
     assert explorer.available() is False
 

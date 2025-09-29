@@ -145,6 +145,18 @@ con la nueva fecha (`trained_at`) y el label de procedencia (`trained_on`, por
 ejemplo `hil_v1` o `hybrid_v2`). La pantalla principal de la app refleja la
 última fecha de reentrenamiento y la mezcla utilizada.
 
+Como la instancia de `ModelRegistry` queda cacheada vía `st.cache_resource`,
+tras copiar artefactos nuevos sin reiniciar la app recordá invalidar esa caché.
+Podés exponer un botón admin en Streamlit que llame a
+`app.modules.ml_models.get_model_registry().clear()` o ejecutar manualmente:
+
+```bash
+python -c "from app.modules.ml_models import get_model_registry; get_model_registry.clear()"
+```
+
+Luego de limpiar la caché, refrescá la página para que la UI vuelva a cargar la
+metadata y los pipelines recién entrenados.
+
 > Nota: la optimización bayesiana con Ax/BoTorch es opcional. El entorno Streamlit
 > detecta automáticamente si `ax-platform` y `botorch` están instalados; en caso
 > contrario utiliza el optimizador heurístico integrado. Para habilitarla basta con
