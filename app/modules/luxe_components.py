@@ -371,6 +371,24 @@ _LUXE_COMPONENT_CSS = """
   animation: heroGlow 14s ease-in-out infinite;
 }
 
+.luxe-hero__video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 0;
+  filter: saturate(1.25) brightness(0.65);
+}
+
+.luxe-hero__veil {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.12) 10%, rgba(2, 6, 23, 0.88) 100%);
+  z-index: 1;
+  pointer-events: none;
+}
+
 .luxe-hero::after {
   content: "";
   position: absolute;
@@ -384,7 +402,7 @@ _LUXE_COMPONENT_CSS = """
 
 .luxe-hero__content {
   position: relative;
-  z-index: 1;
+  z-index: 2;
   max-width: 520px;
 }
 
@@ -413,6 +431,8 @@ _LUXE_COMPONENT_CSS = """
   opacity: 0.5;
   filter: drop-shadow(0 18px 25px rgba(15, 23, 42, 0.45));
   animation: parallaxDrift var(--layer-speed, 18s) ease-in-out infinite;
+  z-index: 1;
+  pointer-events: none;
 }
 
 .luxe-chip-row {
@@ -1247,6 +1267,7 @@ def ChipRow(
 class TeslaHero:
     title: str
     subtitle: str
+    video_url: str | None = None
     chips: Sequence[str | Mapping[str, str]] = field(default_factory=list)
     icon: str | None = None
     gradient: str | None = None
@@ -1284,10 +1305,20 @@ class TeslaHero:
 
         chips_html = ChipRow(self.chips, render=False) if self.chips else ""
         icon_html = f"<div class='luxe-hero__icon'>{self.icon}</div>" if self.icon else ""
+        video_markup = ""
+        if self.video_url:
+            video_markup = (
+                f"<video class='luxe-hero__video' autoplay muted loop playsinline>"
+                f"<source src='{self.video_url}' type='video/mp4' />"
+                "</video>"
+                "<div class='luxe-hero__veil'></div>"
+            )
+        layers_html = "".join(layers)
 
         html = f"""
         <div class='luxe-hero' style='{_merge_styles(hero_style, {})}'>
-          {''.join(layers)}
+          {video_markup}
+          {layers_html}
           <div class='luxe-hero__content'>
             {icon_html}
             <h1>{self.title}</h1>
