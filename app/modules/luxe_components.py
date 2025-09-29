@@ -17,6 +17,8 @@ import streamlit as st
 
 
 _CSS_KEY = "__rexai_luxe_css__"
+_TIMELINE_HOLOGRAM_KEY = "__timeline_hologram_assets__"
+_FRAMER_MOTION_SRC = "https://cdn.jsdelivr.net/npm/framer-motion@11.0.5/dist/framer-motion.umd.js"
 
 
 # ---------------------------------------------------------------------------
@@ -539,6 +541,219 @@ _LUXE_COMPONENT_CSS = """
   color: var(--luxe-muted);
 }
 
+.timeline-hologram {
+  position: relative;
+  display: grid;
+  gap: 1.2rem;
+  padding: clamp(1.2rem, 2.5vw, 1.6rem);
+  border-radius: 24px;
+  border: 1px solid color-mix(in srgb, var(--luxe-border) 82%, transparent);
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--luxe-surface) 92%, transparent),
+    color-mix(in srgb, var(--luxe-accent) 12%, transparent)
+  );
+  color: var(--luxe-ink);
+  box-shadow: 0 28px 60px rgba(8, 15, 35, 0.45);
+  overflow: hidden;
+}
+
+.timeline-hologram::after {
+  content: "";
+  position: absolute;
+  inset: -30% -40% 40% 20%;
+  background: radial-gradient(circle at top, rgba(96, 165, 250, 0.28), transparent 65%);
+  opacity: 0.45;
+  pointer-events: none;
+  filter: blur(48px);
+}
+
+.timeline-hologram__header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  position: relative;
+  z-index: 1;
+}
+
+.timeline-hologram__priority {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--luxe-accent) 40%, transparent);
+  background: color-mix(in srgb, var(--luxe-accent) 12%, transparent);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--luxe-ink) 92%, transparent);
+}
+
+.timeline-hologram__priority strong {
+  font-size: 0.84rem;
+}
+
+.timeline-hologram__priority em {
+  font-style: normal;
+  opacity: 0.82;
+}
+
+.timeline-hologram__caption {
+  flex: 1 1 240px;
+  margin: 0;
+  color: color-mix(in srgb, var(--luxe-muted) 92%, transparent);
+  font-size: 0.92rem;
+}
+
+.timeline-hologram__list {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: clamp(0.8rem, 2vw, 1rem);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.timeline-hologram__item {
+  position: relative;
+  border-radius: 20px;
+  border: 1px solid color-mix(in srgb, var(--luxe-border) 78%, transparent);
+  background: color-mix(in srgb, var(--luxe-surface) 92%, transparent);
+  padding: clamp(0.95rem, 2.4vw, 1.2rem);
+  display: grid;
+  gap: 0.55rem;
+  transition: border 220ms ease, box-shadow 220ms ease, transform 220ms ease;
+  outline: none;
+}
+
+.timeline-hologram__item[data-active="true"] {
+  border-color: color-mix(in srgb, var(--luxe-accent) 65%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--luxe-accent) 22%, transparent);
+}
+
+.timeline-hologram__item:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--luxe-accent) 70%, transparent);
+  outline-offset: 2px;
+}
+
+.timeline-hologram__head {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.timeline-hologram__icon {
+  font-size: 1.4rem;
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--luxe-accent) 22%, transparent);
+  color: var(--luxe-ink);
+  box-shadow: 0 12px 22px rgba(96, 165, 250, 0.3);
+}
+
+.timeline-hologram__title {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.timeline-hologram__title strong {
+  font-size: 1.05rem;
+}
+
+.timeline-hologram__title span {
+  font-size: 0.88rem;
+  color: color-mix(in srgb, var(--luxe-muted) 90%, transparent);
+}
+
+.timeline-hologram__score {
+  font-family: "Space Grotesk", "Inter", sans-serif;
+  font-size: 1.18rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.timeline-hologram__badges {
+  display: inline-flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.timeline-hologram__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--luxe-border) 75%, transparent);
+  background: color-mix(in srgb, var(--luxe-surface) 88%, transparent);
+  font-size: 0.74rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.timeline-hologram__metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.timeline-hologram__metric {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.32rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--luxe-border) 72%, transparent);
+  background: color-mix(in srgb, var(--luxe-surface) 90%, transparent);
+  font-size: 0.82rem;
+  color: color-mix(in srgb, var(--luxe-muted) 95%, transparent);
+}
+
+.timeline-hologram__metric[data-tone="warning"] {
+  border-color: color-mix(in srgb, var(--luxe-warning) 55%, transparent);
+  background: color-mix(in srgb, var(--luxe-warning) 12%, transparent);
+  color: color-mix(in srgb, var(--luxe-warning) 90%, transparent);
+}
+
+.timeline-hologram__metric[data-tone="info"] {
+  border-color: color-mix(in srgb, var(--luxe-accent) 55%, transparent);
+  background: color-mix(in srgb, var(--luxe-accent) 15%, transparent);
+  color: color-mix(in srgb, var(--luxe-accent) 88%, transparent);
+}
+
+.timeline-hologram__metric[data-tone="positive"] {
+  border-color: color-mix(in srgb, var(--luxe-positive) 50%, transparent);
+  background: color-mix(in srgb, var(--luxe-positive) 14%, transparent);
+  color: color-mix(in srgb, var(--luxe-positive) 92%, transparent);
+}
+
+.timeline-hologram__metric strong {
+  font-size: 0.88rem;
+  color: color-mix(in srgb, var(--luxe-ink) 95%, transparent);
+}
+
+.timeline-hologram[data-enhanced="true"] .timeline-hologram__item {
+  will-change: transform, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .timeline-hologram__item {
+    transition: none;
+  }
+}
+
 .luxe-mission-panel {
   position: sticky;
   top: 84px;
@@ -776,6 +991,83 @@ _LUXE_COMPONENT_CSS = """
   color: rgba(226, 232, 240, 0.64);
 }
 </style>
+"""
+
+
+_TIMELINE_HOLOGRAM_SCRIPT = f"""
+<script>
+(function() {{
+  if (window.__timelineHologramEnhancer) {{
+    return;
+  }}
+
+  const prefersReduced = () => (
+    window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  );
+
+  const ensureMotion = () => {{
+    if (window.Motion && typeof window.Motion.animate === 'function') {{
+      return Promise.resolve(window.Motion);
+    }}
+    return new Promise((resolve, reject) => {{
+      const script = document.createElement('script');
+      script.src = '{_FRAMER_MOTION_SRC}';
+      script.async = true;
+      script.onload = () => resolve(window.Motion || null);
+      script.onerror = reject;
+      document.head.appendChild(script);
+    }});
+  }};
+
+  const markEnhanced = (section) => section.setAttribute('data-enhanced', 'true');
+
+  const enhance = () => {{
+    const sections = Array.from(
+      document.querySelectorAll('.timeline-hologram[data-enhanced="false"]')
+    );
+    if (!sections.length) {{
+      return;
+    }}
+
+    if (prefersReduced()) {{
+      sections.forEach(markEnhanced);
+      return;
+    }}
+
+    ensureMotion()
+      .then((Motion) => {{
+        if (!Motion || typeof Motion.animate !== 'function') {{
+          sections.forEach(markEnhanced);
+          return;
+        }}
+        const {{ animate, stagger }} = Motion;
+        sections.forEach((section) => {{
+          const items = Array.from(section.querySelectorAll('.timeline-hologram__item'));
+          if (!items.length) {{
+            markEnhanced(section);
+            return;
+          }}
+          markEnhanced(section);
+          animate(
+            items,
+            {{ opacity: [0, 1], transform: ['translateY(24px)', 'translateY(0px)'] }},
+            {{ duration: 0.65, delay: stagger(0.08), ease: 'ease-out' }}
+          );
+        }});
+      }})
+      .catch(() => sections.forEach(markEnhanced));
+  }};
+
+  const observer = new MutationObserver(() => enhance());
+  if (document.body) {{
+    observer.observe(document.body, {{ childList: true, subtree: true }});
+  }}
+
+  document.addEventListener('DOMContentLoaded', enhance);
+  window.addEventListener('load', enhance);
+  window.__timelineHologramEnhancer = {{ enhance }};
+}})();
+</script>
 """
 
 _RANKING_COCKPIT_CSS = """
@@ -1072,6 +1364,16 @@ def _load_css() -> None:
     st.session_state[_CSS_KEY] = True
 
 
+def _inject_timeline_hologram_assets() -> None:
+    """Load the motion enhancer for the TimelineHologram component once."""
+
+    if st.session_state.get(_TIMELINE_HOLOGRAM_KEY):
+        return
+
+    st.markdown(_TIMELINE_HOLOGRAM_SCRIPT, unsafe_allow_html=True)
+    st.session_state[_TIMELINE_HOLOGRAM_KEY] = True
+
+
 # ---------------------------------------------------------------------------
 # Basic helpers
 # ---------------------------------------------------------------------------
@@ -1189,6 +1491,31 @@ class TimelineMilestone:
     label: str
     description: str
     icon: str = "🛰️"
+
+
+@dataclass(frozen=True)
+class TimelineHologramMetric:
+    """Small badge-like metric shown inside the TimelineHologram component."""
+
+    label: str
+    value: str
+    tone: Literal["neutral", "info", "warning", "positive"] = "neutral"
+    sr_label: str | None = None
+
+
+@dataclass
+class TimelineHologramItem:
+    """Element displayed in the hologram timeline with optional accent badges."""
+
+    title: str
+    subtitle: str
+    score: float | None = None
+    icon: str = "🛰️"
+    rank: int | None = None
+    badges: Sequence[str] = field(default_factory=tuple)
+    metrics: Sequence[TimelineHologramMetric] = field(default_factory=tuple)
+    emphasis: bool = False
+    aria_label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1346,6 +1673,139 @@ def orbital_timeline(milestones: Iterable[TimelineMilestone]) -> None:
         f"<div class='orbital-track'>{''.join(nodes)}</div></div>",
         unsafe_allow_html=True,
     )
+
+
+@dataclass
+class TimelineHologram:
+    """Composable holographic timeline with motion and accessibility baked in."""
+
+    items: Sequence[TimelineHologramItem]
+    priority_label: str | None = None
+    priority_value: float | None = None
+    priority_detail: str | None = None
+    caption: str | None = None
+
+    def render(self) -> None:
+        if not self.items:
+            st.info("No hay elementos para mostrar en la timeline holográfica.")
+            return
+
+        _load_css()
+        _inject_timeline_hologram_assets()
+        st.markdown(self._build_html(), unsafe_allow_html=True)
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+    def _build_html(self) -> str:
+        container_attrs = [
+            "class='timeline-hologram'",
+            "data-enhanced='false'",
+            "aria-live='polite'",
+        ]
+        html: list[str] = [f"<section {' '.join(container_attrs)}>"]
+
+        header_html = self._build_header()
+        if header_html:
+            html.append(header_html)
+
+        html.append("<ol class='timeline-hologram__list' role='list'>")
+        for idx, item in enumerate(self.items):
+            html.append(self._render_item(idx, item))
+        html.append("</ol></section>")
+        return "".join(html)
+
+    def _build_header(self) -> str:
+        chunks: list[str] = []
+
+        pill_html = ""
+        if self.priority_label and self.priority_value is not None:
+            clamped = max(0.0, min(1.0, float(self.priority_value)))
+            rigidez_pct = clamped * 100
+            agua_pct = (1.0 - clamped) * 100
+            detail_text = f" {self.priority_detail}" if self.priority_detail else ""
+            aria_text = (
+                f"{self.priority_label}: {rigidez_pct:.0f}% rigidez y {agua_pct:.0f}% agua.{detail_text}"
+            )
+            pill_html = (
+                "<span class='timeline-hologram__priority' "
+                f"aria-label='{escape(aria_text)}'>"
+                f"<strong>{escape(self.priority_label)}</strong>"
+                f"<em>{rigidez_pct:.0f}% R · {agua_pct:.0f}% A</em>"
+                "</span>"
+            )
+
+        caption_html = ""
+        if self.caption:
+            caption_html = f"<p class='timeline-hologram__caption'>{escape(self.caption)}</p>"
+
+        if pill_html or caption_html:
+            chunks.append("<header class='timeline-hologram__header'>")
+            if pill_html:
+                chunks.append(pill_html)
+            if caption_html:
+                chunks.append(caption_html)
+            chunks.append("</header>")
+
+        return "".join(chunks)
+
+    def _render_item(self, index: int, item: TimelineHologramItem) -> str:
+        rank = item.rank if item.rank is not None else index + 1
+        title = escape(item.title)
+        subtitle = escape(item.subtitle)
+        icon = escape(item.icon)
+        aria_label = item.aria_label or f"Opción {rank:02d}: {item.title}. {item.subtitle}."
+        aria_label = escape(aria_label)
+
+        active = item.emphasis or index == 0
+        aria_current = " aria-current='true'" if active else ""
+        badges_html = "".join(
+            f"<span class='timeline-hologram__badge'>{escape(badge)}</span>" for badge in item.badges
+        )
+
+        metrics_html = "".join(
+            self._render_metric(metric)
+            for metric in item.metrics
+        )
+
+        score_html = ""
+        if item.score is not None:
+            score_html = f"<div class='timeline-hologram__score'>{float(item.score):.3f}</div>"
+
+        item_html = [
+            "<li class='timeline-hologram__item' role='listitem' tabindex='0'",
+            f" data-active={'true' if active else 'false'}",
+            f" aria-label='{aria_label}'{aria_current}>",
+            "<div class='timeline-hologram__head'>",
+            f"<span class='timeline-hologram__icon'>{icon}</span>",
+            "<div class='timeline-hologram__title'>",
+            f"<strong>#{rank:02d} {title}</strong>",
+            f"<span>{subtitle}</span>",
+            "</div>",
+            score_html,
+            "</div>",
+        ]
+
+        if badges_html:
+            item_html.append(f"<div class='timeline-hologram__badges'>{badges_html}</div>")
+
+        if metrics_html:
+            item_html.append(f"<div class='timeline-hologram__metrics'>{metrics_html}</div>")
+
+        item_html.append("</li>")
+        return "".join(item_html)
+
+    def _render_metric(self, metric: TimelineHologramMetric) -> str:
+        tone = metric.tone if metric.tone in {"neutral", "info", "warning", "positive"} else "neutral"
+        aria_attr = ""
+        if metric.sr_label:
+            aria_attr = f" aria-label='{escape(metric.sr_label)}'"
+        return (
+            f"<span class='timeline-hologram__metric' data-tone='{tone}'{aria_attr}>"
+            f"<strong>{escape(metric.label)}</strong>"
+            f"<span>{escape(metric.value)}</span>"
+            "</span>"
+        )
 
 
 def guided_demo(
@@ -2826,6 +3286,9 @@ class GlassStack:
 __all__ = [
     "BriefingCard",
     "TimelineMilestone",
+    "TimelineHologram",
+    "TimelineHologramItem",
+    "TimelineHologramMetric",
     "HeroFlowStage",
     "TargetPresetMeta",
     "mission_briefing",
