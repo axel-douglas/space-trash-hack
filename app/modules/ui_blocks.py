@@ -5,7 +5,7 @@ import json
 from contextlib import contextmanager
 from html import escape
 from pathlib import Path
-from typing import Any, Generator, Iterator, Literal, Optional
+from typing import Any, Generator, Iterable, Iterator, Literal, Optional
 from uuid import uuid4
 
 import streamlit as st
@@ -54,6 +54,10 @@ def _tokens_path() -> Path:
     return _static_path("design_tokens.css")
 
 
+def _layout_path() -> Path:
+    return _static_path("layout.css")
+
+
 def _ensure_defaults() -> None:
     st.session_state.setdefault(_THEME_STATE_KEY, "dark")
     st.session_state.setdefault(_FONT_STATE_KEY, "base")
@@ -62,7 +66,7 @@ def _ensure_defaults() -> None:
 
 def _read_css_bundle() -> str:
     css_parts: list[str] = []
-    for path in (_tokens_path(), _theme_path()):
+    for path in (_tokens_path(), _theme_path(), _layout_path()):
         try:
             css_parts.append(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -411,3 +415,49 @@ def layout_block(
         yield inner
     finally:
         target.markdown("</div>", unsafe_allow_html=True)
+
+
+@contextmanager
+def layout_stack(*, parent: DeltaGenerator | None = None) -> Generator[DeltaGenerator, None, None]:
+    """Convenience wrapper for a vertical flex stack."""
+
+    with layout_block("layout-stack", parent=parent) as block:
+        yield block
+
+
+@contextmanager
+def pane_block(*, parent: DeltaGenerator | None = None) -> Generator[DeltaGenerator, None, None]:
+    """Render content inside a frosted pane surface."""
+
+    with layout_block("pane", parent=parent) as block:
+        yield block
+
+
+def chipline(labels: Iterable[str], *, parent: DeltaGenerator | None = None) -> None:
+    """Render a list of chips using the shared chipline styles."""
+
+    if not labels:
+        return
+
+    pills = "".join(f'<span>{escape(label)}</span>' for label in labels)
+    target = parent if parent is not None else st
+    target.markdown(f"<div class=\"chipline\">{pills}</div>", unsafe_allow_html=True)
+
+
+def badge_group(labels: Iterable[str], *, parent: DeltaGenerator | None = None) -> None:
+    """Render pill badges inside the shared badge group wrapper."""
+
+    items = [f'<span class="badge">{escape(label)}</span>' for label in labels]
+    if not items:
+        return
+
+    html = f"<div class=\"badge-group\">{''.join(items)}</div>"
+    target = parent if parent is not None else st
+    target.markdown(html, unsafe_allow_html=True)
+
+
+def micro_divider(*, parent: DeltaGenerator | None = None) -> None:
+    """Insert a subtle divider matching the Rex-AI style guide."""
+
+    target = parent if parent is not None else st
+    target.markdown('<div class="hr-micro"></div>', unsafe_allow_html=True)
