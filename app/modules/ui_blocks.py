@@ -18,9 +18,11 @@ from . import luxe_components as luxe
 
 
 _THEME_HASH_KEY = "__rexai_theme_hash__"
+_INTERACTIONS_HASH_KEY = "__rexai_interactions_hash__"
 _THEME_STATE_KEY = "hud_theme"
 _FONT_STATE_KEY = "hud_font"
 _COLORBLIND_STATE_KEY = "hud_colorblind"
+_REVEAL_FLAG_KEY = "__rexai_reveal_flag__"
 
 _THEME_LABELS = {
     "dark": "Oscuro",
@@ -91,7 +93,20 @@ def _inject_css_once() -> None:
     st.session_state[_THEME_HASH_KEY] = css_hash
 
 
+def _inject_interactions_script_once() -> None:
+    if not _INTERACTIONS_JS:
+        return
+
+    script_hash = hashlib.sha256(_INTERACTIONS_JS.encode("utf-8")).hexdigest()
+    if st.session_state.get(_INTERACTIONS_HASH_KEY) == script_hash:
+        return
+
+    st.markdown(f"<script>{_INTERACTIONS_JS}</script>", unsafe_allow_html=True)
+    st.session_state[_INTERACTIONS_HASH_KEY] = script_hash
+
+
 _MICRO_JS = _bootstrap.load_microinteractions_script()
+_INTERACTIONS_JS = _bootstrap.load_interactions_script()
 
 _BUTTON_STYLES = """
 .rexai-fx-wrapper{position:relative;display:flex;flex-direction:column;gap:6px;}
@@ -127,10 +142,28 @@ def load_theme(*, show_hud: bool = True) -> None:
 
     _ensure_defaults()
     _inject_css_once()
+    _inject_interactions_script_once()
     _apply_runtime_theme()
 
     if show_hud:
         _render_hud()
+
+
+def enable_reveal_animation() -> None:
+    """Signal the front-end to activate scroll-based reveal animations."""
+
+    if st.session_state.get(_THEME_HASH_KEY):
+        load_theme(show_hud=False)
+    else:
+        load_theme()
+    if st.session_state.get(_REVEAL_FLAG_KEY):
+        return
+
+    st.markdown(
+        '<span data-rexai-interactions="reveal" style="display:none"></span>',
+        unsafe_allow_html=True,
+    )
+    st.session_state[_REVEAL_FLAG_KEY] = True
 
 
 def inject_css(show_hud: bool = False) -> None:
