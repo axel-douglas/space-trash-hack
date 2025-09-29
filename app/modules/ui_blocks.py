@@ -1,34 +1,21 @@
-
 from __future__ import annotations
 
 import hashlib
-
-from __future__ import annotations
-
-from html import escape
 import json
+from contextlib import contextmanager
+from html import escape
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Generator, Iterator, Literal, Optional
 from uuid import uuid4
 
 import streamlit as st
 from streamlit.components.v1 import html as components_html
+from streamlit.delta_generator import DeltaGenerator
 
 from app import _bootstrap
 
-from contextlib import contextmanager
-from pathlib import Path
-from typing import Generator, Literal
-from __future__ import annotations
-
-from contextlib import contextmanager
-from pathlib import Path
-from typing import Iterator, Literal, Optional
-
-import streamlit as st
-from streamlit.delta_generator import DeltaGenerator
-
 from . import luxe_components as luxe
+
 
 _THEME_HASH_KEY = "__rexai_theme_hash__"
 _THEME_STATE_KEY = "hud_theme"
@@ -83,12 +70,19 @@ def _read_css_bundle() -> str:
     return "\n".join(css_parts)
 
 
-def _inject_css_once(css: str) -> None:
+def _inject_css_once() -> None:
+    css = _read_css_bundle()
     if not css:
         return
 
     css_hash = hashlib.sha256(css.encode("utf-8")).hexdigest()
     if st.session_state.get(_THEME_HASH_KEY) == css_hash:
+        return
+
+    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+    st.session_state[_THEME_HASH_KEY] = css_hash
+
+
 _MICRO_JS = _bootstrap.load_microinteractions_script()
 
 _BUTTON_STYLES = """
@@ -116,27 +110,21 @@ _BUTTON_STYLES = """
 """
 
 
-def load_theme() -> None:
-    """Inject the shared Rex-AI theme CSS once per Streamlit session."""
-def load_theme(show_hud: bool = True) -> None:
-    """Inject the shared Rex-AI theme CSS once per Streamlit session and Mission HUD."""
+def load_theme(*, show_hud: bool = True) -> None:
+    """Inject shared CSS and expose HUD toggles for the Rex-AI theme."""
 
-    theme_loaded = st.session_state.get(_THEME_KEY)
-    if not theme_loaded:
-        theme_file = _theme_path()
-        try:
-            css = theme_file.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            css = ""
-
-        if css:
-            st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
-        st.session_state[_THEME_KEY] = True
+    _ensure_defaults()
+    _inject_css_once()
+    _apply_runtime_theme()
 
     if show_hud:
-        from app.modules.navigation import render_mission_hud
+        _render_hud()
 
-        render_mission_hud()
+
+def inject_css(show_hud: bool = False) -> None:
+    """Backward-compatible alias for legacy code paths."""
+
+    load_theme(show_hud=show_hud)
 
 
 def use_token(name: str, fallback: Optional[str] = None) -> str:
@@ -189,7 +177,7 @@ def surface(
     padding: str | None = "lg",
     shadow: Literal["soft", "lift", "float"] | None = "soft",
     radius: str | None = None,
-) -> Iterator[st.delta_generator.DeltaGenerator]:
+) -> Iterator[DeltaGenerator]:
     """Render content inside a themed surface wrapper."""
 
     load_theme()
@@ -198,23 +186,11 @@ def surface(
     container.markdown(opener, unsafe_allow_html=True)
     inner = container.container()
     try:
-        css = theme_file.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        css = ""
-
-    layout_file = theme_file.with_name("layout.css")
-    if layout_file.exists():
-        css += "\n" + layout_file.read_text(encoding="utf-8")
-
-    if not css:
-        return
         with inner:
             yield inner
     finally:
         container.markdown("</div>", unsafe_allow_html=True)
 
-    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
-    st.session_state[_THEME_HASH_KEY] = css_hash
 
 @contextmanager
 def glass_card(
@@ -222,7 +198,7 @@ def glass_card(
     padding: str | None = "lg",
     shadow: Literal["soft", "lift", "float"] | None = "float",
     radius: str | None = None,
-) -> Iterator[st.delta_generator.DeltaGenerator]:
+) -> Iterator[DeltaGenerator]:
     """Render content inside a frosted glass style surface."""
 
     load_theme()
@@ -296,24 +272,6 @@ def _render_hud() -> None:
                 help="Paleta optimizada para protanopia/deuteranopia.",
             )
         st.markdown('</div>', unsafe_allow_html=True)
-
-
-def load_theme(*, show_hud: bool = True) -> None:
-    """Inject shared CSS and expose HUD toggles for the Rex-AI theme."""
-
-    _ensure_defaults()
-    css_bundle = _read_css_bundle()
-    _inject_css_once(css_bundle)
-    _apply_runtime_theme()
-
-    if show_hud:
-        _render_hud()
-
-
-def inject_css(show_hud: bool = False) -> None:
-    """Backward-compatible alias for legacy code paths."""
-
-    load_theme(show_hud=show_hud)
 
 
 def card(title: str, body: str = "") -> None:
@@ -392,27 +350,27 @@ def futuristic_button(
     if _MICRO_JS:
         script_parts.append(_MICRO_JS)
     script_parts.append(
-        "(function(){"
-        "const styleId='rexai-fx-style';"
-        f"const styleCSS={json.dumps(_BUTTON_STYLES)};"
-        "if(!document.getElementById(styleId)){const style=document.createElement('style');style.id=styleId;style.textContent=styleCSS;document.head.appendChild(style);}"  # noqa: E501
-        f"const cfg={json.dumps(config)};"
-        f"const wrapperId='{button_id}';"
-        "const Streamlit=window.parent && window.parent.Streamlit;"
-        "if(!Streamlit){return;}"
-        "const wrapper=document.getElementById(wrapperId);"
-        "if(!wrapper){return;}"
-        "Streamlit.setComponentReady();"
-        "const buttonEl=wrapper.querySelector('button');"
-        "if(buttonEl){buttonEl.disabled=cfg.disabled;}"
-        "const statusEl=wrapper.querySelector('.rexai-fx-status');"
-        "if(statusEl){const hint=(cfg.statusHints && cfg.statusHints[cfg.state])||'';statusEl.textContent=hint;statusEl.setAttribute('data-active',hint?'true':'false');}"
-        "if(window.RexAIMicro){const controller=window.RexAIMicro.mount(wrapper,cfg);if(controller){controller.applyState(cfg.state);}}else{wrapper.setAttribute('data-state',cfg.state);}"
-        "const send=(payload)=>Streamlit.setComponentValue(payload);"
-        "if(buttonEl && !cfg.disabled){buttonEl.addEventListener('click',()=>send({event:'click',ts:Date.now()}));}"
-        "const sync=()=>Streamlit.setFrameHeight(document.body.scrollHeight);"
-        "sync();window.addEventListener('resize',sync);"
-        "})();"
+        "(function(){",
+        "const styleId='rexai-fx-style';",
+        f"const styleCSS={json.dumps(_BUTTON_STYLES)};",
+        "if(!document.getElementById(styleId)){const style=document.createElement('style');style.id=styleId;style.textContent=styleCSS;document.head.appendChild(style);}",
+        f"const cfg={json.dumps(config)};",
+        f"const wrapperId='{button_id}';",
+        "const Streamlit=window.parent && window.parent.Streamlit;",
+        "if(!Streamlit){return;}",
+        "const wrapper=document.getElementById(wrapperId);",
+        "if(!wrapper){return;}",
+        "Streamlit.setComponentReady();",
+        "const buttonEl=wrapper.querySelector('button');",
+        "if(buttonEl){buttonEl.disabled=cfg.disabled;}",
+        "const statusEl=wrapper.querySelector('.rexai-fx-status');",
+        "if(statusEl){const hint=(cfg.statusHints && cfg.statusHints[cfg.state])||'';statusEl.textContent=hint;statusEl.setAttribute('data-active',hint?'true':'false');}",
+        "if(window.RexAIMicro){const controller=window.RexAIMicro.mount(wrapper,cfg);if(controller){controller.applyState(cfg.state);}}else{wrapper.setAttribute('data-state',cfg.state);}",
+        "const send=(payload)=>Streamlit.setComponentValue(payload);",
+        "if(buttonEl && !cfg.disabled){buttonEl.addEventListener('click',()=>send({event:'click',ts:Date.now()}));}",
+        "const sync=()=>Streamlit.setFrameHeight(document.body.scrollHeight);",
+        "sync();window.addEventListener('resize',sync);",
+        "})();",
     )
     script = "".join(script_parts)
 
@@ -436,6 +394,8 @@ def futuristic_button(
             st.session_state[session_key] = ts
             return True
     return False
+
+
 @contextmanager
 def layout_block(
     classes: str,
