@@ -107,6 +107,7 @@ mission_briefing(
         ("Seleccioná objetivo", "Define límites de agua, energía y logística con presets marcianos."),
         ("Generá y valida", "Rex-AI mezcla, explica contribuciones y exporta procesos listos para la tripulación."),
     ],
+)
 ready = "✅ Modelo listo" if model_registry.ready else "⚠️ Entrená localmente"
 
 # ──────────── Overview cinematográfico ────────────
@@ -575,6 +576,7 @@ orbital_timeline(
             icon="📦",
         ),
     ]
+)
 # ──────────── Animación de aparición por scroll ────────────
 st.markdown(
     """
