@@ -949,6 +949,176 @@ _LUXE_COMPONENT_CSS = """
   margin: var(--stack-margin, 1.6rem 0 0);
 }
 
+.mission-flow-showcase {
+  position: relative;
+  display: grid;
+  gap: clamp(1.4rem, 2.8vw, 1.8rem);
+  padding: clamp(1.4rem, 2.6vw, 1.9rem);
+  border-radius: 26px;
+  border: 1px solid color-mix(in srgb, var(--luxe-border) 75%, transparent);
+  background: linear-gradient(150deg, rgba(15, 23, 42, 0.78), rgba(30, 41, 59, 0.82));
+  box-shadow: 0 26px 60px rgba(8, 15, 35, 0.42);
+  color: var(--luxe-ink);
+}
+
+.mission-flow-showcase::after {
+  content: "";
+  position: absolute;
+  inset: -40% -30% 40% 10%;
+  background: radial-gradient(circle at top right, rgba(96, 165, 250, 0.32), transparent 70%);
+  opacity: 0.55;
+  filter: blur(60px);
+  pointer-events: none;
+}
+
+.mission-flow-showcase__header {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.mission-flow-showcase__header h3 {
+  margin: 0;
+  font-size: clamp(1.35rem, 2.4vw, 1.6rem);
+}
+
+.mission-flow-showcase__header p {
+  margin: 0;
+  color: rgba(226, 232, 240, 0.78);
+  font-size: 0.95rem;
+}
+
+.mission-flow-showcase__content {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: clamp(1.2rem, 2vw, 1.6rem);
+}
+
+@media (min-width: 1100px) {
+  .mission-flow-showcase__content {
+    grid-template-columns: 1.6fr 1fr;
+    align-items: start;
+  }
+}
+
+.mission-flow-showcase__steps {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--mission-step-min, 15rem), 1fr));
+  gap: var(--mission-step-gap, 1.1rem);
+}
+
+.mission-flow-showcase__step {
+  position: relative;
+  display: grid;
+  gap: 0.6rem;
+  padding: var(--mission-step-padding, 1.25rem 1.35rem);
+  border-radius: 22px;
+  border: 1px solid color-mix(in srgb, var(--luxe-border) 75%, transparent);
+  background: linear-gradient(165deg, rgba(15, 23, 42, 0.85), rgba(30, 41, 59, 0.78));
+  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.08), 0 20px 40px rgba(8, 15, 35, 0.38);
+}
+
+.mission-flow-showcase__step-head {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.9rem;
+  align-items: start;
+}
+
+.mission-flow-showcase__step-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 999px;
+  background: rgba(96, 165, 250, 0.16);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  font-size: 1.3rem;
+}
+
+.mission-flow-showcase__step h4 {
+  margin: 0;
+  font-size: 1.08rem;
+}
+
+.mission-flow-showcase__copy {
+  margin: 0.35rem 0 0;
+  font-size: 0.96rem;
+  color: rgba(226, 232, 240, 0.78);
+}
+
+.mission-flow-showcase__copy [data-viewport="mobile"] {
+  display: none;
+}
+
+.mission-flow-showcase__step-footer {
+  margin: 0;
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(148, 163, 184, 0.78);
+}
+
+@media (max-width: 900px) {
+  .mission-flow-showcase {
+    padding: clamp(1.2rem, 3vw, 1.5rem);
+  }
+
+  .mission-flow-showcase__steps {
+    gap: var(--mission-step-gap-mobile, 0.95rem);
+  }
+
+  .mission-flow-showcase__step {
+    padding: var(--mission-step-padding-mobile, 1.05rem 1.1rem);
+  }
+
+  .mission-flow-showcase__copy [data-viewport="desktop"] {
+    display: none;
+  }
+
+  .mission-flow-showcase__copy [data-viewport="mobile"] {
+    display: inline;
+  }
+}
+
+.mission-flow-showcase__timeline {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.mission-flow-showcase__timeline h4 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.mission-flow-showcase__timeline .orbital-timeline {
+  margin: 0;
+}
+
+.mission-flow-showcase__insights {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.35rem;
+  color: rgba(226, 232, 240, 0.76);
+  font-size: 0.9rem;
+}
+
+.mission-flow-showcase__insights li {
+  margin: 0;
+}
+
+.mission-flow-showcase__actions {
+  margin-top: 1rem;
+}
+
+.mission-flow-showcase__actions + .mission-flow-showcase__actions {
+  margin-top: 1.2rem;
+}
+
 .luxe-card {
   position: relative;
   border-radius: 22px;
@@ -1528,6 +1698,7 @@ class HeroFlowStage:
     hero_headline: str
     hero_copy: str
     card_body: str
+    compact_card_body: str | None = None
     icon: str
     timeline_label: str
     timeline_description: str
@@ -1539,6 +1710,11 @@ class HeroFlowStage:
     @property
     def card_title(self) -> str:
         return f"{self.order} · {self.name}"
+
+    def copy_for_viewport(self, viewport: Literal["desktop", "mobile"] = "desktop") -> str:
+        if viewport == "mobile" and self.compact_card_body:
+            return self.compact_card_body
+        return self.card_body
 
 @dataclass
 class TargetPresetMeta:
@@ -2168,6 +2344,14 @@ def _merge_styles(base: Mapping[str, str], extra: Mapping[str, str] | None = Non
     if extra:
         merged.update({k: v for k, v in extra.items() if v is not None})
     return "; ".join(f"{k}: {v}" for k, v in merged.items())
+
+
+def _density_value(density: str, mapping: Mapping[str, str]) -> str:
+    if density in mapping:
+        return mapping[density]
+    if "cozy" in mapping:
+        return mapping["cozy"]
+    return next(iter(mapping.values()))
 
 
 def ChipRow(
@@ -3250,8 +3434,7 @@ class GlassStack:
     columns_min: str = "16rem"
     density: str = "cozy"
 
-    def render(self) -> None:
-        _load_css()
+    def markup(self) -> str:
         padding_map = {
             "compact": "1.05rem 1.15rem",
             "cozy": "1.3rem 1.4rem",
@@ -3280,8 +3463,213 @@ class GlassStack:
                 "</div>"
             )
         html.append("</div>")
-        st.markdown("".join(html), unsafe_allow_html=True)
+        return "".join(html)
 
+    def render(self) -> None:
+        _load_css()
+        st.markdown(self.markup(), unsafe_allow_html=True)
+
+
+@dataclass
+class MissionFlowShowcase:
+    stages: Sequence[HeroFlowStage]
+    primary_actions: Sequence[ActionCard] = field(default_factory=list)
+    secondary_actions: Sequence[ActionCard] = field(default_factory=list)
+    title: str | None = None
+    subtitle: str | None = None
+    stage_density: str = "cozy"
+    mobile_stage_density: str = "compact"
+    action_density: str = "cozy"
+    action_columns_min: str = "15rem"
+    secondary_action_columns_min: str | None = None
+    timeline_title: str | None = None
+    insights: Sequence[str] = field(default_factory=list)
+    stage_min_width: str = "15rem"
+
+    _ordered_stages: tuple[HeroFlowStage, ...] = field(init=False)
+
+    def __post_init__(self) -> None:
+        self._ordered_stages = tuple(sorted(self.stages, key=lambda stage: stage.order))
+
+    def copy_sequence(self, viewport: Literal["desktop", "mobile"] = "desktop") -> list[str]:
+        return [stage.copy_for_viewport(viewport) for stage in self._ordered_stages]
+
+    def stage_titles(self) -> list[str]:
+        return [stage.card_title for stage in self._ordered_stages]
+
+    def markup(self) -> str:
+        style = {
+            "--mission-step-gap": _density_value(
+                self.stage_density,
+                {"compact": "0.85rem", "cozy": "1.1rem", "roomy": "1.35rem"},
+            ),
+            "--mission-step-padding": _density_value(
+                self.stage_density,
+                {
+                    "compact": "1rem 1.05rem",
+                    "cozy": "1.25rem 1.35rem",
+                    "roomy": "1.5rem 1.65rem",
+                },
+            ),
+            "--mission-step-gap-mobile": _density_value(
+                self.mobile_stage_density,
+                {"compact": "0.8rem", "cozy": "0.95rem", "roomy": "1.15rem"},
+            ),
+            "--mission-step-padding-mobile": _density_value(
+                self.mobile_stage_density,
+                {
+                    "compact": "0.9rem 0.95rem",
+                    "cozy": "1.05rem 1.1rem",
+                    "roomy": "1.25rem 1.35rem",
+                },
+            ),
+            "--mission-step-min": self.stage_min_width,
+        }
+        header_html = self._render_header()
+        content_html = self._render_content()
+        actions_html = self._render_secondary_actions()
+        return (
+            f"<section class='mission-flow-showcase reveal' style='{_merge_styles(style, {})}'>"
+            f"{header_html}{content_html}{actions_html}"
+            "</section>"
+        )
+
+    def render(self) -> None:
+        _load_css()
+        st.markdown(self.markup(), unsafe_allow_html=True)
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+    def _render_header(self) -> str:
+        if not self.title and not self.subtitle:
+            return ""
+        title_html = f"<h3>{self.title}</h3>" if self.title else ""
+        subtitle_html = f"<p>{self.subtitle}</p>" if self.subtitle else ""
+        return f"<header class='mission-flow-showcase__header'>{title_html}{subtitle_html}</header>"
+
+    def _render_content(self) -> str:
+        left_column = self._render_stage_column()
+        right_column = self._render_right_column()
+        return (
+            "<div class='mission-flow-showcase__content'>"
+            f"{left_column}{right_column}"
+            "</div>"
+        )
+
+    def _render_stage_column(self) -> str:
+        steps = []
+        for stage in self._ordered_stages:
+            desktop_copy = stage.copy_for_viewport("desktop")
+            mobile_copy = stage.copy_for_viewport("mobile")
+            footer_html = (
+                f"<p class='mission-flow-showcase__step-footer'>{stage.footer}</p>"
+                if stage.footer
+                else ""
+            )
+            steps.append(
+                "<article class='mission-flow-showcase__step' "
+                f"data-stage='{escape(stage.key)}'>"
+                "<div class='mission-flow-showcase__step-head'>"
+                f"<span class='mission-flow-showcase__step-icon'>{escape(stage.icon)}</span>"
+                "<div>"
+                f"<h4>{escape(stage.card_title)}</h4>"
+                "<p class='mission-flow-showcase__copy'>"
+                f"<span data-viewport='desktop'>{desktop_copy}</span>"
+                f"<span data-viewport='mobile'>{mobile_copy}</span>"
+                "</p>"
+                "</div>"
+                "</div>"
+                f"{footer_html}"
+                "</article>"
+            )
+        steps_html = "".join(steps)
+        return (
+            "<div class='mission-flow-showcase__column mission-flow-showcase__column--left'>"
+            "<div class='mission-flow-showcase__steps'>"
+            f"{steps_html}"
+            "</div>"
+            "</div>"
+        )
+
+    def _render_right_column(self) -> str:
+        blocks: list[str] = []
+        timeline = self._render_timeline()
+        if timeline:
+            blocks.append(timeline)
+        if self.primary_actions:
+            blocks.append(
+                self._render_action_deck(
+                    self.primary_actions,
+                    columns_min=self.action_columns_min,
+                )
+            )
+        if not blocks:
+            return ""
+        return (
+            "<div class='mission-flow-showcase__column mission-flow-showcase__column--right'>"
+            f"{''.join(blocks)}"
+            "</div>"
+        )
+
+    def _render_timeline(self) -> str:
+        if not self._ordered_stages:
+            return ""
+        nodes = []
+        for depth, stage in enumerate(self._ordered_stages):
+            nodes.append(
+                "<div class='orbital-node' "
+                f"style='--depth: {depth * 18}px;'>"
+                f"<span>{escape(stage.icon)}</span>"
+                f"<h4>{stage.timeline_label}</h4>"
+                f"<p>{stage.timeline_description}</p>"
+                "</div>"
+            )
+        timeline_header = (
+            f"<h4>{self.timeline_title}</h4>" if self.timeline_title else ""
+        )
+        insights_html = ""
+        if self.insights:
+            bullet_items = "".join(f"<li>{item}</li>" for item in self.insights)
+            insights_html = (
+                f"<ul class='mission-flow-showcase__insights'>{bullet_items}</ul>"
+            )
+        return (
+            "<aside class='mission-flow-showcase__timeline'>"
+            f"{timeline_header}"
+            "<div class='orbital-timeline'>"
+            f"<div class='orbital-track'>{''.join(nodes)}</div>"
+            "</div>"
+            f"{insights_html}"
+            "</aside>"
+        )
+
+    def _render_action_deck(
+        self,
+        cards: Sequence[ActionCard],
+        *,
+        columns_min: str | None = None,
+    ) -> str:
+        deck = ActionDeck(
+            cards=cards,
+            columns_min=columns_min or self.action_columns_min,
+            density=self.action_density,
+            reveal=False,
+        )
+        return f"<div class='mission-flow-showcase__actions'>{deck.markup()}</div>"
+
+    def _render_secondary_actions(self) -> str:
+        if not self.secondary_actions:
+            return ""
+        columns_min = (
+            self.secondary_action_columns_min
+            if self.secondary_action_columns_min is not None
+            else self.action_columns_min
+        )
+        return self._render_action_deck(
+            self.secondary_actions,
+            columns_min=columns_min,
+        )
 
 __all__ = [
     "BriefingCard",
@@ -3306,6 +3694,7 @@ __all__ = [
     "RankingCockpit",
     "MissionMetric",
     "MissionMetrics",
+    "MissionFlowShowcase",
     "CarouselItem",
     "CarouselRail",
     "ActionCard",
