@@ -12,15 +12,12 @@ from app.modules.luxe_components import (
     BriefingCard,
     CarouselItem,
     CarouselRail,
-    GlassCard,
-    GlassStack,
     HeroFlowStage,
     MetricGalaxy,
+    MissionFlowShowcase,
     MissionMetrics,
     TeslaHero,
-    TimelineMilestone,
     guided_demo,
-    orbital_timeline,
 )
 from app.modules.ml_models import get_model_registry
 from app.modules.navigation import set_active_step
@@ -121,7 +118,13 @@ mission_stages = [
         name="Inventario",
         hero_headline="Calibrá el inventario",
         hero_copy="Normalizá residuos, detectá flags EVA y estructuras multi-layer.",
-        card_body="Normalizá residuos y marcá flags problemáticos (multilayer, EVA, nitrilo).",
+        card_body=(
+            "Normalizá residuos, marcá flags (multilayer, EVA, nitrilo) y trabajá sobre "
+            "<code>data/waste_inventory_sample.csv</code> o tu CSV limpio."
+        ),
+        compact_card_body=(
+            "Normalizá residuos y flags EVA/multilayer sobre <code>data/waste_inventory_sample.csv</code>."
+        ),
         icon="🧱",
         timeline_label="Inventario en vivo",
         timeline_description="Ingerí CSV NASA, normalizá unidades y marca riesgos EVA desde la cabina.",
@@ -133,7 +136,10 @@ mission_stages = [
         name="Target",
         hero_headline="Seleccioná objetivo",
         hero_copy="Define límites de agua, energía y logística con presets marcianos.",
-        card_body="Elegí producto final y límites de agua, energía y crew para la misión.",
+        card_body=(
+            "Elegí producto final, límites de agua/energía y presets marcianos (container, utensil, tool, interior)."
+        ),
+        compact_card_body="Elegí producto y límites con presets marcianos certificados.",
         icon="🎯",
         timeline_label="Target marciano",
         timeline_description="Seleccioná producto final, límites de agua y energía, o usa presets homologados.",
@@ -145,7 +151,10 @@ mission_stages = [
         name="Generador",
         hero_headline="Generá y valida",
         hero_copy="Rex-AI mezcla, explica contribuciones y exporta procesos listos para la tripulación.",
-        card_body="Rex-AI mezcla ítems, sugiere proceso y explica cada predicción en vivo.",
+        card_body=(
+            "Rex-AI mezcla ítems, compara heurística vs modelo y explica cada contribución en vivo."
+        ),
+        compact_card_body="Mezclá ítems, compará heurística vs IA y revisá contribuciones al instante.",
         icon="🤖",
         timeline_label="Generador IA",
         timeline_description="Explorá mezclas óptimas, revisá contribuciones y bandas de confianza en segundos.",
@@ -157,7 +166,10 @@ mission_stages = [
         name="Resultados",
         hero_headline="Reportá y exportá",
         hero_copy="Trade-offs, confianza 95% y comparativa heurística listos para ingeniería.",
-        card_body="Trade-offs, confianza 95%, comparación heurística vs IA y export final.",
+        card_body=(
+            "Trade-offs, bandas 95%, comparación heurística vs IA y export Sankey/feedback listos para ingeniería."
+        ),
+        compact_card_body="Revisá trade-offs, bandas 95% y export Sankey/feedback final.",
         icon="📊",
         timeline_label="Resultados y export",
         timeline_description="Compará heurísticas vs IA, exportá recetas y registra feedback para retraining.",
@@ -361,11 +373,6 @@ st.markdown("### Ruta de misión (guided flow)")
 
 demo_steps = hero_scene.timeline_milestones()
 active_demo_step = guided_demo(steps=demo_steps, step_duration=6.5)
-GlassStack(
-    cards=hero_scene.glass_cards(),
-    columns_min="15rem",
-    density="compact",
-).render()
 
 active_stage_key = (
     hero_scene.stage_key_for_label(active_demo_step.label)
@@ -377,6 +384,53 @@ metrics_placeholder.markdown(
     unsafe_allow_html=True,
 )
 
+mission_showcase_insights = [
+    "<code>python -m app.modules.model_training</code> genera dataset y RandomForest multisalida listo.",
+    "Cada receta conserva IDs, categorías, flags de riesgo y metadatos de entrenamiento.",
+    "Contribuciones por feature, bandas 95% y comparador heurístico vs IA en UI.",
+    "Export Sankey y feedback listos para continuar el retraining marciano.",
+]
+
+MissionFlowShowcase(
+    stages=mission_stages,
+    title="Acciones siguientes",
+    subtitle="Mantené el contexto del laboratorio mientras ejecutás exports, simulaciones y reportes clave.",
+    timeline_title="¿Qué demuestra esta demo hoy?",
+    insights=mission_showcase_insights,
+    primary_actions=[
+        ActionCard(
+            title="Construir inventario",
+            body="Normalizá residuos NASA y etiquetá flags EVA, multilayer y nitrilo.",
+            icon="🧱",
+        ),
+        ActionCard(
+            title="Generador IA vs heurística",
+            body="Compara recetas propuestas, trade-offs y bandas de confianza.",
+            icon="🤖",
+        ),
+    ],
+    secondary_actions=[
+        ActionCard(
+            title="1. Inventario NASA",
+            body="Trabajá sobre <code>data/waste_inventory_sample.csv</code> o subí tu CSV normalizado.",
+        ),
+        ActionCard(
+            title="2. Objetivo",
+            body="Usá presets (container, utensil, tool, interior) o definí límites manuales.",
+        ),
+        ActionCard(
+            title="3. Generador con IA",
+            body="Revisá contribuciones de features y compará heurística vs modelo.",
+        ),
+        ActionCard(
+            title="4. Reportar",
+            body="Exportá recetas, Sankey y feedback/impact para seguir entrenando Rex-AI.",
+        ),
+    ],
+    action_density="cozy",
+    secondary_action_columns_min="14rem",
+).render()
+
 if scenario_toggle and inventory_df is not None:
     flagged = inventory_df["flags"].dropna().head(6).tolist()
     bullet_items = "".join(
@@ -387,29 +441,10 @@ if scenario_toggle and inventory_df is not None:
         <div class="drawer reveal">
           <h4>Flags operativos activos</h4>
           <ul>{bullet_items}</ul>
-          <div class="timeline">
-            <ul>
-              <li>Pipeline reproducible: <code>python -m app.modules.model_training</code> genera dataset + RandomForest.</li>
-              <li>Trazabilidad completa: cada receta incorpora IDs, categorías y metadatos.</li>
-              <li>Explicabilidad integrada: contribuciones por feature y bandas de confianza 95%.</li>
-              <li>Comparativa heurística vs IA lista para export.</li>
-            </ul>
-          </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-
-# ──────────── Acciones siguientes ────────────
-st.markdown(
-    """
-    <section class="next-block reveal" id="acciones-siguientes">
-      <div class="section-title"><span class="icon">🚀</span><h2>Acciones siguientes</h2></div>
-      <p>Mantené el contexto del laboratorio mientras ejecutás exports, simulaciones y reportes clave.</p>
-    </section>
-    """,
-    unsafe_allow_html=True,
-)
 
 cta_col1, cta_col2 = st.columns(2, gap="large")
 with cta_col1:
@@ -479,46 +514,6 @@ st.markdown(
     ),
     unsafe_allow_html=True,
 )
-
-ActionDeck(
-    cards=[
-        ActionCard(
-            title="1. Inventario NASA",
-            body="Trabajá sobre <code>data/waste_inventory_sample.csv</code> o subí tu CSV normalizado.",
-        ),
-        ActionCard(
-            title="2. Objetivo",
-            body="Usá presets (container, utensil, tool, interior) o definí límites manuales.",
-        ),
-        ActionCard(
-            title="3. Generador con IA",
-            body="Revisá contribuciones de features y compará heurística vs modelo.",
-        ),
-        ActionCard(
-            title="4. Reportar",
-            body="Exportá recetas, Sankey y feedback/impact para seguir entrenando Rex-AI.",
-        ),
-    ],
-    columns_min="15rem",
-    density="cozy",
-).render()
-
-ActionDeck(
-    cards=[
-        ActionCard(
-            title="Construir inventario",
-            body="Normalizá residuos NASA y etiquetá flags EVA, multilayer y nitrilo.",
-            icon="🧱",
-        ),
-        ActionCard(
-            title="Generador IA vs heurística",
-            body="Compara recetas propuestas, trade-offs y bandas de confianza.",
-            icon="🤖",
-        ),
-    ],
-    columns_min="14rem",
-    density="cozy",
-).render()
 
 # ──────────── CTA navegación ────────────
 st.markdown("### Siguiente acción")
@@ -617,34 +612,6 @@ with cta_buttons[1]:
         st.session_state[generator_state_key] = "loading"
         st.switch_page("pages/3_Generator.py")
 
-# ──────────── Qué demuestra hoy ────────────
-st.markdown("---")
-st.markdown("### ¿Qué demuestra esta demo hoy?")
-
-orbital_timeline(
-    [
-        TimelineMilestone(
-            label="Pipeline reproducible",
-            description="<code>python -m app.modules.model_training</code> genera dataset y RandomForest multisalida listo.",
-            icon="🛠️",
-        ),
-        TimelineMilestone(
-            label="Trazabilidad de recetas",
-            description="Cada receta conserva IDs, categorías, flags de riesgo y metadatos de entrenamiento.",
-            icon="🛰️",
-        ),
-        TimelineMilestone(
-            label="Explicabilidad integrada",
-            description="Contribuciones por feature, bandas 95% y comparador heurístico vs IA en UI.",
-            icon="🧠",
-        ),
-        TimelineMilestone(
-            label="Export y feedback",
-            description="Entrega recetas, Sankey y feedback listos para continuar el retraining marciano.",
-            icon="📦",
-        ),
-    ]
-)
 # ──────────── Animación de aparición por scroll ────────────
 enable_reveal_animation()
 MetricGalaxy(
@@ -652,58 +619,7 @@ MetricGalaxy(
     density="cozy",
 ).render()
 
-# ──────────── Cómo navegar ────────────
-st.markdown("### Cómo navegar ahora")
-GlassStack(
-    cards=[
-        GlassCard(
-            title="1. Inventario NASA",
-            body="Trabajá sobre <code>data/waste_inventory_sample.csv</code> o subí tu CSV normalizado.",
-            icon="📦",
-        ),
-        GlassCard(
-            title="2. Objetivo",
-            body="Usá presets (container, utensil, tool, interior) o definí límites manuales.",
-            icon="🎛️",
-        ),
-        GlassCard(
-            title="3. Generador con IA",
-            body="Revisá contribuciones de features y compará heurística vs modelo.",
-            icon="🤝",
-        ),
-        GlassCard(
-            title="4. Reportar",
-            body="Exportá recetas, Sankey y feedback/impact para seguir entrenando Rex-AI.",
-            icon="📤",
-        ),
-    ],
-    columns_min="15rem",
-    density="cozy",
-).render()
-
-# ──────────── CTA navegación ────────────
 st.info(
     "Usá el **Mission HUD** superior para saltar entre pasos o presioná las teclas `1-9` "
     "para navegar más rápido por el flujo guiado."
 )
-
-# ──────────── Qué demuestra hoy ────────────
-st.markdown("---")
-GlassStack(
-    cards=[
-        GlassCard(
-            title="¿Qué demuestra esta demo hoy?",
-            body=(
-                "<ul>"
-                "<li>Pipeline reproducible: <code>python -m app.modules.model_training</code> genera dataset y el RandomForest multisalida.</li>"
-                "<li>Predicciones con trazabilidad: cada receta incluye IDs, categorías, flags y metadatos de entrenamiento.</li>"
-                "<li>Explicabilidad integrada: contribuciones por feature y bandas de confianza 95%.</li>"
-                "<li>Comparación heurística vs IA y export listo para experimentación.</li>"
-                "</ul>"
-            ),
-            icon="🛰️",
-        ),
-    ],
-    columns_min="26rem",
-    density="roomy",
-).render()
