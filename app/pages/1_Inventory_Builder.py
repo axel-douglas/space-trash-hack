@@ -4,8 +4,21 @@ import streamlit as st
 import pandas as pd
 from app.modules.io import load_waste_df, save_waste_df
 
+_SAVE_SUCCESS_FLAG = "_inventory_save_success"
+
+
+def _trigger_rerun() -> None:
+    """Trigger a Streamlit rerun regardless of version."""
+    try:
+        st.rerun()
+    except AttributeError:  # pragma: no cover - legacy fallback
+        st.experimental_rerun()
+
 # ⚠️ Debe ser la PRIMERA llamada de Streamlit en la página
 st.set_page_config(page_title="Inventario", page_icon="🧱", layout="wide")
+
+if st.session_state.pop(_SAVE_SUCCESS_FLAG, False):
+    st.success("Inventario guardado.")
 
 st.title("1) Inventario de residuos")
 st.caption(
@@ -89,7 +102,8 @@ with colA:
     if st.button("💾 Guardar inventario", type="primary"):
         out = edited[["id", "category", "material_family", "mass_kg", "volume_l", "flags"]].copy()
         save_waste_df(out)
-        st.success("Inventario guardado.")
+        st.session_state[_SAVE_SUCCESS_FLAG] = True
+        _trigger_rerun()
 
 with colB:
     show_only_prob = st.toggle("Mostrar solo problemáticos", value=False, help="Filtra la vista previa de abajo.")
