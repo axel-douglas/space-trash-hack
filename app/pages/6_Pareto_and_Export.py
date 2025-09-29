@@ -1,5 +1,5 @@
 # app/pages/6_Pareto_and_Export.py
-import app  # noqa: F401
+import _bootstrap  # noqa: F401
 
 import streamlit as st
 import numpy as np

@@ -1,11 +1,12 @@
 # app/pages/0_Project_Brief.py
-import app  # noqa: F401
+import _bootstrap  # noqa: F401
 
 import streamlit as st
 from pathlib import Path
 
 from app.modules.ui_blocks import load_theme
-repo_root = Path(app.ROOT)
+
+repo_root = Path(__file__).resolve().parents[2]
 
 # ⚠️ PRIMER comando Streamlit:
 st.set_page_config(page_title="REX-AI Mars — Brief", page_icon="🛰️", layout="wide")

@@ -1,5 +1,5 @@
 # app/pages/9_Capacity_Simulator.py
-import app  # noqa: F401
+import _bootstrap  # noqa: F401
 
 # ⚠️ Debe ser la PRIMERA llamada de Streamlit
 import streamlit as st

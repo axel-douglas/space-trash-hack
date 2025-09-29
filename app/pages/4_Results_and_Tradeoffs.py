@@ -1,4 +1,4 @@
-import app  # noqa: F401
+import _bootstrap  # noqa: F401
 
 import altair as alt
 import pandas as pd
