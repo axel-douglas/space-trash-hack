@@ -3,11 +3,16 @@ import _bootstrap  # noqa: F401
 
 # ⚠️ Debe ser la PRIMERA llamada Streamlit:
 import streamlit as st
+from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.ui_blocks import load_theme
 
 st.set_page_config(page_title="Feedback & Impact", page_icon="📝", layout="wide")
 
+set_active_step("feedback")
+
 load_theme()
+
+render_breadcrumbs("feedback")
 
 import json
 import pandas as pd

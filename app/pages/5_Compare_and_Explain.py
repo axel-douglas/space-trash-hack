@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 from streamlit_sortables import sort_items
 
 from app.modules.explain import compare_table, score_breakdown
+from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.ui_blocks import load_theme
 
 
@@ -65,7 +66,11 @@ def _generate_storytelling(
 # ⚠️ Debe ser la PRIMERA llamada de Streamlit en la página
 st.set_page_config(page_title="Comparar & Explicar", page_icon="🧪", layout="wide")
 
+set_active_step("compare")
+
 load_theme()
+
+render_breadcrumbs("compare")
 
 # ======== estado requerido ========
 cands  = st.session_state.get("candidates", [])
