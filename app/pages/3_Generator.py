@@ -9,6 +9,7 @@ import streamlit as st
 from app.modules.generator import generate_candidates
 from app.modules.io import load_waste_df, load_process_df  # si tu IO usa load_process_catalog, cámbialo aquí
 from app.modules.ml_models import get_model_registry
+from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.process_planner import choose_process
 from app.modules.safety import check_safety, safety_badge
 from app.modules.ui_blocks import load_theme
@@ -16,7 +17,38 @@ from app.modules.luxe_components import TeslaHero, ChipRow
 
 st.set_page_config(page_title="Rex-AI • Generador", page_icon="🤖", layout="wide")
 
+set_active_step("generator")
+
 load_theme()
+
+render_breadcrumbs("generator")
+
+# ----------------------------- CSS local -----------------------------
+st.markdown(
+    """
+    <style>
+    .layout {display:flex; flex-direction:column; gap:1.6rem;}
+    .pane {background: rgba(15,18,26,0.75); border:1px solid rgba(148,163,184,0.18); padding:22px 24px; border-radius:20px;}
+    .pane h3 {margin-bottom:0.6rem;}
+    .hero-gen {padding:28px 30px; border-radius:26px; background: linear-gradient(135deg, rgba(59,130,246,0.18), rgba(14,165,233,0.08)); border:1px solid rgba(59,130,246,0.32);}
+    .hero-gen h1 {margin-bottom:0.4rem;}
+    .hero-gen p {margin:0; opacity:0.82; max-width:760px;}
+    .chipline {display:flex; gap:10px; margin-top:14px; flex-wrap:wrap;}
+    .chipline span {padding:5px 12px; border-radius:999px; border:1px solid rgba(148,163,184,0.26); font-size:0.8rem; opacity:0.85;}
+    .candidate {border-radius:20px; border:1px solid rgba(148,163,184,0.2); padding:20px 22px; margin-bottom:16px; background: rgba(13,17,23,0.7);}
+    .candidate h4 {margin-bottom:0.4rem;}
+    .candidate-grid {display:grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin:12px 0;}
+    .candidate-grid div {background:rgba(148,163,184,0.12); border-radius:14px; padding:12px;}
+    .candidate-grid strong {display:block; font-size:1.2rem;}
+    .confidence {font-size:0.86rem; opacity:0.8; margin-top:4px;}
+    .badge-ai {display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px; border:1px solid rgba(148,163,184,0.25); font-size:0.78rem;}
+    .delta {font-size:0.82rem; opacity:0.8;}
+    .hr-micro {height:1px; background:rgba(148,163,184,0.25); margin:14px 0;}
+    .badge {padding:4px 10px; border-radius:999px; font-size:0.78rem; background:rgba(96,165,250,0.16); color:#e6eefc; margin-right:6px; border:1px solid rgba(148,163,184,0.25);}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ----------------------------- Helpers -----------------------------
 TARGET_DISPLAY = {

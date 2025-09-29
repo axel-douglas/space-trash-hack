@@ -6,7 +6,14 @@ import streamlit as st
 st.set_page_config(page_title="Objetivo", page_icon="🎯", layout="wide")
 
 from app.modules.io import load_targets
-from app.modules.ui_blocks import section
+from app.modules.navigation import render_breadcrumbs, set_active_step
+from app.modules.ui_blocks import load_theme, section
+
+set_active_step("target")
+
+load_theme()
+
+render_breadcrumbs("target")
 
 st.title("2) Definir objetivo (TargetSpec)")
 

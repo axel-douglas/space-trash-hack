@@ -5,6 +5,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.ui_blocks import load_theme
 from app.modules.luxe_components import (
     GlassCard,
@@ -24,7 +25,11 @@ from app.modules.explain import score_breakdown
 
 st.set_page_config(page_title="Rex-AI • Resultados", page_icon="📊", layout="wide")
 
+set_active_step("results")
+
 load_theme()
+
+render_breadcrumbs("results")
 
 selected = st.session_state.get("selected")
 target = st.session_state.get("target")

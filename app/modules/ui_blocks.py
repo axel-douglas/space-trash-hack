@@ -13,20 +13,25 @@ def _theme_path() -> Path:
     return Path(__file__).resolve().parents[1] / "static" / "theme.css"
 
 
-def load_theme() -> None:
-    """Inject the shared Rex-AI theme CSS once per Streamlit session."""
+def load_theme(show_hud: bool = True) -> None:
+    """Inject the shared Rex-AI theme CSS once per Streamlit session and Mission HUD."""
 
-    if st.session_state.get(_THEME_KEY):
-        return
+    theme_loaded = st.session_state.get(_THEME_KEY)
+    if not theme_loaded:
+        theme_file = _theme_path()
+        try:
+            css = theme_file.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            css = ""
 
-    theme_file = _theme_path()
-    try:
-        css = theme_file.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return
+        if css:
+            st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+        st.session_state[_THEME_KEY] = True
 
-    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
-    st.session_state[_THEME_KEY] = True
+    if show_hud:
+        from app.modules.navigation import render_mission_hud
+
+        render_mission_hud()
 
 
 def use_token(name: str, fallback: Optional[str] = None) -> str:

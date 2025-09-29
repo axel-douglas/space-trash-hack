@@ -13,6 +13,7 @@ from app.modules.luxe_components import (
     TeslaHero,
 )
 from app.modules.ml_models import get_model_registry
+from app.modules.navigation import set_active_step
 from app.modules.ui_blocks import load_theme
 
 st.set_page_config(
@@ -20,6 +21,8 @@ st.set_page_config(
     page_icon="🛰️",
     layout="wide",
 )
+
+set_active_step("brief")
 
 load_theme()
 
@@ -176,20 +179,10 @@ GlassStack(
 ).render()
 
 # ──────────── CTA navegación ────────────
-st.markdown("### Siguiente acción")
-c1, c2, c3, c4 = st.columns(4)
-with c1:
-    if st.button("🧱 Inventario", use_container_width=True):
-        st.switch_page("pages/1_Inventory_Builder.py")
-with c2:
-    if st.button("🎯 Target", use_container_width=True):
-        st.switch_page("pages/2_Target_Designer.py")
-with c3:
-    if st.button("🤖 Generador", use_container_width=True):
-        st.switch_page("pages/3_Generator.py")
-with c4:
-    if st.button("📊 Resultados", use_container_width=True):
-        st.switch_page("pages/4_Results_and_Tradeoffs.py")
+st.info(
+    "Usá el **Mission HUD** superior para saltar entre pasos o presioná las teclas `1-9` "
+    "para navegar más rápido por el flujo guiado."
+)
 
 # ──────────── Qué demuestra hoy ────────────
 st.markdown("---")
