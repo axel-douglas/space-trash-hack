@@ -4,6 +4,10 @@ The original ``generator.py`` bundled inference telemetry writers alongside
 candidate feature engineering which made the surface area difficult to test.
 This module owns the durable write path for inference logs and exposes a small
 API used by the generator and analytics tests.
+
+Inference events are persisted as Parquet files compressed with Zstandard by
+default. Call :func:`configure_inference_parquet_writer` to override the codec
+or other :class:`pyarrow.parquet.ParquetWriter` keyword arguments.
 """
 
 from __future__ import annotations
@@ -26,6 +30,13 @@ except Exception:  # pragma: no cover - pyarrow is expected in production
 from .paths import LOGS_DIR
 
 LOGS_ROOT = LOGS_DIR
+
+_DEFAULT_PARQUET_WRITER_KWARGS: Dict[str, Any] = {
+    "compression": "zstd",
+    "use_dictionary": True,
+    "version": "2.6",
+}
+_PARQUET_WRITER_KWARGS: Dict[str, Any] = dict(_DEFAULT_PARQUET_WRITER_KWARGS)
 
 
 @dataclass
@@ -87,7 +98,11 @@ class _InferenceLogWriterManager:
         schema = pa.schema(pa.field(name, pa.string()) for name in desired_fields)
 
         try:
-            writer = pq.ParquetWriter(str(path), schema=schema)
+            writer = pq.ParquetWriter(
+                str(path),
+                schema=schema,
+                **_PARQUET_WRITER_KWARGS,
+            )
         except Exception:
             return None
 
@@ -158,8 +173,25 @@ class _InferenceLogWriterManager:
 
 _INFERENCE_LOG_MANAGER = _InferenceLogWriterManager()
 
+
+def configure_inference_parquet_writer(**kwargs: Any) -> None:
+    """Update the keyword arguments used when constructing Parquet writers.
+
+    Parameters mirror :class:`pyarrow.parquet.ParquetWriter`. Passing an empty
+    set of keyword arguments resets the defaults (Zstandard compression,
+    dictionary encoding, and Parquet v2.6 metadata).
+    """
+
+    global _PARQUET_WRITER_KWARGS
+    if kwargs:
+        _PARQUET_WRITER_KWARGS = dict(_DEFAULT_PARQUET_WRITER_KWARGS)
+        _PARQUET_WRITER_KWARGS.update(kwargs)
+    else:
+        _PARQUET_WRITER_KWARGS = dict(_DEFAULT_PARQUET_WRITER_KWARGS)
+
 __all__ = [
     "LOGS_ROOT",
+    "configure_inference_parquet_writer",
     "resolve_inference_log_dir",
     "prepare_inference_event",
     "append_inference_log",

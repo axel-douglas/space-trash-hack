@@ -22,10 +22,13 @@ def test_append_inference_log_uses_cached_writer(monkeypatch, tmp_path):
     write_counts: list[int] = []
 
     class WriterSpy:
-        def __init__(self, path: str, schema: Any) -> None:  # pragma: no cover - helper
+        def __init__(
+            self, path: str, schema: Any, **kwargs: Any
+        ) -> None:  # pragma: no cover - helper
             self.path = Path(path)
             self.schema = schema
             self.count = 0
+            self.kwargs = kwargs
 
         def write_table(self, table: Any) -> None:  # pragma: no cover - helper
             self.count += 1
@@ -34,8 +37,8 @@ def test_append_inference_log_uses_cached_writer(monkeypatch, tmp_path):
         def close(self) -> None:  # pragma: no cover - helper
             pass
 
-    def fake_writer(path: str, schema: Any) -> WriterSpy:
-        writer = WriterSpy(path, schema)
+    def fake_writer(path: str, schema: Any, **kwargs: Any) -> WriterSpy:
+        writer = WriterSpy(path, schema, **kwargs)
         created_paths.append(writer.path)
         return writer
 
@@ -86,4 +89,51 @@ def test_append_inference_log_uses_cached_writer(monkeypatch, tmp_path):
     assert created_paths == [expected_path]
     assert write_counts == [1, 2]
 
+    manager.close()
+
+
+def test_configure_inference_parquet_writer_passes_options(monkeypatch, tmp_path):
+    logging_utils._INFERENCE_LOG_MANAGER.close()
+
+    manager = logging_utils._InferenceLogWriterManager()
+    monkeypatch.setattr(logging_utils, "_INFERENCE_LOG_MANAGER", manager)
+    monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
+
+    captured_kwargs: list[Dict[str, Any]] = []
+
+    class DummyWriter:
+        def write_table(self, table: Any) -> None:  # pragma: no cover - helper
+            pass
+
+        def close(self) -> None:  # pragma: no cover - helper
+            pass
+
+    def fake_writer(path: str, schema: Any, **kwargs: Any) -> DummyWriter:
+        captured_kwargs.append(kwargs)
+        return DummyWriter()
+
+    monkeypatch.setattr(logging_utils.pq, "ParquetWriter", fake_writer)
+
+    logging_utils.configure_inference_parquet_writer()
+    logging_utils.append_inference_log({}, {}, {}, None)
+
+    assert captured_kwargs[-1]["compression"] == "zstd"
+    assert captured_kwargs[-1]["use_dictionary"] is True
+    assert captured_kwargs[-1]["version"] == "2.6"
+
+    manager.close()
+    captured_kwargs.clear()
+
+    logging_utils.configure_inference_parquet_writer(
+        compression="brotli",
+        use_dictionary=False,
+    )
+
+    logging_utils.append_inference_log({}, {}, {}, None)
+
+    assert captured_kwargs[-1]["compression"] == "brotli"
+    assert captured_kwargs[-1]["use_dictionary"] is False
+    assert captured_kwargs[-1]["version"] == "2.6"
+
+    logging_utils.configure_inference_parquet_writer()
     manager.close()
