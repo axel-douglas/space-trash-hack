@@ -60,6 +60,19 @@ features:
     logistics_reuse_index:
       dtype: float32
       description: "Índice Logistics-to-Living basado en potencial de reutilización."
+    regolith_d50_um:
+      dtype: float32
+      description: "Mediana de distribución granulométrica (D50) del regolito base."
+    regolith_spectral_slope_1um:
+      dtype: float32
+      description: "Pendiente espectral 1 µm del regolito (indicador de meteorización)."
+    regolith_mass_loss_400c:
+      dtype: float32
+      range: [0.0, 1.0]
+      description: "Fracción másica liberada <400 °C (agua/químicos volátiles)."
+    regolith_h2o_peak_c:
+      dtype: float32
+      description: "Temperatura pico de liberación de H₂O durante calcinado."
     energy_kwh_per_kg:
       dtype: float32
       description: "Consumo energético específico esperado por proceso."

@@ -1481,6 +1481,33 @@ def test_compute_feature_vector_dataframe_matches_tensor_batch():
             assert lhs == value
 
 
+def test_compute_feature_vector_emits_regolith_characterization():
+    waste_df = pd.DataFrame(
+        {
+            "id": ["R1"],
+            "category": ["Soil"],
+            "material": ["MGS-1 simulant"],
+            "kg": [5.0],
+            "volume_l": [2.0],
+            "flags": [""],
+        }
+    )
+
+    prepared = generator.prepare_waste_frame(waste_df)
+    process = _dummy_process_series()
+    regolith_pct = 0.25
+
+    features = generator.compute_feature_vector(prepared, [1.0], process, regolith_pct)
+
+    for name, baseline in data_sources.REGOLITH_CHARACTERIZATION.feature_items:
+        assert name in features
+        assert features[name] == pytest.approx(regolith_pct * float(baseline), rel=1e-6)
+
+    zero_features = generator.compute_feature_vector(prepared, [1.0], process, 0.0)
+    for name, _ in data_sources.REGOLITH_CHARACTERIZATION.feature_items:
+        assert zero_features[name] == pytest.approx(0.0, abs=1e-8)
+
+
 def test_compute_feature_vector_sequence_matches_batch():
     waste_a = pd.DataFrame(
         {

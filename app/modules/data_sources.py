@@ -50,7 +50,10 @@ __all__ = [
     "OfficialFeaturesBundle",
     "official_features_bundle",
     "lookup_official_feature_values",
+    "RegolithCharacterization",
+    "load_regolith_characterization",
     "REGOLITH_VECTOR",
+    "REGOLITH_CHARACTERIZATION",
     "GAS_MEAN_YIELD",
     "MEAN_REUSE",
     "RegolithThermalBundle",
@@ -458,7 +461,89 @@ def _load_mean_reuse() -> float:
     return 0.6
 
 
+@dataclass(frozen=True)
+class RegolithCharacterization:
+    """Physical descriptors for the baseline MGS-1 simulant."""
+
+    d50_um: float
+    spectral_slope_1um: float
+    mass_loss_400c: float
+    h2o_peak_c: float
+
+    @classmethod
+    def from_properties(cls, table: pd.DataFrame) -> "RegolithCharacterization":
+        working = (
+            table.assign(property=lambda df: df["property"].str.strip().str.lower())
+            .dropna(subset=["property", "value"])
+            .copy()
+        )
+
+        values = pd.to_numeric(working.set_index("property")["value"], errors="coerce")
+        units = (
+            working.set_index("property")["units"].astype(str).str.strip().str.lower()
+            if "units" in working
+            else pd.Series(dtype="string")
+        )
+
+        def _extract(name: str, default: float, *, percent: bool = False) -> float:
+            value = values.get(name)
+            if value is None or not np.isfinite(float(value)):
+                return float(default)
+            numeric = float(value)
+            unit = str(units.get(name, "") or "").lower()
+            if percent or (not percent and unit.startswith("wt%") and name == "water_release"):
+                numeric /= 100.0
+            return float(numeric)
+
+        d50_um = _extract("median_grain_size", 120.0)
+        slope = _extract("spectral_slope_1um", 0.18)
+        mass_loss = _extract(
+            "mass_loss_400c",
+            _extract("water_release", 0.03, percent=True),
+            percent=True,
+        )
+        h2o_peak = _extract("h2o_peak_temp", 360.0)
+
+        return cls(
+            d50_um=float(np.clip(d50_um, 1.0, 5_000.0)),
+            spectral_slope_1um=float(slope),
+            mass_loss_400c=float(np.clip(mass_loss, 0.0, 1.0)),
+            h2o_peak_c=float(np.clip(h2o_peak, 0.0, 2_000.0)),
+        )
+
+    @property
+    def feature_items(self) -> tuple[tuple[str, float], ...]:
+        return (
+            ("regolith_d50_um", float(self.d50_um)),
+            ("regolith_spectral_slope_1um", float(self.spectral_slope_1um)),
+            ("regolith_mass_loss_400c", float(self.mass_loss_400c)),
+            ("regolith_h2o_peak_c", float(self.h2o_peak_c)),
+        )
+
+
+@lru_cache(maxsize=1)
+def load_regolith_characterization() -> RegolithCharacterization:
+    path = resolve_dataset_path("mgs1_properties.csv")
+    if path is None or not path.exists():
+        table = pd.DataFrame(
+            {
+                "property": [
+                    "median_grain_size",
+                    "spectral_slope_1um",
+                    "mass_loss_400c",
+                    "h2o_peak_temp",
+                ],
+                "value": [122.0, 0.18, 0.03, 360.0],
+                "units": ["µm", "%/100nm", "fraction", "c"],
+            }
+        )
+    else:
+        table = pd.read_csv(path)
+    return RegolithCharacterization.from_properties(table)
+
+
 REGOLITH_VECTOR = _load_regolith_vector()
+REGOLITH_CHARACTERIZATION = load_regolith_characterization()
 GAS_MEAN_YIELD = _load_gas_mean_yield()
 MEAN_REUSE = _load_mean_reuse()
 
