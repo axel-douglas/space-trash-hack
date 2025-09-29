@@ -4,11 +4,16 @@ import _bootstrap  # noqa: F401
 import streamlit as st
 from pathlib import Path
 
+from app.modules.navigation import set_active_step
+from app.modules.ui_blocks import load_theme
 repo_root = Path(__file__).resolve().parents[2]
 
 # ⚠️ PRIMER comando Streamlit:
 st.set_page_config(page_title="REX-AI Mars — Brief", page_icon="🛰️", layout="wide")
 
+set_active_step("brief")
+
+load_theme()
 # ---------- Header ----------
 logo_svg = repo_root / "app" / "static" / "logo_rexai.svg"
 cols = st.columns([0.15, 0.85])
@@ -49,17 +54,10 @@ with c2:
     st.write("Targets:", "✅" if tgt_ok else "❌")
 with c3:
     st.subheader("Navegación")
-    colA, colB = st.columns(2)
-    with colA:
-        if st.button("🧱 1) Inventario"):
-            st.switch_page("pages/1_Inventory_Builder.py")
-        if st.button("⚙️ 3) Generador"):
-            st.switch_page("pages/3_Generator.py")
-    with colB:
-        if st.button("🎯 2) Objetivo"):
-            st.switch_page("pages/2_Target_Designer.py")
-        if st.button("📊 4) Resultados"):
-            st.switch_page("pages/4_Results_and_Tradeoffs.py")
+    st.markdown(
+        "Usá la barra superior **Mission HUD** o las teclas `1-9` para saltar de paso.\n"
+        "También podés abrir la barra lateral estándar de Streamlit para ver todas las páginas."
+    )
 
 st.divider()
 st.info(
