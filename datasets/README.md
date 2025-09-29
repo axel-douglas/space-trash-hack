@@ -154,3 +154,104 @@ Because the Logistics-to-Living loader expects descriptor names, the processed
 `l2l_parameters.csv` also renames the raw `variable` header to `feature`. This
 ensures constants such as `l2l_geometry_ctb_small_volume_value` are materialized
 as distinct columns during feature engineering.
+
+## MGS-1 Regolith
+
+The `datasets` directory also bundles public artifacts from the MGS-1 Martian
+regolith simulant release (Cannon et al. 2019, DOI: 10.17632/8vhmgcczwr.1). The
+deposit provides machine-readable exports for the key characterization figures:
+
+* **Figure 3 – Grain-size distribution** → `fig3_psizeData.csv` tabulates the
+  sieve-retained mass fraction for each particle diameter channel, enabling the
+  coarse/fine split used when sampling bulk regolith into waste streams.
+* **Figure 4 – Visible/near-IR spectra** → `fig4_spectralData.csv` holds the
+  bidirectional reflectance curves for the MMS-1, MMS-2, JSC Mars-1 and MGS-1
+  prototype blends, which we reference for optical heuristics.
+* **Figure 5A – Thermogravimetric (TG) profile** → `fig5_tgData.csv` records the
+  cumulative mass loss vs. furnace temperature, constraining devolatilisation
+  assumptions during pyrolysis modeling.
+* **Figure 5B – Evolved Gas Analysis (EGA)** → `fig5_egaData.csv` captures the
+  quadrupole mass spectrometry channels (m/z 18, 32, 44, 64) that inform our
+  expected water, oxygen, carbon dioxide and sulfur dioxide release rates.
+
+### Regeneration steps
+
+The original CSVs from the DOI live under `datasets/raw/` with the `mgs1_*.csv`
+prefix. Run the snippet below to rebuild the derived recipe file consumed by
+`app.modules.data_sources` and to materialise the oxide vector used by
+`REGOLITH_VECTOR`.
+
+```python
+from pathlib import Path
+import pandas as pd
+
+RAW = Path("datasets/raw")
+OUT = Path("datasets")
+
+# Mineral recipe grouped by crystalline vs. amorphous fractions.
+composition = pd.read_csv(RAW / "mgs1_composition.csv")
+phase_map = {
+    "plagioclasa": ("Plagioclase", "Crystalline"),
+    "piroxeno": ("Pyroxene", "Crystalline"),
+    "olivino": ("Olivine", "Crystalline"),
+    "magnetita": ("Magnetite", "Crystalline"),
+    "hematita": ("Hematite", "Crystalline"),
+    "anhidrita": ("Anhydrite", "Crystalline"),
+    "basalto vítreo": ("Basaltic Glass", "Amorphous"),
+    "sílice hidratada": ("Hydrated Silica (Opal)", "Amorphous"),
+    "mg-sulfato": ("Mg-sulfate", "Amorphous"),
+    "ferrihidrita": ("Ferrihydrite", "Amorphous"),
+    "fe-carbonato": ("Fe-carbonate", "Amorphous"),
+}
+
+recipe = (
+    composition.assign(key=composition["mineral"].str.lower())
+    .assign(
+        phase=lambda df: df["key"].map(lambda name: phase_map.get(name, (name, "Crystalline"))[0]),
+        type=lambda df: df["key"].map(lambda name: phase_map.get(name, (name, "Crystalline"))[1]),
+    )
+    [["phase", "type", "wt_percent"]]
+    .rename(columns={"wt_percent": "wt_pct"})
+)
+
+padding = pd.DataFrame(
+    [
+        {"phase": "Quartz", "type": "Crystalline", "wt_pct": 0.0},
+        {"phase": "Ilmenite", "type": "Crystalline", "wt_pct": 0.0},
+    ]
+)
+
+recipe = pd.concat([recipe, padding], ignore_index=True)
+recipe.to_csv(OUT / "MGS-1_Martian_Regolith_Simulant_Recipe.csv", index=False)
+
+# Oxide vector normalised to unit mass for REGOLITH_VECTOR.
+oxides = pd.read_csv(RAW / "mgs1_oxides.csv")
+cleaned = (
+    oxides.assign(oxide=lambda df: df["oxide"].str.lower().str.replace(r"[^0-9a-z]+", "_", regex=True))
+    .groupby("oxide", as_index=False)["wt_percent"].sum()
+)
+
+oxide_vector = cleaned.assign(fraction=lambda df: df["wt_percent"] / df["wt_percent"].sum())
+oxide_vector.to_csv(OUT / "mgs1_oxide_vector.csv", index=False)
+
+summary = {
+    row["oxide"]: row["fraction"] for _, row in oxide_vector.iterrows()
+}
+```
+
+The `summary` mapping mirrors the dictionary returned by
+`app.modules.data_sources._load_regolith_vector()` and therefore the dynamic
+feature columns (`oxide_<oxide_name>`) written by the generator.
+
+### Feature traceability
+
+* `MGS-1_Martian_Regolith_Simulant_Recipe.csv` → columns `phase`, `type`,
+  `wt_pct` feed the regolith composition lookup. When present, the keys become
+  the feature suffixes appended after `oxide_`.
+* `datasets/raw/mgs1_oxides.csv` (and its normalised export above) → the
+  `oxide`/`wt_percent` columns produce `REGOLITH_VECTOR` entries such as
+  `sio2`, `feot`, `mgo`, `cao`, `so3`, `h2o`, `co2`.
+* `datasets/raw/mgs1_properties.csv` → the `amorphous_fraction` and
+  `water_release` fields set the default `regolith_pct` used throughout
+  candidate generation, while the remaining property columns (e.g.
+  `density_bulk`) stay available for future feature engineering.
