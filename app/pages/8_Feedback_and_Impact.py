@@ -1,5 +1,5 @@
 # app/pages/8_Feedback_and_Impact.py
-import app  # noqa: F401
+import _bootstrap  # noqa: F401
 
 # ⚠️ Debe ser la PRIMERA llamada Streamlit:
 import streamlit as st

@@ -6,6 +6,16 @@ Demo ligera que muestra la lógica del "cerebro de reciclaje" para Marte:
 3) Generación de recetas (combinaciones + proceso)
 4) Resultados y trade-offs (Pareto, Sankey, métricas)
 
+## Ejecución
+
+La entrada recomendada para lanzar la demo es:
+
+```bash
+streamlit run app/Home.py
+```
+
+No se requieren variables de entorno adicionales para el arranque interactivo.
+
 ## Módulos principales
 
 La refactorización de 2025 separó responsabilidades clave para mantener el

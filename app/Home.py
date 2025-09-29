@@ -1,5 +1,5 @@
 # app/Home.py
-import app  # noqa: F401
+import _bootstrap  # noqa: F401
 
 from datetime import datetime
 import streamlit as st

@@ -1,4 +1,4 @@
-import app  # noqa: F401
+import _bootstrap  # noqa: F401
 
 import streamlit as st
 import pandas as pd
