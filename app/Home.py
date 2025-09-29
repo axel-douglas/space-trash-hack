@@ -77,6 +77,54 @@ def format_mass(value: float | int | None) -> str:
 
 # ──────────── Estilos y animaciones globales ────────────
 st.markdown(
+    """
+    <style>
+    .hero {
+      border-radius: 28px;
+      padding: 36px 42px;
+      background: linear-gradient(135deg, rgba(59,130,246,0.22), rgba(59,130,246,0.05)),
+                  linear-gradient(180deg, rgba(15,23,42,0.9), rgba(15,23,42,0.72));
+      border: 1px solid rgba(96,165,250,0.32);
+      color: var(--ink);
+      position: relative;
+      overflow: hidden;
+    }
+    .hero:after {
+      content:""; position:absolute; inset:-120px; background: radial-gradient(circle at top right, rgba(96,165,250,0.35), transparent 55%);
+      pointer-events:none;
+    }
+    .hero h1 {font-size: 2.25rem; margin-bottom: 12px; letter-spacing: 0.02em;}
+    .hero p {font-size: 1.04rem; max-width: 720px; color: var(--muted);}
+    .chip-row {display:flex; gap:8px; margin-top: 18px; flex-wrap:wrap;}
+    .chip {
+      padding:6px 14px; border-radius:999px; font-size:0.82rem; font-weight:600;
+      background: var(--chip-bg); border: 1px solid var(--chip-border); color: var(--chip-ink);
+    }
+    .ghost-card {
+      margin-top: 38px; display:grid; gap:18px; grid-template-columns: repeat(auto-fit,minmax(260px,1fr));
+    }
+    .ghost-card > div {
+      padding:20px 22px; border-radius:20px; border:1px solid var(--border-soft);
+      background: var(--surface-card); color: var(--ink);
+    }
+    .ghost-card h3 {margin-bottom:6px; font-size:1.05rem;}
+    .ghost-card p {color: var(--muted); font-size:0.94rem; margin:0;}
+    .stepper {display:grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap:14px; margin: 32px 0 18px;}
+    .step {border-radius:18px; border:1px solid var(--step-border); padding:16px 18px; background: var(--step-bg);}
+    .step span {display:inline-flex; width:32px; height:32px; border-radius:999px; align-items:center; justify-content:center; background: var(--step-icon-bg); color: var(--ink); font-weight:700; margin-bottom:10px;}
+    .step h4 {margin:0 0 6px 0;}
+    .step p {color: var(--muted); font-size:0.9rem; margin:0;}
+    .metric-grid {display:grid; grid-template-columns: repeat(auto-fit,minmax(210px,1fr)); gap:16px; margin-top: 18px;}
+    .metric {border-radius:18px; padding:18px 20px; background:var(--metric-bg); border:1px solid var(--metric-border); color:var(--ink); box-shadow: var(--metric-shadow);}
+    .metric h5 {margin:0; font-size:0.92rem; color:var(--muted);}
+    .metric strong {font-size:1.4rem; display:block; margin-top:6px;}
+    .timeline {margin-top: 28px;}
+    .timeline h3 {margin-bottom: 12px;}
+    .timeline ul {list-style:none; padding:0; margin:0;}
+    .timeline li {margin-bottom: 14px; padding-left: 18px; position:relative; color:var(--muted);}
+    .timeline li::before {content:"•"; position:absolute; left:0; color: var(--accent); font-size:1.3rem;}
+    </style>
+    """,
     dedent(
         """
         <style>
