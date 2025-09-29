@@ -6,6 +6,7 @@ import pytest
 
 from app.modules.data_sources import (
     RegolithCharacterization,
+    REGOLITH_CHARACTERIZATION,
     load_regolith_characterization,
     load_regolith_particle_size,
     load_regolith_spectra,
@@ -80,3 +81,16 @@ def test_regolith_characterization_bundle_is_cached() -> None:
     assert bundle.particle_metrics["d50_microns"] == pytest.approx(83.8, rel=0.02)
     assert "mass_loss_total_percent" in bundle.thermal_metrics
     assert "peak_temperature_m_z_44_co2" in bundle.gas_release_peaks
+    assert bundle.feature_items == REGOLITH_CHARACTERIZATION.feature_items
+    assert {name for name, _ in bundle.feature_items} == {
+        "regolith_d50_um",
+        "regolith_spectral_slope_1um",
+        "regolith_mass_loss_400c",
+        "regolith_h2o_peak_c",
+    }
+    assert REGOLITH_CHARACTERIZATION.particle_size.shape == bundle.particle_size.shape
+    assert REGOLITH_CHARACTERIZATION.spectra.shape == bundle.spectra.shape
+    assert (
+        REGOLITH_CHARACTERIZATION.thermogravimetry.shape
+        == bundle.thermogravimetry.shape
+    )
