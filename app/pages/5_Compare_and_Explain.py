@@ -6,12 +6,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 
 from app.modules.explain import compare_table, score_breakdown
-from app.modules.ui_blocks import load_theme
 
 # ⚠️ Debe ser la PRIMERA llamada de Streamlit en la página
 st.set_page_config(page_title="Comparar & Explicar", page_icon="🧪", layout="wide")
-
-load_theme()
 
 # ======== estado requerido ========
 cands  = st.session_state.get("candidates", [])

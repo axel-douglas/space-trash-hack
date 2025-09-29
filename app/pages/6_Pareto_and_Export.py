@@ -11,12 +11,9 @@ from app.modules.explain import compare_table
 from app.modules.analytics import pareto_front
 from app.modules.exporters import candidate_to_json, candidate_to_csv
 from app.modules.safety import check_safety  # recalcular badge al seleccionar
-from app.modules.ui_blocks import load_theme
 
 # ⚠️ PRIMERA llamada
 st.set_page_config(page_title="Pareto & Export", page_icon="📤", layout="wide")
-
-load_theme()
 
 # ======== estado requerido ========
 cands  = st.session_state.get("candidates", [])

@@ -5,8 +5,6 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from app.modules.ui_blocks import load_theme
-
 from app.modules.data_sources import (
     load_regolith_granulometry,
     load_regolith_spectral_curves,
@@ -15,8 +13,6 @@ from app.modules.data_sources import (
 from app.modules.explain import score_breakdown
 
 st.set_page_config(page_title="Rex-AI • Resultados", page_icon="📊", layout="wide")
-
-load_theme()
 
 selected = st.session_state.get("selected")
 target = st.session_state.get("target")

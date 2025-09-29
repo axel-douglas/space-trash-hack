@@ -5,12 +5,9 @@ import streamlit as st
 import pandas as pd
 
 from app.modules.scenarios import PLAYBOOKS  # dict: {scenario: Playbook(name, summary, steps=[...])}
-from app.modules.ui_blocks import load_theme
 
 # ⚠️ Debe ser la primera llamada
 st.set_page_config(page_title="Scenario Playbooks", page_icon="📚", layout="wide")
-
-load_theme()
 
 # ======== Estado compartido ========
 target      = st.session_state.get("target", None)

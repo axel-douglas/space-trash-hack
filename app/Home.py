@@ -4,15 +4,12 @@ import _bootstrap  # noqa: F401
 from datetime import datetime
 import streamlit as st
 from app.modules.ml_models import get_model_registry
-from app.modules.ui_blocks import load_theme
 
 st.set_page_config(
     page_title="Rex-AI • Mission Copilot",
     page_icon="🛰️",
     layout="wide",
 )
-
-load_theme()
 
 model_registry = get_model_registry()
 

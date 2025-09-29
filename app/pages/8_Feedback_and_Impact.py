@@ -3,11 +3,8 @@ import _bootstrap  # noqa: F401
 
 # ⚠️ Debe ser la PRIMERA llamada Streamlit:
 import streamlit as st
-from app.modules.ui_blocks import load_theme
 
 st.set_page_config(page_title="Feedback & Impact", page_icon="📝", layout="wide")
-
-load_theme()
 
 import json
 import pandas as pd
@@ -79,7 +76,7 @@ def _with_extra_columns(df: pd.DataFrame, rename_map: dict[str, str] | None = No
     return work
 
 # ========= estilos SpaceX/NASA-like =========
-# (Se cargan desde app/static/theme.css vía load_theme)
+# (Se cargan desde app/static/theme.css vía el tema global)
 
 # ========= estado compartido =========
 target      = st.session_state.get("target", None)
