@@ -110,6 +110,33 @@ model_name = model_registry.metadata.get("model_name", "rexai-rf-ensemble")
 feature_count = len(getattr(model_registry, "feature_names", []) or [])
 
 # ──────────── Hero interactivo ────────────
+mission_briefing(
+    title="Mission Briefing • Rex-AI en órbita marciana",
+    tagline="Sincronizá sensores, crew y modelo para reciclar basura orbital en hardware vital.",
+    video_path=Path(__file__).resolve().parent / "static" / "mission_briefing_loop.mp4",
+    cards=[
+        BriefingCard(
+            title="Crew Ops + IA",
+            body="La cabina recibe datos del inventario NASA, restricciones de crew-time y energía en tiempo real.",
+            accent="#38bdf8",
+        ),
+        BriefingCard(
+            title="Trazabilidad total",
+            body="Cada decisión enlaza features, flags de riesgo y la receta final exportable a ingeniería.",
+            accent="#a855f7",
+        ),
+        BriefingCard(
+            title="Seguridad primero",
+            body="Bandas de confianza, monitoreo de toxicidad EVA y comparadores heurísticos siempre visibles.",
+            accent="#f97316",
+        ),
+    ],
+    steps=[
+        ("Calibrá el inventario", "Normalizá residuos, detectá flags EVA y estructuras multi-layer."),
+        ("Seleccioná objetivo", "Define límites de agua, energía y logística con presets marcianos."),
+        ("Generá y valida", "Rex-AI mezcla, explica contribuciones y exporta procesos listos para la tripulación."),
+    ],
+)
 ready = "✅ Modelo listo" if model_registry.ready else "⚠️ Entrená localmente"
 
 mission_stages = [
@@ -585,6 +612,7 @@ orbital_timeline(
             icon="📦",
         ),
     ]
+)
 # ──────────── Animación de aparición por scroll ────────────
 st.markdown(
     """
