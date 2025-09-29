@@ -70,6 +70,58 @@ MetricGalaxy(
 - El `delta` se renderiza en un subtítulo pequeño; usalo para diferencias heurística/ML.
 - `min_width` controla el ancho mínimo de cada tarjeta dentro de la grilla.
 
+### `RankingCockpit`
+Cabina de ranking con tarjetas comparativas, barras neumórficas y filtros interactivos.
+
+```python
+from app.modules.luxe_components import MetricSpec, RankingCockpit
+
+cockpit = RankingCockpit(
+    entries=[
+        {
+            "Rank": 1,
+            "Score": 0.91,
+            "Proceso": "P04 · Sinter EVA",
+            "Rigidez": 12.4,
+            "Estanqueidad": 0.88,
+            "Energía (kWh)": 14.2,
+            "Agua (L)": 8.1,
+            "Crew (min)": 36.0,
+            "Seal": "✅",
+            "Riesgo": "Bajo",
+        },
+        {
+            "Rank": 2,
+            "Score": 0.86,
+            "Proceso": "P02 · Laminado CTB",
+            "Rigidez": 11.9,
+            "Estanqueidad": 0.9,
+            "Energía (kWh)": 18.5,
+            "Agua (L)": 6.4,
+            "Crew (min)": 42.0,
+            "Seal": "⚠️",
+            "Riesgo": "Medio",
+        },
+    ],
+    metric_specs=[
+        MetricSpec("Rigidez", "Rigidez", "{:.2f}"),
+        MetricSpec("Estanqueidad", "Estanqueidad", "{:.2f}"),
+        MetricSpec("Energía (kWh)", "Energía", "{:.1f}", unit="kWh", higher_is_better=False),
+        MetricSpec("Agua (L)", "Agua", "{:.1f}", unit="L", higher_is_better=False),
+        MetricSpec("Crew (min)", "Crew", "{:.0f}", unit="min", higher_is_better=False),
+    ],
+    key="demo_ranking",
+    selection_label="📌 Foco del cockpit",
+)
+
+focused_entry = cockpit.render()
+```
+
+- `entries` es una lista de diccionarios: cada fila debe exponer las claves para score, riesgo/sellado y métricas.
+- Configurá las barras con `MetricSpec`: la propiedad `higher_is_better=False` invierte la escala (útil para agua/energía/crew).
+- El usuario puede ordenar por cualquier métrica, filtrar riesgos/sellos y elegir una tarjeta activa (la clase `selected` aplica un glow azul).
+- El método `render()` devuelve el diccionario del candidato seleccionado para que puedas sincronizarlo con otros módulos (`st.session_state`, tabs, etc.).
+
 ### `GlassStack`
 Stack responsivo de tarjetas glassmórficas.
 

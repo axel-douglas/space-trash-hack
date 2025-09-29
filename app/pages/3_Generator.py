@@ -20,7 +20,7 @@ from app.modules.ui_blocks import (
     load_theme,
     micro_divider,
 )
-from app.modules.luxe_components import TeslaHero, ChipRow
+from app.modules.luxe_components import ChipRow, MetricSpec, RankingCockpit, TeslaHero
 from app.modules.visualizations import ConvergenceScene
 
 st.set_page_config(page_title="Rex-AI • Generador", page_icon="🤖", layout="wide")
@@ -321,8 +321,22 @@ for idx, cand in enumerate(cands, start=1):
 if summary_rows:
     st.subheader("Ranking multiobjetivo")
     st.caption("Ordenado por score total, con sellado y riesgo resumidos.")
-    summary_df = pd.DataFrame(summary_rows)
-    st.dataframe(summary_df, hide_index=True, use_container_width=True)
+    cockpit = RankingCockpit(
+        entries=summary_rows,
+        metric_specs=[
+            MetricSpec("Rigidez", "Rigidez", "{:.2f}"),
+            MetricSpec("Estanqueidad", "Estanqueidad", "{:.2f}"),
+            MetricSpec("Energía (kWh)", "Energía", "{:.2f}", unit="kWh", higher_is_better=False),
+            MetricSpec("Agua (L)", "Agua", "{:.1f}", unit="L", higher_is_better=False),
+            MetricSpec("Crew (min)", "Crew", "{:.1f}", unit="min", higher_is_better=False),
+        ],
+        key="generator_ranking",
+        score_label="Score",
+        selection_label="📌 Candidato destacado",
+    )
+    selected_summary = cockpit.render()
+    if selected_summary is not None:
+        st.session_state["generator_ranking_focus"] = selected_summary
 
 # ----------------------------- Showroom de candidatos -----------------------------
 st.subheader("Resultados del generador")

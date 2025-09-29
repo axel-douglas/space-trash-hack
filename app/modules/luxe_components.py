@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import base64
 import json
+import math
+import unicodedata
 from dataclasses import dataclass, field
+from html import escape
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Literal, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Literal, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import plotly.graph_objects as go
@@ -587,6 +590,226 @@ _LUXE_COMPONENT_CSS = """
 </style>
 """
 
+_RANKING_COCKPIT_CSS = """
+<style>
+.ranking-cockpit {
+  display: grid;
+  gap: 1.2rem;
+  margin-top: 0.4rem;
+}
+
+.ranking-cockpit__controls {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  align-items: end;
+}
+
+.ranking-cockpit__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1rem;
+}
+
+.ranking-card {
+  position: relative;
+  padding: 1.25rem 1.4rem;
+  border-radius: 24px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: linear-gradient(145deg, rgba(15, 23, 42, 0.78), rgba(30, 41, 59, 0.78));
+  box-shadow: 18px 18px 38px rgba(8, 15, 35, 0.55), -18px -18px 36px rgba(59, 130, 246, 0.05);
+  color: var(--luxe-ink);
+  transition: transform 0.35s ease, border-color 0.35s ease, box-shadow 0.35s ease;
+  overflow: hidden;
+}
+
+.ranking-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 20% -20%, rgba(96, 165, 250, 0.18), transparent 55%);
+  opacity: 0.75;
+  pointer-events: none;
+}
+
+.ranking-card.selected {
+  border-color: rgba(96, 165, 250, 0.65);
+  transform: translateY(-6px);
+  box-shadow: 0 28px 60px rgba(37, 99, 235, 0.48);
+}
+
+.ranking-card.tone-high {
+  border-color: rgba(239, 68, 68, 0.55);
+}
+
+.ranking-card.tone-med {
+  border-color: rgba(245, 158, 11, 0.55);
+}
+
+.ranking-card__header {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.8rem;
+  align-items: center;
+  margin-bottom: 0.85rem;
+}
+
+.ranking-card__rank {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: rgba(148, 197, 255, 0.95);
+}
+
+.ranking-card__title {
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.ranking-card__origin {
+  display: block;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(226, 232, 240, 0.62);
+}
+
+.ranking-card__score {
+  text-align: right;
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(226, 232, 240, 0.7);
+}
+
+.ranking-card__score strong {
+  display: block;
+  font-size: 1.25rem;
+  letter-spacing: normal;
+  color: var(--luxe-ink);
+}
+
+.ranking-card__chips {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.ranking-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.32rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(148, 163, 184, 0.12);
+  color: rgba(226, 232, 240, 0.78);
+}
+
+.ranking-chip.seal-ok {
+  border-color: rgba(34, 197, 94, 0.45);
+  background: rgba(34, 197, 94, 0.18);
+  color: rgba(15, 23, 42, 0.9);
+}
+
+.ranking-chip.seal-warn {
+  border-color: rgba(245, 158, 11, 0.5);
+  background: rgba(245, 158, 11, 0.18);
+  color: rgba(15, 23, 42, 0.92);
+}
+
+.ranking-chip.risk-low {
+  border-color: rgba(96, 165, 250, 0.45);
+  background: rgba(96, 165, 250, 0.16);
+  color: rgba(226, 232, 240, 0.92);
+}
+
+.ranking-chip.risk-med {
+  border-color: rgba(245, 158, 11, 0.55);
+  background: rgba(245, 158, 11, 0.22);
+  color: rgba(15, 23, 42, 0.9);
+}
+
+.ranking-chip.risk-high {
+  border-color: rgba(239, 68, 68, 0.6);
+  background: rgba(239, 68, 68, 0.22);
+  color: rgba(15, 23, 42, 0.95);
+}
+
+.ranking-card__metrics {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.ranking-metric {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.ranking-metric__label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgba(226, 232, 240, 0.66);
+}
+
+.ranking-metric__value {
+  font-size: 0.98rem;
+  font-weight: 600;
+  color: var(--luxe-ink);
+}
+
+.ranking-bar {
+  position: relative;
+  height: 0.65rem;
+  border-radius: 999px;
+  background: linear-gradient(145deg, rgba(12, 18, 34, 0.92), rgba(20, 32, 52, 0.92));
+  box-shadow: inset 2px 3px 6px rgba(0, 0, 0, 0.45), inset -2px -3px 6px rgba(59, 130, 246, 0.25);
+  overflow: hidden;
+}
+
+.ranking-bar__fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: var(--fill, 0%);
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(96, 165, 250, 0.9), rgba(56, 189, 248, 0.55));
+  box-shadow: 0 6px 16px rgba(37, 99, 235, 0.55);
+  transition: width 0.45s ease;
+}
+
+.ranking-bar__fill[data-tone='low'] {
+  background: linear-gradient(90deg, rgba(34, 197, 94, 0.9), rgba(59, 130, 246, 0.55));
+}
+
+.ranking-bar__fill[data-tone='med'] {
+  background: linear-gradient(90deg, rgba(245, 158, 11, 0.85), rgba(249, 115, 22, 0.55));
+}
+
+.ranking-bar__fill[data-tone='high'] {
+  background: linear-gradient(90deg, rgba(239, 68, 68, 0.88), rgba(249, 115, 22, 0.55));
+  box-shadow: 0 6px 16px rgba(239, 68, 68, 0.55);
+}
+
+.ranking-empty {
+  padding: 1rem 1.2rem;
+  border-radius: 18px;
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px dashed rgba(148, 163, 184, 0.3);
+  color: rgba(226, 232, 240, 0.82);
+}
+</style>
+"""
+
 _UTILITY_CSS = """
 <style>
 .card {
@@ -650,7 +873,12 @@ def _load_css() -> None:
     if st.session_state.get(_CSS_KEY):
         return
 
-    for css in (_BRIEFING_AND_TARGET_CSS, _LUXE_COMPONENT_CSS, _UTILITY_CSS):
+    for css in (
+        _BRIEFING_AND_TARGET_CSS,
+        _LUXE_COMPONENT_CSS,
+        _RANKING_COCKPIT_CSS,
+        _UTILITY_CSS,
+    ):
         st.markdown(css, unsafe_allow_html=True)
 
     st.session_state[_CSS_KEY] = True
@@ -680,6 +908,46 @@ def _class_names(*tokens: Iterable[str]) -> str:
         else:
             classes.extend(t for t in token if t)
     return " ".join(cls for cls in classes if cls)
+
+
+def _is_nan(value: Any) -> bool:
+    try:
+        return bool(np.isnan(value))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return False
+
+
+def _coerce_numeric(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+        return None if _is_nan(number) else number
+    if isinstance(value, np.generic):
+        number = float(value)
+        return None if _is_nan(number) else number
+
+    text = str(value).strip()
+    if not text:
+        return None
+    sanitized = text.replace("%", "")
+    try:
+        number = float(sanitized)
+    except ValueError:
+        return None
+    return None if _is_nan(number) else number
+
+
+def _normalize_str(value: Any, placeholder: str = "—") -> str:
+    if value is None:
+        return placeholder
+    text = str(value).strip()
+    return text if text else placeholder
+
+
+def _strip_accents(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value)
+    return "".join(char for char in normalized if not unicodedata.combining(char))
 
 
 def render_card(title: str, body: str = "") -> str:
@@ -1605,6 +1873,430 @@ class MetricGalaxy:
         st.markdown("".join(html), unsafe_allow_html=True)
 
 
+# ---------------------------------------------------------------------------
+# Ranking cockpit
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class MetricSpec:
+    key: str
+    label: str
+    fmt: Callable[[Any], str] | str | None = "{:.2f}"
+    unit: str | None = None
+    higher_is_better: bool = True
+
+    def format_value(self, value: Any) -> str:
+        if value is None or _is_nan(value):
+            return "—"
+        formatter = self.fmt
+        if callable(formatter):
+            try:
+                rendered = formatter(value)
+            except Exception:  # noqa: BLE001
+                rendered = str(value)
+        elif isinstance(formatter, str):
+            try:
+                rendered = formatter.format(value)
+            except Exception:  # noqa: BLE001
+                rendered = str(value)
+        else:
+            rendered = str(value)
+        if self.unit and self.unit not in rendered:
+            return f"{rendered} {self.unit}".strip()
+        return rendered
+
+    def numeric_value(self, entry: Mapping[str, Any]) -> float | None:
+        return _coerce_numeric(entry.get(self.key))
+
+
+@dataclass
+class RankingCockpit:
+    entries: Sequence[Mapping[str, Any]]
+    metric_specs: Sequence[MetricSpec] = field(default_factory=list)
+    key: str = "ranking_cockpit"
+    rank_key: str = "Rank"
+    label_key: str = "Proceso"
+    score_key: str = "Score"
+    score_label: str | None = None
+    score_fmt: Callable[[Any], str] | str | None = "{:.3f}"
+    seal_key: str | None = "Seal"
+    risk_key: str | None = "Riesgo"
+    selection_label: str = "📌 Foco del cockpit"
+    empty_message: str = "No hay candidatos para mostrar."
+
+    def render(self, container: st.delta_generator.DeltaGenerator | None = None) -> Mapping[str, Any] | None:  # type: ignore[name-defined]
+        _load_css()
+        target = container if container is not None else st
+        panel = target.container()
+
+        entries = [dict(entry) for entry in self.entries]
+        if not entries:
+            panel.markdown(
+                f"<div class='ranking-empty'>{escape(self.empty_message)}</div>",
+                unsafe_allow_html=True,
+            )
+            return None
+
+        sort_labels = self._sort_label_map()
+        sort_options = list(sort_labels.keys())
+        widget_prefix = f"{self.key}__"
+
+        col_sort, col_dir, col_risk, col_seal = panel.columns([2.2, 1.1, 1.4, 1.4])
+        sort_key = col_sort.selectbox(
+            "Ordenar por",
+            sort_options,
+            key=f"{widget_prefix}sort",
+            format_func=lambda opt: sort_labels.get(opt, opt),
+        )
+        direction = col_dir.radio(
+            "Dirección",
+            ("desc", "asc"),
+            horizontal=True,
+            key=f"{widget_prefix}direction",
+            format_func=lambda opt: "Desc ↓" if opt == "desc" else "Asc ↑",
+        )
+
+        risk_filters: list[str] = []
+        if self.risk_key:
+            risk_options = self._collect_options(entries, self.risk_key)
+            if risk_options:
+                risk_filters = col_risk.multiselect(
+                    "Riesgo",
+                    risk_options,
+                    default=risk_options,
+                    key=f"{widget_prefix}risk",
+                    format_func=self._format_risk_option,
+                )
+            else:
+                col_risk.empty()
+        else:
+            col_risk.empty()
+
+        seal_filters: list[str] = []
+        if self.seal_key:
+            seal_options = self._collect_options(entries, self.seal_key)
+            if seal_options:
+                seal_filters = col_seal.multiselect(
+                    "Sellado",
+                    seal_options,
+                    default=seal_options,
+                    key=f"{widget_prefix}seal",
+                    format_func=self._format_seal_option,
+                )
+            else:
+                col_seal.empty()
+        else:
+            col_seal.empty()
+
+        filtered = [
+            entry
+            for entry in entries
+            if self._passes_filters(entry, risk_filters, seal_filters)
+        ]
+        if not filtered:
+            panel.markdown(
+                "<div class='ranking-empty'>No hay candidatos que coincidan con los filtros.</div>",
+                unsafe_allow_html=True,
+            )
+            return None
+
+        descending = direction == "desc"
+        self._sort_entries(filtered, sort_key, descending)
+
+        selection_key = f"{widget_prefix}selection"
+        options = list(range(len(filtered)))
+        if selection_key not in st.session_state:
+            st.session_state[selection_key] = 0
+        elif st.session_state[selection_key] >= len(filtered):
+            st.session_state[selection_key] = 0
+
+        selected_idx = panel.selectbox(
+            self.selection_label,
+            options,
+            key=selection_key,
+            format_func=lambda idx: self._selection_label(filtered[idx], idx),
+        )
+        if not isinstance(selected_idx, int) or selected_idx >= len(filtered):
+            selected_idx = 0
+
+        scales = self._metric_scales(filtered)
+        prepared = self._prepare_entries(filtered, scales)
+        markup = self._build_cards(prepared, selected_idx)
+        panel.markdown(markup, unsafe_allow_html=True)
+
+        return prepared[selected_idx]["entry"]
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _sort_label_map(self) -> Dict[str, str]:
+        labels: Dict[str, str] = {}
+        if self.score_key:
+            labels[self.score_key] = self.score_label or self.score_key
+        for spec in self.metric_specs:
+            labels[spec.key] = spec.label
+        return labels
+
+    def _collect_options(self, entries: Sequence[Mapping[str, Any]], key: str | None) -> list[str]:
+        values: set[str] = set()
+        if key is None:
+            return []
+        for entry in entries:
+            values.add(_normalize_str(entry.get(key)))
+        return sorted(values)
+
+    def _passes_filters(
+        self,
+        entry: Mapping[str, Any],
+        risk_filters: Sequence[str],
+        seal_filters: Sequence[str],
+    ) -> bool:
+        if self.risk_key and risk_filters:
+            label = _normalize_str(entry.get(self.risk_key))
+            if label not in risk_filters:
+                return False
+        if self.seal_key and seal_filters:
+            label = _normalize_str(entry.get(self.seal_key))
+            if label not in seal_filters:
+                return False
+        return True
+
+    def _sort_entries(self, entries: list[Mapping[str, Any]], key: str, descending: bool) -> None:
+        def sort_value(entry: Mapping[str, Any]) -> Any:
+            numeric = _coerce_numeric(entry.get(key))
+            if numeric is not None:
+                return numeric
+            raw = entry.get(key)
+            if raw is None:
+                return float("-inf") if descending else float("inf")
+            return str(raw)
+
+        entries.sort(key=sort_value, reverse=descending)
+
+    def _metric_scales(self, entries: Sequence[Mapping[str, Any]]) -> Dict[str, tuple[float, float] | None]:
+        scales: Dict[str, tuple[float, float] | None] = {}
+        for spec in self.metric_specs:
+            values = [spec.numeric_value(entry) for entry in entries]
+            numeric_values = [val for val in values if val is not None]
+            if not numeric_values:
+                scales[spec.key] = None
+                continue
+            scales[spec.key] = (min(numeric_values), max(numeric_values))
+        return scales
+
+    def _prepare_entries(
+        self,
+        entries: Sequence[Mapping[str, Any]],
+        scales: Mapping[str, tuple[float, float] | None],
+    ) -> list[Dict[str, Any]]:
+        prepared: list[Dict[str, Any]] = []
+        for idx, entry in enumerate(entries):
+            metrics_payload: list[Dict[str, Any]] = []
+            for spec in self.metric_specs:
+                bounds = scales.get(spec.key)
+                numeric_value = spec.numeric_value(entry)
+                fill_pct = self._metric_fill(numeric_value, bounds, spec.higher_is_better)
+                tone = self._bar_tone(fill_pct)
+                metrics_payload.append(
+                    {
+                        "label": spec.label,
+                        "display": spec.format_value(entry.get(spec.key)),
+                        "fill": fill_pct,
+                        "tone": tone,
+                        "key": spec.key,
+                    }
+                )
+
+            risk_label = _normalize_str(entry.get(self.risk_key)) if self.risk_key else ""
+            risk_tone = self._risk_tone(risk_label)
+            risk_display = self._format_risk_display(risk_label, risk_tone)
+
+            seal_label = _normalize_str(entry.get(self.seal_key)) if self.seal_key else ""
+            seal_status, seal_display = self._seal_display(seal_label)
+
+            prepared.append(
+                {
+                    "entry": entry,
+                    "position": idx + 1,
+                    "label": _normalize_str(entry.get(self.label_key)),
+                    "score": entry.get(self.score_key),
+                    "score_display": self._format_score(entry.get(self.score_key)),
+                    "metrics": metrics_payload,
+                    "risk_label": risk_label,
+                    "risk_tone": risk_tone,
+                    "risk_display": risk_display,
+                    "seal_label": seal_label,
+                    "seal_status": seal_status,
+                    "seal_display": seal_display,
+                    "original_rank": entry.get(self.rank_key),
+                }
+            )
+        return prepared
+
+    def _metric_fill(
+        self,
+        value: float | None,
+        bounds: tuple[float, float] | None,
+        higher_is_better: bool,
+    ) -> float:
+        if value is None or bounds is None:
+            return 0.0
+        lower, upper = bounds
+        if math.isclose(lower, upper):
+            width = 100.0
+        else:
+            width = (value - lower) / (upper - lower) * 100.0
+        width = max(0.0, min(100.0, width))
+        if not higher_is_better:
+            width = 100.0 - width
+        return width
+
+    def _bar_tone(self, width: float) -> str:
+        if width >= 66:
+            return "high"
+        if width >= 33:
+            return "med"
+        return "low"
+
+    def _risk_tone(self, label: str) -> str:
+        if not label or label == "—":
+            return "low"
+        lowered = label.lower()
+        cleaned = _strip_accents(lowered)
+        if any(token in cleaned for token in ("crit", "critico", "alto", "high", "red", "rojo")) or "⚠" in label:
+            return "high"
+        if any(token in cleaned for token in ("med", "medio", "moderado", "amarillo", "amber")):
+            return "med"
+        return "low"
+
+    def _format_risk_display(self, label: str, tone: str) -> str:
+        if not label or label == "—":
+            label = "Sin dato"
+        icon_map = {"high": "⚠️", "med": "🟡", "low": "🛡️"}
+        icon = icon_map.get(tone, "🛡️")
+        return label if icon in label else f"{icon} {label}"
+
+    def _seal_display(self, label: str) -> tuple[str, str]:
+        normalized = label
+        lowered = normalized.lower()
+        cleaned = _strip_accents(lowered)
+        if not normalized or normalized == "—":
+            return ("neutral", "🔍 Sin dato")
+        if "⚠" in normalized or "❌" in normalized or any(
+            token in cleaned for token in ("riesgo", "warn", "fail", "falla", "no")):
+            return ("warn", "⚠️ Revisar sellado" if normalized in {"⚠️", "❌"} else normalized)
+        if "✅" in normalized or "✔" in normalized or any(
+            token in cleaned for token in ("ok", "pass", "sellado ok", "sellado", "si", "yes", "true")):
+            return ("ok", "✅ Sellado OK" if normalized in {"✅", "✔️", "✔"} else normalized)
+        if "revis" in cleaned:
+            return ("warn", normalized)
+        return ("neutral", normalized)
+
+    def _format_seal_option(self, label: str) -> str:
+        status, display = self._seal_display(label)
+        return display
+
+    def _format_risk_option(self, label: str) -> str:
+        tone = self._risk_tone(label)
+        return self._format_risk_display(label, tone)
+
+    def _format_score(self, value: Any) -> str:
+        if value is None or _is_nan(value):
+            return "—"
+        formatter = self.score_fmt
+        if callable(formatter):
+            try:
+                return formatter(value)
+            except Exception:  # noqa: BLE001
+                return str(value)
+        if isinstance(formatter, str):
+            try:
+                return formatter.format(value)
+            except Exception:  # noqa: BLE001
+                return str(value)
+        return str(value)
+
+    def _selection_label(self, entry: Mapping[str, Any], idx: int) -> str:
+        label = _normalize_str(entry.get(self.label_key))
+        score_display = self._format_score(entry.get(self.score_key))
+        return f"#{idx + 1} · {label} ({score_display})"
+
+    def _build_cards(self, prepared: Sequence[Mapping[str, Any]], selected_idx: int) -> str:
+        cards: list[str] = []
+        score_label = escape(self.score_label or self.score_key)
+        for idx, item in enumerate(prepared):
+            classes = ["ranking-card"]
+            risk_tone = item.get("risk_tone", "low")
+            if risk_tone in {"high", "med"}:
+                classes.append(f"tone-{risk_tone}")
+            if idx == selected_idx:
+                classes.append("selected")
+
+            chips: list[str] = []
+            seal_status = item.get("seal_status", "neutral")
+            seal_display = item.get("seal_display", "")
+            if seal_display:
+                seal_class = f" seal-{seal_status}" if seal_status in {"ok", "warn"} else ""
+                chips.append(
+                    f"<span class='ranking-chip{seal_class}'>{escape(seal_display)}</span>"
+                )
+            risk_display = item.get("risk_display", "")
+            if risk_display:
+                chips.append(
+                    f"<span class='ranking-chip risk-{risk_tone}'>{escape(risk_display)}</span>"
+                )
+            chips_block = (
+                f"<div class='ranking-card__chips'>{''.join(chips)}</div>" if chips else ""
+            )
+
+            metrics_html = "".join(
+                f"""
+                <div class='ranking-metric'>
+                  <div class='ranking-metric__label'>
+                    <span>{escape(metric['label'])}</span>
+                    <span class='ranking-metric__value'>{escape(metric['display'])}</span>
+                  </div>
+                  <div class='ranking-bar'>
+                    <div class='ranking-bar__fill' data-metric='{escape(metric['key'])}' data-rank='{item['position']}' style='--fill:{metric['fill']:.1f}%;' data-tone='{metric['tone']}'></div>
+                  </div>
+                </div>
+                """
+                for metric in item.get("metrics", [])
+            )
+
+            origin_html = ""
+            original_rank = item.get("original_rank")
+            if original_rank not in (None, "", item.get("position")):
+                origin_html = (
+                    f"<span class='ranking-card__origin'>Rank base #{escape(str(original_rank))}</span>"
+                )
+
+            card_html = f"""
+            <article class='{_class_names(classes)}' data-order='{idx}' data-rank='{item['position']}'>
+              <div class='ranking-card__header'>
+                <span class='ranking-card__rank'>#{item['position']}</span>
+                <div class='ranking-card__title'>
+                  {escape(item.get('label', '—'))}
+                  {origin_html}
+                </div>
+                <div class='ranking-card__score'>
+                  {score_label}
+                  <strong>{escape(item.get('score_display', '—'))}</strong>
+                </div>
+              </div>
+              {chips_block}
+              <div class='ranking-card__metrics'>
+                {metrics_html}
+              </div>
+            </article>
+            """
+            cards.append(card_html)
+
+        return "<div class='ranking-cockpit__grid'>" + "".join(cards) + "</div>"
+
+
 @dataclass
 class GlassCard:
     title: str
@@ -1664,10 +2356,12 @@ __all__ = [
     "render_card",
     "render_pill",
     "ChipRow",
-    "TeslaHero",
+    "TeslaHero", 
     "TeslaHeroBriefingScene",
     "MetricGalaxy",
     "MetricItem",
+    "MetricSpec",
+    "RankingCockpit",
     "GlassStack",
     "GlassCard",
 ]
