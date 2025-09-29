@@ -3,15 +3,34 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
 
 import streamlit as st
 
 from app.modules.safety import check_safety, safety_badge
+from app.modules.ui_blocks import futuristic_button
 
 
 _CSS_KEY = "__candidate_showroom_css__"
 _SUCCESS_KEY = "__candidate_showroom_success__"
+
+
+def _normalize_success(payload: object) -> dict[str, Any]:
+    """Return a normalized success payload with message and candidate index."""
+
+    if isinstance(payload, dict):
+        message = str(payload.get("message") or "")
+        candidate_idx = payload.get("candidate_idx")
+        try:
+            candidate_idx = int(candidate_idx) if candidate_idx is not None else None
+        except (TypeError, ValueError):
+            candidate_idx = None
+        return {"message": message, "candidate_idx": candidate_idx}
+
+    if isinstance(payload, str) and payload.strip():
+        return {"message": payload, "candidate_idx": None}
+
+    return {"message": "", "candidate_idx": None}
 
 
 @dataclass
@@ -35,9 +54,9 @@ def render_candidate_showroom(
 
     _inject_css()
 
-    success_payload = st.session_state.pop(_SUCCESS_KEY, None)
-    if success_payload:
-        st.success(success_payload)
+    success_data = _normalize_success(st.session_state.get(_SUCCESS_KEY))
+    if success_data["message"]:
+        st.success(success_data["message"])
 
     priority = st.slider(
         "Prioridad: Rigidez ↔ Agua",
@@ -86,12 +105,17 @@ def render_candidate_showroom(
 
     with col_cards:
         for idx, cand in enumerate(filtered):
-            _render_candidate_card(cand, idx, target)
+            _render_candidate_card(cand, idx, target, success_data)
 
     return filtered
 
 
-def _render_candidate_card(cand: dict, idx: int, target: dict) -> None:
+def _render_candidate_card(
+    cand: dict,
+    idx: int,
+    target: dict,
+    success_data: dict[str, Any],
+) -> None:
     props = cand.get("props")
     heur = cand.get("heuristic_props", props)
     ci = cand.get("confidence_interval") or {}
@@ -181,22 +205,58 @@ def _render_candidate_card(cand: dict, idx: int, target: dict) -> None:
     )
 
     btn_key = f"showroom_select_{idx}"
-    if st.button("Seleccionar esta receta", key=btn_key, type="primary"):
+    modal_idx = st.session_state.get("showroom_modal")
+    success_idx = success_data.get("candidate_idx")
+    if modal_idx == idx and success_idx != idx:
+        btn_state = "loading"
+    elif success_idx == idx:
+        btn_state = "success"
+    else:
+        btn_state = "idle"
+
+    if futuristic_button(
+        "Seleccionar esta receta",
+        key=btn_key,
+        state=btn_state,
+        loading_label="Abriendo holograma…",
+        success_label="Receta seleccionada",
+        help_text="Previsualizá la receta y confirmá desde la ventana holográfica.",
+    ):
         st.session_state["showroom_modal"] = idx
+        current = _normalize_success(st.session_state.get(_SUCCESS_KEY))
+        if current.get("candidate_idx") != idx:
+            st.session_state.pop(_SUCCESS_KEY, None)
 
     if st.session_state.get("showroom_modal") == idx:
         with st.modal("Confirmación holográfica", key=f"modal_{idx}"):
             st.markdown(_modal_html(cand, badge), unsafe_allow_html=True)
             col_ok, col_cancel = st.columns(2)
             with col_ok:
-                if st.button("Confirmar selección", key=f"confirm_{idx}", type="primary"):
+                if futuristic_button(
+                    "Confirmar selección",
+                    key=f"confirm_{idx}",
+                    state="idle",
+                    width="full",
+                    loading_label="Sincronizando…",
+                    success_label="Receta confirmada",
+                ):
                     st.session_state["selected"] = {"data": cand, "safety": badge}
-                    st.session_state[_SUCCESS_KEY] = (
-                        f"Opción {idx + 1} lista. Revisá **4) Resultados**, **5) Comparar** o **6) Pareto**."
-                    )
+                    st.session_state[_SUCCESS_KEY] = {
+                        "message": (
+                            f"Opción {idx + 1} lista. Revisá **4) Resultados**, "
+                            "**5) Comparar** o **6) Pareto**."
+                        ),
+                        "candidate_idx": idx,
+                    }
                     st.session_state.pop("showroom_modal", None)
             with col_cancel:
-                if st.button("Cancelar", key=f"cancel_{idx}"):
+                if futuristic_button(
+                    "Cancelar",
+                    key=f"cancel_{idx}",
+                    state="idle",
+                    width="full",
+                    sound=False,
+                ):
                     st.session_state.pop("showroom_modal", None)
 
     st.markdown("</div>", unsafe_allow_html=True)
