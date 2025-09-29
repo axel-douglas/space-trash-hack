@@ -7,6 +7,11 @@ import streamlit as st
 
 from app.modules.ui_blocks import load_theme
 
+from app.modules.data_sources import (
+    load_regolith_granulometry,
+    load_regolith_spectral_curves,
+    load_regolith_thermal_profiles,
+)
 from app.modules.explain import score_breakdown
 
 st.set_page_config(page_title="Rex-AI • Resultados", page_icon="📊", layout="wide")
@@ -32,6 +37,15 @@ regolith_pct = cand.get("regolith_pct", 0.0)
 materials = cand.get("materials", [])
 score = cand.get("score", 0.0)
 safety = selected.get("safety", {"level": "—", "detail": ""})
+
+
+@st.cache_data(show_spinner=False)
+def _load_regolith_context():
+    return {
+        "granulometry": load_regolith_granulometry(),
+        "spectra": load_regolith_spectral_curves(),
+        "thermal": load_regolith_thermal_profiles(),
+    }
 
 st.markdown(
     """
@@ -118,6 +132,7 @@ st.altair_chart(chart_parts, use_container_width=True)
 
 with st.container():
     st.markdown("### 🛰️ Contexto y trazabilidad")
+    context_data = _load_regolith_context()
     st.markdown(
         """
         <div class="card">
@@ -148,6 +163,141 @@ with st.container():
         st.caption(f"Predicciones por modelo Rex-AI (**{src}**, entrenado {trained_at}).")
     else:
         st.caption("Predicciones heurísticas basadas en reglas NASA.")
+
+    st.markdown("#### 🔬 Señales de laboratorio (NASA ISRU)")
+    gran_df = context_data["granulometry"]
+    spectra_df = context_data["spectra"]
+    thermal_bundle = context_data["thermal"]
+
+    col_lab_a, col_lab_b = st.columns(2)
+    with col_lab_a:
+        st.markdown("**Granulometría acumulada MGS-1**")
+        if not gran_df.empty:
+            gran_chart = (
+                alt.Chart(gran_df)
+                .mark_line(color="#34d399", interpolate="monotone", size=2)
+                .encode(
+                    x=alt.X(
+                        "diameter_microns:Q",
+                        title="Tamaño de partícula (µm)",
+                        scale=alt.Scale(reverse=True),
+                    ),
+                    y=alt.Y("cumulative_retained:Q", title="% acumulado retenido"),
+                    tooltip=[
+                        alt.Tooltip("diameter_microns:Q", title="Tamiz", format=".0f"),
+                        alt.Tooltip("pct_retained:Q", title="% canal", format=".2f"),
+                        alt.Tooltip("cumulative_retained:Q", title="% acumulado", format=".1f"),
+                        alt.Tooltip("pct_passing:Q", title="% pasa", format=".1f"),
+                    ],
+                )
+            )
+            gran_points = gran_chart.mark_circle(size=60, color="#22d3ee")
+            st.altair_chart(gran_chart + gran_points, use_container_width=True)
+            st.caption(
+                "Tooltip → granulometría fina = mayor estanqueidad; un tamiz grueso aporta rigidez estructural."
+            )
+        else:
+            st.info("Sin datos granulométricos disponibles.")
+
+    with col_lab_b:
+        st.markdown("**Curva espectral VNIR**")
+        if not spectra_df.empty:
+            focus_label = "MGS-1 Prototype"
+            focus_curve = spectra_df[spectra_df["sample"] == focus_label]
+            others_curve = spectra_df[spectra_df["sample"] != focus_label]
+            layers = []
+            if not others_curve.empty:
+                base_chart = (
+                    alt.Chart(others_curve)
+                    .mark_line(color="#64748b", opacity=0.35)
+                    .encode(
+                        x=alt.X("wavelength_nm:Q", title="Longitud de onda (nm)"),
+                        y=alt.Y("reflectance:Q", title="Reflectancia"),
+                        tooltip=[
+                            alt.Tooltip("sample:N", title="Muestra"),
+                            alt.Tooltip("wavelength_nm:Q", title="λ", format=".0f"),
+                            alt.Tooltip("reflectance_pct:Q", title="% reflectancia", format=".1f"),
+                        ],
+                    )
+                )
+                layers.append(base_chart)
+            highlight = (
+                alt.Chart(focus_curve)
+                .mark_line(color="#38bdf8", size=2.4)
+                .encode(
+                    x="wavelength_nm:Q",
+                    y="reflectance:Q",
+                    tooltip=[
+                        alt.Tooltip("wavelength_nm:Q", title="λ", format=".0f"),
+                        alt.Tooltip("reflectance_pct:Q", title="MGS-1 %", format=".1f"),
+                    ],
+                )
+            )
+            layers.append(highlight)
+            st.altair_chart(alt.layer(*layers), use_container_width=True)
+            st.caption(
+                "La firma espectral azul resalta olivinos/hematitas: ayuda a anticipar rigidez y compuestos refractarios."
+            )
+        else:
+            st.info("Sin espectros VNIR cargados.")
+
+    col_lab_c, col_lab_d = st.columns(2)
+    with col_lab_c:
+        st.markdown("**TG · masa residual vs temperatura**")
+        tg_df = thermal_bundle.tg_curve if thermal_bundle else pd.DataFrame()
+        if isinstance(tg_df, pd.DataFrame) and not tg_df.empty:
+            tg_chart = (
+                alt.Chart(tg_df)
+                .mark_line(color="#f97316", interpolate="monotone")
+                .encode(
+                    x=alt.X("temperature_c:Q", title="Temperatura (°C)"),
+                    y=alt.Y("mass_pct:Q", title="Masa residual (%)"),
+                    tooltip=[
+                        alt.Tooltip("temperature_c:Q", title="Temp", format=".0f"),
+                        alt.Tooltip("mass_pct:Q", title="Masa %", format=".2f"),
+                        alt.Tooltip("mass_loss_pct:Q", title="Pérdida %", format=".2f"),
+                    ],
+                )
+                .properties(height=260)
+            )
+            st.altair_chart(tg_chart, use_container_width=True)
+            st.caption("Picos de pérdida → secado y desgasificación; anticipa tiempos de horno y consumo energético.")
+        else:
+            st.info("Sin perfil TG de NASA disponible.")
+
+    with col_lab_d:
+        st.markdown("**EGA · gases liberados**")
+        ega_df = thermal_bundle.ega_long if thermal_bundle else pd.DataFrame()
+        if isinstance(ega_df, pd.DataFrame) and not ega_df.empty:
+            ega_chart = (
+                alt.Chart(ega_df)
+                .mark_line()
+                .encode(
+                    x=alt.X("temperature_c:Q", title="Temperatura (°C)"),
+                    y=alt.Y("signal_ppb:Q", title="Señal relativa (ppb eq.)"),
+                    color=alt.Color("species_label:N", title="Gas"),
+                    tooltip=[
+                        alt.Tooltip("species_label:N", title="Gas"),
+                        alt.Tooltip("temperature_c:Q", title="Temp", format=".0f"),
+                        alt.Tooltip("signal_ppb:Q", title="Intensidad", format=".2f"),
+                    ],
+                )
+                .properties(height=260)
+            )
+            st.altair_chart(ega_chart, use_container_width=True)
+            st.caption("H₂O/CO₂ altos → vigilar porosidad y estanqueidad; SO₂ indica impurezas que afectan sellado.")
+        else:
+            st.info("Sin gases EGA registrados.")
+
+    if regolith_pct > 0:
+        st.success(
+            f"Tu mezcla incorpora {regolith_pct*100:.0f}% de MGS-1: granos finos sellan juntas, pero vigila las liberaciones "
+            "de H₂O/CO₂ para no perder estanqueidad."
+        )
+    else:
+        st.caption(
+            "Aunque tu candidato no usa regolito, estas curvas sirven como referencia ISRU para futuras iteraciones."
+        )
 
 st.markdown("### 📥 Export quick facts")
 top_left, top_right = st.columns([2, 1])
