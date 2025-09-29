@@ -19,6 +19,7 @@ from app.modules.impact import (
     ImpactEntry, FeedbackEntry, append_impact, append_feedback,
     load_impact_df, load_feedback_df, summarize_impact
 )
+from app.modules.data_sources import load_regolith_thermal_profiles
 
 
 def _parse_extra_blob(blob: Any) -> dict:
@@ -87,6 +88,14 @@ candidato   = state_sel["data"] if state_sel else None
 props       = candidato["props"] if candidato else None
 regolith_pct = (candidato.get("regolith_pct", 0.0) if candidato else 0.0)
 
+
+@st.cache_data(show_spinner=False)
+def _regolith_thermal_summary():
+    bundle = load_regolith_thermal_profiles()
+    peaks = bundle.gas_peaks.to_dict("records") if isinstance(bundle.gas_peaks, pd.DataFrame) else []
+    events = bundle.mass_events.to_dict("records") if isinstance(bundle.mass_events, pd.DataFrame) else []
+    return {"peaks": peaks, "events": events}
+
 # ========= HERO =========
 st.markdown("""
 <div class="hero">
@@ -119,6 +128,33 @@ with colA:
         st.write(f"- Materiales: **{', '.join(candidato['materials'])}**")
         if regolith_pct > 0:
             st.write(f"- MGS-1 (regolito): **{regolith_pct*100:.0f}%** de la mezcla")
+            thermo = _regolith_thermal_summary()
+            peak_lines: list[str] = []
+            for peak in thermo.get("peaks", []):
+                peak_lines.append(
+                    f"    - {peak['species_label'] if 'species_label' in peak else peak['species']}: "
+                    f"pico a {peak['temperature_c']:.0f} °C (~{peak['signal_ppb']:.2f} ppb eq.)"
+                )
+            event_lines: list[str] = []
+            for event in thermo.get("events", []):
+                label = event.get("event", "")
+                if label.startswith("mass_"):
+                    event_lines.append(
+                        f"    - Masa ≤ {event['mass_pct']:.1f}% cerca de {event['temperature_c']:.0f} °C"
+                    )
+                elif label == "max_mass_loss_rate":
+                    event_lines.append(
+                        f"    - Mayor tasa de desgasificación cerca de {event['temperature_c']:.0f} °C"
+                    )
+            if peak_lines or event_lines:
+                st.markdown("**Guía térmica NASA (TG/EGA):**")
+                if peak_lines:
+                    st.markdown("- Pico gases:\n" + "\n".join(peak_lines))
+                if event_lines:
+                    st.markdown("- Eventos TG:\n" + "\n".join(event_lines))
+                st.caption(
+                    "Utilizá estos picos para saber cuándo ventilar el horno y revisar porosidad/estanqueidad en la pieza."
+                )
 
 with colB:
     if props:
@@ -295,7 +331,7 @@ with g1:
     st.markdown("""
 - **Impacto = realidad**: qué tanto residuo convertimos en producto y a qué costo (energía/agua/crew).
 - **Feedback ≠ opinión suelta**: capturamos señales de materiales (rigidez, porosidad, unión) que Rex-AI usa para ajustar decisiones.
-- **Efecto MGS-1**: cuando el proceso es sinterizado, verás en el log `extra=regolith_pct=XX`. El regolito tiende a subir rigidez y bajar estanqueidad; si percibís más porosidad, anotarlo aquí ayuda.
+- **Efecto MGS-1**: cuando el proceso es sinterizado, verás en el log `extra=regolith_pct=XX`. El regolito sube rigidez pero puede abrir microcanales al liberar H₂O/CO₂: anotá si aumenta porosidad o si hubo que ventilar más el horno.
 """)
 with g2:
     st.markdown("""

@@ -53,6 +53,10 @@ __all__ = [
     "REGOLITH_VECTOR",
     "GAS_MEAN_YIELD",
     "MEAN_REUSE",
+    "RegolithThermalBundle",
+    "load_regolith_granulometry",
+    "load_regolith_spectral_curves",
+    "load_regolith_thermal_profiles",
 ]
 
 
@@ -642,6 +646,17 @@ class OfficialFeaturesBundle(NamedTuple):
     l2l_hints: Dict[str, str]
 
 
+@dataclass(frozen=True)
+class RegolithThermalBundle:
+    """Container for MGS-1 thermogravimetric / EGA reference curves."""
+
+    tg_curve: pd.DataFrame
+    ega_curve: pd.DataFrame
+    ega_long: pd.DataFrame
+    gas_peaks: pd.DataFrame
+    mass_events: pd.DataFrame
+
+
 _L2L_PARAMETERS = load_l2l_parameters()
 _OFFICIAL_FEATURES_PATH = DATASETS_ROOT / "rexai_nasa_waste_features.csv"
 
@@ -826,3 +841,182 @@ def lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], st
 __all__.extend([
     "build_match_key",
 ])
+
+
+def _empty_dataframe(columns: Iterable[str] | None = None) -> pd.DataFrame:
+    if not columns:
+        return pd.DataFrame()
+    return pd.DataFrame({col: [] for col in columns})
+
+
+@lru_cache(maxsize=1)
+def load_regolith_granulometry() -> pd.DataFrame:
+    """Return particle size distribution for the MGS-1 simulant."""
+
+    path = resolve_dataset_path("fig3_psizeData.csv")
+    if path is None:
+        return _empty_dataframe(["diameter_microns", "pct_retained", "pct_channel", "cumulative_retained", "pct_passing"])
+
+    data = pd.read_csv(path, encoding="latin-1")
+    rename_map = {
+        "Diameter (microns)": "diameter_microns",
+        "% Retained": "pct_retained",
+        "% Channel": "pct_channel",
+    }
+    data = data.rename(columns=rename_map)
+
+    for column in ("diameter_microns", "pct_retained", "pct_channel"):
+        data[column] = pd.to_numeric(data[column], errors="coerce")
+
+    data = data.dropna(subset=["diameter_microns"]).sort_values("diameter_microns", ascending=False).reset_index(drop=True)
+    data["pct_retained"] = data["pct_retained"].fillna(0.0)
+    data["pct_channel"] = data["pct_channel"].fillna(0.0)
+    data["cumulative_retained"] = data["pct_retained"].cumsum().clip(upper=100.0)
+    data["pct_passing"] = (100.0 - data["cumulative_retained"]).clip(lower=0.0, upper=100.0)
+    return data
+
+
+@lru_cache(maxsize=1)
+def load_regolith_spectral_curves() -> pd.DataFrame:
+    """Return VNIR reflectance curves for Martian soil simulants."""
+
+    path = resolve_dataset_path("fig4_spectralData.csv")
+    if path is None:
+        return _empty_dataframe(["wavelength_nm", "sample", "reflectance", "reflectance_pct", "sample_slug"])
+
+    table = pd.read_csv(path, encoding="latin-1")
+    table = table.rename(columns={"Wavelength (nm)": "wavelength_nm"})
+    table["wavelength_nm"] = pd.to_numeric(table["wavelength_nm"], errors="coerce")
+    table = table.dropna(subset=["wavelength_nm"])
+
+    samples = [column for column in table.columns if column != "wavelength_nm"]
+    for column in samples:
+        table[column] = pd.to_numeric(table[column], errors="coerce")
+
+    melted = table.melt(id_vars=["wavelength_nm"], var_name="sample", value_name="reflectance").dropna(subset=["reflectance"])
+    melted["sample"] = melted["sample"].astype(str).str.strip()
+    melted["sample_slug"] = melted["sample"].map(slugify)
+    melted["reflectance_pct"] = melted["reflectance"] * 100.0
+    melted = melted.sort_values(["sample", "wavelength_nm"]).reset_index(drop=True)
+    return melted
+
+
+@lru_cache(maxsize=1)
+def load_regolith_thermal_profiles() -> RegolithThermalBundle:
+    """Return thermogravimetric (TG) and EGA curves for MGS-1."""
+
+    tg_path = resolve_dataset_path("fig5_tgData.csv")
+    ega_path = resolve_dataset_path("fig5_egaData.csv")
+
+    empty = RegolithThermalBundle(
+        tg_curve=_empty_dataframe(["temperature_c", "mass_pct", "mass_loss_pct"]),
+        ega_curve=_empty_dataframe(["temperature_c", "mz_18_h2o", "mz_32_o2", "mz_44_co2", "mz_64_so2"]),
+        ega_long=_empty_dataframe(["temperature_c", "species", "signal", "signal_ppb", "species_label"]),
+        gas_peaks=_empty_dataframe(["species", "species_label", "temperature_c", "signal", "signal_ppb"]),
+        mass_events=_empty_dataframe(["event", "temperature_c", "mass_pct"]),
+    )
+
+    if tg_path is None or ega_path is None:
+        return empty
+
+    tg_raw = pd.read_csv(tg_path, encoding="latin-1")
+    tg_raw = tg_raw.rename(columns={"Temperature (¡C)": "temperature_c", "Mass (%)": "mass_pct"})
+    tg_raw["temperature_c"] = pd.to_numeric(tg_raw["temperature_c"], errors="coerce")
+    tg_raw["mass_pct"] = pd.to_numeric(tg_raw["mass_pct"], errors="coerce")
+    tg_raw = tg_raw.dropna(subset=["temperature_c", "mass_pct"]).sort_values("temperature_c").reset_index(drop=True)
+    tg_raw["mass_loss_pct"] = (100.0 - tg_raw["mass_pct"]).clip(lower=0.0)
+
+    if len(tg_raw) > 1200:
+        step = max(1, len(tg_raw) // 1200)
+        tg_curve = tg_raw.iloc[::step].reset_index(drop=True)
+    else:
+        tg_curve = tg_raw.copy()
+
+    ega_raw = pd.read_csv(ega_path, encoding="latin-1")
+    ega_raw = ega_raw.rename(
+        columns={
+            "Temperature (¡C)": "temperature_c",
+            "m/z 18 (H2O)": "mz_18_h2o",
+            "m/z 32 (O2)": "mz_32_o2",
+            "m/z 44 (CO2)": "mz_44_co2",
+            "m/z 64 (SO2)": "mz_64_so2",
+        }
+    )
+    ega_raw["temperature_c"] = pd.to_numeric(ega_raw["temperature_c"], errors="coerce")
+    gas_columns = [col for col in ega_raw.columns if col != "temperature_c"]
+    for column in gas_columns:
+        ega_raw[column] = pd.to_numeric(ega_raw[column], errors="coerce")
+    ega_raw = ega_raw.dropna(subset=["temperature_c"]).sort_values("temperature_c").reset_index(drop=True)
+
+    ega_long = ega_raw.melt(id_vars=["temperature_c"], var_name="species", value_name="signal").dropna(subset=["signal"])
+    species_labels = {
+        "mz_18_h2o": "H₂O (m/z 18)",
+        "mz_32_o2": "O₂ (m/z 32)",
+        "mz_44_co2": "CO₂ (m/z 44)",
+        "mz_64_so2": "SO₂ (m/z 64)",
+    }
+    ega_long["species_label"] = ega_long["species"].map(species_labels).fillna(ega_long["species"])
+    ega_long["signal_ppb"] = ega_long["signal"] * 1e9
+
+    gas_peaks: list[dict[str, float | str]] = []
+    for column in gas_columns:
+        series = ega_raw[column]
+        if series.isnull().all():
+            continue
+        idx = series.idxmax()
+        temperature = float(ega_raw.loc[idx, "temperature_c"])
+        signal = float(series.loc[idx])
+        gas_peaks.append(
+            {
+                "species": column,
+                "species_label": species_labels.get(column, column),
+                "temperature_c": temperature,
+                "signal": signal,
+                "signal_ppb": signal * 1e9,
+            }
+        )
+
+    peaks_df = pd.DataFrame(gas_peaks).sort_values("temperature_c").reset_index(drop=True)
+
+    mass_events: list[dict[str, float | str]] = []
+    thresholds = [99.5, 99.0, 98.0, 97.0]
+    for threshold in thresholds:
+        mask = tg_raw["mass_pct"] <= threshold
+        if mask.any():
+            temp = float(tg_raw.loc[mask, "temperature_c"].iloc[0])
+            mass_events.append(
+                {
+                    "event": f"mass_{threshold}",
+                    "temperature_c": temp,
+                    "mass_pct": float(threshold),
+                }
+            )
+
+    if "mass_pct" in tg_raw.columns and tg_raw.shape[0] > 2:
+        diff = tg_raw[["temperature_c", "mass_pct"]].copy()
+        diff["mass_pct_next"] = diff["mass_pct"].shift(-1)
+        diff["temperature_next"] = diff["temperature_c"].shift(-1)
+        diff["mass_loss_rate"] = (diff["mass_pct_next"] - diff["mass_pct"]) / (
+            diff["temperature_next"] - diff["temperature_c"]
+        )
+        diff["mass_loss_rate"] = diff["mass_loss_rate"].abs()
+        diff = diff.dropna(subset=["mass_loss_rate"])
+        if not diff.empty:
+            idx = diff["mass_loss_rate"].idxmax()
+            mass_events.append(
+                {
+                    "event": "max_mass_loss_rate",
+                    "temperature_c": float(diff.loc[idx, "temperature_c"]),
+                    "mass_pct": float(diff.loc[idx, "mass_pct"]),
+                }
+            )
+
+    events_df = pd.DataFrame(mass_events).sort_values("temperature_c").reset_index(drop=True)
+
+    return RegolithThermalBundle(
+        tg_curve=tg_curve,
+        ega_curve=ega_raw,
+        ega_long=ega_long,
+        gas_peaks=peaks_df,
+        mass_events=events_df,
+    )
