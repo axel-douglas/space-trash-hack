@@ -35,8 +35,8 @@ def test_asyncio_backend_map_from_running_loop():
 
     async def _invoke_map() -> list[int]:
         result = backend.map(lambda x: x + 1, range(5))
-        assert isinstance(result, asyncio.Task)
-        return await result
+        assert isinstance(result, list)
+        return result
 
     try:
         result = asyncio.run(_invoke_map())

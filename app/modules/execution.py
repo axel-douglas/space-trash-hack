@@ -90,7 +90,13 @@ class ThreadPoolBackend(ExecutionBackend):
 
 
 class AsyncioBackend(ExecutionBackend):
-    """Asyncio powered backend that still exposes a synchronous API."""
+    """Asyncio powered backend that still exposes a synchronous API.
+
+    ``ExecutionBackend`` implementers are expected to provide fully realized
+    results from ``map`` and ``submit``.  Even though this backend uses
+    ``asyncio`` under the hood, callers never receive awaitables and can rely on
+    synchronous behaviour.
+    """
 
     def __init__(self, max_workers: int | None = None) -> None:
         workers = max_workers or max_workers_for(0)
@@ -111,17 +117,21 @@ class AsyncioBackend(ExecutionBackend):
 
     def map(
         self, func: Callable[[Any], Any], iterable: Iterable[Any]
-    ) -> list[Any] | asyncio.Task[list[Any]]:
+    ) -> list[Any]:
         items = list(iterable)
         if not items:
             return []
 
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError:
             return asyncio.run(self._run_map(func, items))
 
-        return loop.create_task(self._run_map(func, items))
+        # When called from within an active event loop we still need to honour
+        # the synchronous ``ExecutionBackend`` contract.  Running the coroutine
+        # directly would require awaiting the result, so we instead fall back to
+        # the thread pool and block until all workers finish.
+        return list(self._executor.map(func, items))
 
     def submit(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Future:
         return self._executor.submit(func, *args, **kwargs)
