@@ -1,9 +1,7 @@
 # app/Home.py
 import _bootstrap  # noqa: F401
-
 from datetime import datetime
 from pathlib import Path
-from textwrap import dedent
 
 import pandas as pd
 import streamlit as st
@@ -51,115 +49,6 @@ def format_mass(value: float | int | None) -> str:
     if value >= 1000:
         return f"{value/1000:.1f} t"
     return f"{value:.0f} kg"
-
-
-# ──────────── Estilos y animaciones globales ────────────
-st.markdown(
-    """
-    <style>
-    .mission-grid {display:grid; gap:18px; margin-top:26px; grid-template-columns: repeat(auto-fit,minmax(260px,1fr));}
-    .mission-grid > div {padding:22px; border-radius:22px; border:1px solid var(--stroke); background:rgba(13,17,23,0.72); color:var(--ink);}
-    .mission-grid h3 {margin-bottom:8px; font-size:1.06rem;}
-    .mission-grid p {margin:0; color:var(--muted); font-size:0.94rem;}
-    .metric-grid {display:grid; grid-template-columns: repeat(auto-fit,minmax(210px,1fr)); gap:16px; margin-top: 18px;}
-    .metric {border-radius:18px; padding:18px 20px; background:rgba(15,23,42,0.6); border:1px solid var(--stroke); color:var(--ink); transition: border 300ms ease, box-shadow 300ms ease;}
-    .metric.highlight {border-color: rgba(56,189,248,0.6); box-shadow:0 0 0 2px rgba(56,189,248,0.18);}
-    .hero {
-      border-radius: 28px;
-      padding: 36px 42px;
-      background: linear-gradient(135deg, rgba(59,130,246,0.22), rgba(59,130,246,0.05)),
-                  linear-gradient(180deg, rgba(15,23,42,0.9), rgba(15,23,42,0.72));
-      border: 1px solid rgba(96,165,250,0.32);
-      color: var(--ink);
-      position: relative;
-      overflow: hidden;
-    }
-    .hero:after {
-      content:""; position:absolute; inset:-120px; background: radial-gradient(circle at top right, rgba(96,165,250,0.35), transparent 55%);
-      pointer-events:none;
-    }
-    .hero h1 {font-size: 2.25rem; margin-bottom: 12px; letter-spacing: 0.02em;}
-    .hero p {font-size: 1.04rem; max-width: 720px; color: var(--muted);}
-    .chip-row {display:flex; gap:8px; margin-top: 18px; flex-wrap:wrap;}
-    .chip {
-      padding:6px 14px; border-radius:999px; font-size:0.82rem; font-weight:600;
-      background: var(--chip-bg); border: 1px solid var(--chip-border); color: var(--chip-ink);
-    }
-    .ghost-card {
-      margin-top: 38px; display:grid; gap:18px; grid-template-columns: repeat(auto-fit,minmax(260px,1fr));
-    }
-    .ghost-card > div {
-      padding:20px 22px; border-radius:20px; border:1px solid var(--border-soft);
-      background: var(--surface-card); color: var(--ink);
-    }
-    .ghost-card h3 {margin-bottom:6px; font-size:1.05rem;}
-    .ghost-card p {color: var(--muted); font-size:0.94rem; margin:0;}
-    .stepper {display:grid; grid-template-columns: repeat(auto-fit,minmax(180px,1fr)); gap:14px; margin: 32px 0 18px;}
-    .step {border-radius:18px; border:1px solid var(--step-border); padding:16px 18px; background: var(--step-bg);}
-    .step span {display:inline-flex; width:32px; height:32px; border-radius:999px; align-items:center; justify-content:center; background: var(--step-icon-bg); color: var(--ink); font-weight:700; margin-bottom:10px;}
-    .step h4 {margin:0 0 6px 0;}
-    .step p {color: var(--muted); font-size:0.9rem; margin:0;}
-    .metric-grid {display:grid; grid-template-columns: repeat(auto-fit,minmax(210px,1fr)); gap:16px; margin-top: 18px;}
-    .metric {border-radius:18px; padding:18px 20px; background:var(--metric-bg); border:1px solid var(--metric-border); color:var(--ink); box-shadow: var(--metric-shadow);}
-    .metric h5 {margin:0; font-size:0.92rem; color:var(--muted);}
-    .metric strong {font-size:1.4rem; display:block; margin-top:6px;}
-    </style>
-    """,
-    dedent(
-        """
-        <style>
-        .main > div {padding-top: 1.5rem;}
-        section {width: 100%;}
-        .overview-block,
-        .lab-block,
-        .next-block {margin-bottom: 4rem;}
-        .reveal {opacity: 0; transform: translateY(42px); transition: opacity 0.8s ease, transform 0.8s ease;}
-        .reveal.is-visible {opacity: 1; transform: translateY(0);}
-        .tesla-hero {position: relative; border-radius: 28px; overflow: hidden; min-height: 360px; display:flex; align-items:flex-end;}
-        .tesla-hero__bg {position:absolute; inset:0; width:100%; height:100%; object-fit:cover; filter: saturate(1.3) brightness(0.7);}
-        .tesla-hero__veil {position:absolute; inset:0; background: linear-gradient(180deg, rgba(15,23,42,0.05) 10%, rgba(2,6,23,0.85) 100%);}
-        .tesla-hero__content {position:relative; padding: 48px; max-width: 760px;}
-        .tesla-hero__content h1 {font-size: 2.6rem; margin-bottom: 16px; letter-spacing: 0.01em;}
-        .tesla-hero__content p {font-size: 1.05rem; color: var(--muted); margin-bottom: 18px;}
-        .chip-row {display:flex; gap:8px; flex-wrap:wrap;}
-        .chip {padding:6px 16px; border-radius:999px; font-size:0.82rem; font-weight:600; background: rgba(12,28,64,0.75); border:1px solid rgba(96,165,250,0.35); color: var(--ink); backdrop-filter: blur(12px);}
-        .sticky-panel {position: sticky; top: 84px; border-radius: 22px; border: 1px solid rgba(148,163,184,0.18); padding: 24px 26px; background: rgba(10,18,36,0.82); backdrop-filter: blur(18px);}
-        .sticky-panel h3 {margin-bottom: 18px;}
-        .sticky-panel .metric {border-radius:16px; padding:14px 16px; background: rgba(15,23,42,0.65); border:1px solid rgba(148,163,184,0.12); margin-bottom: 14px;}
-        .sticky-panel .metric:last-child {margin-bottom: 0;}
-        .sticky-panel .metric h5 {margin:0; font-size:0.85rem; text-transform:uppercase; letter-spacing:0.08em; color:rgba(148,163,184,0.9);}
-        .sticky-panel .metric strong {display:block; margin-top:4px; font-size:1.3rem;}
-        .sticky-panel .metric p {margin:0; color: var(--muted); font-size:0.85rem;}
-        .section-title {display:flex; align-items:center; gap:12px; margin-bottom: 14px;}
-        .section-title span.icon {width:34px; height:34px; border-radius:12px; display:flex; align-items:center; justify-content:center; background: rgba(59,130,246,0.12); color: var(--accent); font-size:1.1rem;}
-        .lab-grid {display:grid; gap:24px; grid-template-columns: minmax(0,1fr);}
-        .carousel {display:flex; gap:16px; overflow-x:auto; padding-bottom: 6px; scroll-snap-type: x mandatory;}
-        .carousel::-webkit-scrollbar {height:6px;}
-        .carousel::-webkit-scrollbar-thumb {background: rgba(59,130,246,0.45); border-radius:999px;}
-        .carousel-card {min-width: 240px; scroll-snap-align: start; border-radius: 18px; border: 1px solid rgba(148,163,184,0.16); padding:18px; background: rgba(12,18,34,0.75);}
-        .carousel-card h4 {margin:0 0 6px 0; font-size:1.02rem;}
-        .carousel-card .value {font-size:1.3rem; font-weight:700;}
-        .carousel-card p {margin:4px 0 0 0; font-size:0.85rem; color: var(--muted);}
-        .drawer {border-radius: 18px; border: 1px solid rgba(148,163,184,0.2); padding:18px 20px; background: rgba(10,18,36,0.7); margin-top:16px;}
-        .drawer h4 {margin-top:0;}
-        .drawer ul {margin:0; padding-left: 20px; color: var(--muted);}
-        .timeline {margin-top: 18px; border-left: 2px solid rgba(96,165,250,0.25); padding-left: 18px;}
-        .timeline li {margin-bottom: 14px; color: var(--muted);}
-        .cta-grid {display:grid; gap:22px; grid-template-columns: repeat(auto-fit, minmax(240px,1fr));}
-        .cta-card {border-radius: 22px; border:1px solid rgba(96,165,250,0.28); padding:22px 24px; background: linear-gradient(160deg, rgba(59,130,246,0.16), rgba(15,23,42,0.78)); position:relative;}
-        .cta-card strong {display:block; font-size:1.18rem; margin-bottom:8px;}
-        .cta-card p {margin:0; color: var(--muted);}
-        .cta-card button {margin-top:18px; width:100%;}
-        .cta-card .icon {position:absolute; top:16px; right:18px; font-size:1.4rem; opacity:0.8;}
-        @media (max-width: 992px) {
-          .tesla-hero__content {padding:32px 24px;}
-          .sticky-panel {position:relative; top:auto; margin-top:24px;}
-        }
-        </style>
-        """
-    ),
-    unsafe_allow_html=True,
-)
 
 
 # ──────────── Lectura segura de metadata del modelo ────────────

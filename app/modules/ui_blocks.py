@@ -58,6 +58,10 @@ def _layout_path() -> Path:
     return _static_path("layout.css")
 
 
+def _home_path() -> Path:
+    return _static_path("home.css")
+
+
 def _ensure_defaults() -> None:
     st.session_state.setdefault(_THEME_STATE_KEY, "dark")
     st.session_state.setdefault(_FONT_STATE_KEY, "base")
@@ -66,7 +70,7 @@ def _ensure_defaults() -> None:
 
 def _read_css_bundle() -> str:
     css_parts: list[str] = []
-    for path in (_tokens_path(), _theme_path(), _layout_path()):
+    for path in (_tokens_path(), _theme_path(), _layout_path(), _home_path()):
         try:
             css_parts.append(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
