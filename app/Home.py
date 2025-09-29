@@ -453,7 +453,20 @@ with cta_col1:
         """,
         unsafe_allow_html=True,
     )
-    if st.button("📤 Exportar", use_container_width=True):
+    export_state_key = "home_cta_export_state"
+    if st.session_state.get(export_state_key) == "loading":
+        st.session_state[export_state_key] = "success"
+    export_state = st.session_state.setdefault(export_state_key, "idle")
+    if futuristic_button(
+        "Exportar\nreceta y telemetría",
+        key="home_cta_export",
+        icon="📤",
+        state=export_state,
+        loading_label="Generando reporte…",
+        success_label="Reporte enviado",
+        help_text="Descargá Sankey, contribuciones y feedback para seguimiento.",
+    ):
+        st.session_state[export_state_key] = "loading"
         st.switch_page("pages/4_Results_and_Tradeoffs.py")
 
 metric_grid_html = "".join(
@@ -488,7 +501,20 @@ with cta_col2:
         """,
         unsafe_allow_html=True,
     )
-    if st.button("🧮 Simular escenarios", use_container_width=True):
+    sim_state_key = "home_cta_simulation_state"
+    if st.session_state.get(sim_state_key) == "loading":
+        st.session_state[sim_state_key] = "success"
+    sim_state = st.session_state.setdefault(sim_state_key, "idle")
+    if futuristic_button(
+        "Simular\nescenarios",
+        key="home_cta_simulation",
+        icon="🧮",
+        state=sim_state,
+        loading_label="Lanzando simulación…",
+        success_label="Escenarios listos",
+        help_text="Prueba configuraciones de energía, crew y materiales para stress tests.",
+    ):
+        st.session_state[sim_state_key] = "loading"
         st.switch_page("pages/2_Target_Designer.py")
 
 st.markdown(
@@ -579,10 +605,36 @@ with c4:
         st.switch_page("pages/4_Results_and_Tradeoffs.py")
 cta_buttons = st.columns(2)
 with cta_buttons[0]:
-    if st.button("🧱 Abrir inventario", use_container_width=True, key="cta_inventory"):
+    inventory_state_key = "home_cta_inventory_state"
+    if st.session_state.get(inventory_state_key) == "loading":
+        st.session_state[inventory_state_key] = "success"
+    inventory_state = st.session_state.setdefault(inventory_state_key, "idle")
+    if futuristic_button(
+        "Abrir\ninventario",
+        key="cta_inventory",
+        icon="🧱",
+        state=inventory_state,
+        loading_label="Abriendo inventario…",
+        success_label="Inventario listo",
+        width="full",
+    ):
+        st.session_state[inventory_state_key] = "loading"
         st.switch_page("pages/1_Inventory_Builder.py")
 with cta_buttons[1]:
-    if st.button("🤖 Abrir generador", use_container_width=True, key="cta_generator"):
+    generator_state_key = "home_cta_generator_state"
+    if st.session_state.get(generator_state_key) == "loading":
+        st.session_state[generator_state_key] = "success"
+    generator_state = st.session_state.setdefault(generator_state_key, "idle")
+    if futuristic_button(
+        "Abrir\ngenerador",
+        key="cta_generator",
+        icon="🤖",
+        state=generator_state,
+        loading_label="Activando Rex-AI…",
+        success_label="Generador listo",
+        width="full",
+    ):
+        st.session_state[generator_state_key] = "loading"
         st.switch_page("pages/3_Generator.py")
 
 # ──────────── Qué demuestra hoy ────────────
