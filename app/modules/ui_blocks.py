@@ -225,7 +225,7 @@ def surface(
 ) -> Iterator[DeltaGenerator]:
     """Render content inside a themed surface wrapper."""
 
-    load_theme()
+    load_theme(show_hud=False)
     container = st.container()
     opener = _surface_markup(tone=tone, padding=padding, shadow=shadow, radius=radius)
     container.markdown(opener, unsafe_allow_html=True)
@@ -246,7 +246,7 @@ def glass_card(
 ) -> Iterator[DeltaGenerator]:
     """Render content inside a frosted glass style surface."""
 
-    load_theme()
+    load_theme(show_hud=False)
     container = st.container()
     opener = _surface_markup(
         tone="base", padding=padding, shadow=shadow, radius=radius, extra_class="rex-glass"
