@@ -45,6 +45,11 @@ __all__ = [
     "token_set",
     "merge_reference_dataset",
     "extract_grouped_metrics",
+    "load_regolith_particle_size",
+    "load_regolith_spectra",
+    "load_regolith_thermogravimetry",
+    "RegolithCharacterization",
+    "load_regolith_characterization",
     "L2LParameters",
     "load_l2l_parameters",
     "OfficialFeaturesBundle",
@@ -457,6 +462,301 @@ def _load_mean_reuse() -> float:
 REGOLITH_VECTOR = _load_regolith_vector()
 GAS_MEAN_YIELD = _load_gas_mean_yield()
 MEAN_REUSE = _load_mean_reuse()
+
+
+def _log_interp_percentile(diameters: np.ndarray, cdf: np.ndarray, target: float) -> float:
+    """Return the diameter at *target* cumulative percent finer using log interpolation."""
+
+    if diameters.size == 0 or cdf.size == 0:
+        return float("nan")
+
+    mask = np.isfinite(diameters) & np.isfinite(cdf)
+    if not np.any(mask):
+        return float("nan")
+
+    diameters = diameters[mask]
+    cdf = cdf[mask]
+
+    if not np.all(np.diff(cdf) >= 0):
+        order = np.argsort(cdf)
+        cdf = cdf[order]
+        diameters = diameters[order]
+
+    unique_cdf, unique_idx = np.unique(cdf, return_index=True)
+    diameters = diameters[unique_idx]
+
+    if target <= unique_cdf[0]:
+        return float(diameters[0])
+    if target >= unique_cdf[-1]:
+        return float(diameters[-1])
+
+    log_diam = np.log(diameters)
+    interpolated = np.interp(target, unique_cdf, log_diam)
+    return float(np.exp(interpolated))
+
+
+def _log_size_slope(diameters: np.ndarray, cdf: np.ndarray) -> float:
+    """Return the slope of log10(size) vs. log10(percent finer) for the central distribution."""
+
+    mask = (
+        np.isfinite(diameters)
+        & np.isfinite(cdf)
+        & (diameters > 0)
+        & (cdf > 0)
+        & (cdf < 100)
+    )
+    if not np.any(mask):
+        return float("nan")
+
+    diameters = diameters[mask]
+    cdf = cdf[mask] / 100.0
+
+    central = (cdf >= 0.1) & (cdf <= 0.9)
+    if np.count_nonzero(central) >= 2:
+        diameters = diameters[central]
+        cdf = cdf[central]
+
+    if diameters.size < 2:
+        return float("nan")
+
+    x = np.log10(diameters)
+    y = np.log10(np.clip(cdf, 1e-6, 1.0))
+    slope, _intercept = np.polyfit(x, y, 1)
+    return float(slope)
+
+
+def _mass_loss_between(
+    temperatures: np.ndarray, mass: np.ndarray, start: float, stop: float
+) -> float:
+    """Return the mass loss percentage between *start* and *stop* temperatures."""
+
+    if temperatures.size == 0 or mass.size == 0:
+        return float("nan")
+
+    ordered = np.argsort(temperatures)
+    temperatures = temperatures[ordered]
+    mass = mass[ordered]
+
+    lower = float(np.interp(start, temperatures, mass))
+    upper = float(np.interp(stop, temperatures, mass))
+    return max(0.0, lower - upper)
+
+
+@lru_cache(maxsize=1)
+def load_regolith_particle_size() -> tuple[pl.DataFrame, Dict[str, float]]:
+    """Return the MGS-1 particle size distribution and derived metrics."""
+
+    path = resolve_dataset_path("fig3_psizeData.csv")
+    if path is None or not path.exists():
+        empty = pl.DataFrame(
+            {
+                "diameter_microns": pl.Series(dtype=pl.Float64),
+                "percent_retained": pl.Series(dtype=pl.Float64),
+                "percent_channel": pl.Series(dtype=pl.Float64),
+            }
+        )
+        return empty, {}
+
+    frame = pl.read_csv(path).rename(
+        {
+            "Diameter (microns)": "diameter_microns",
+            "% Retained": "percent_retained",
+            "% Channel": "percent_channel",
+        }
+    )
+
+    frame = frame.select(
+        [
+            pl.col("diameter_microns").cast(pl.Float64),
+            pl.col("percent_retained").cast(pl.Float64),
+            pl.col("percent_channel").cast(pl.Float64),
+        ]
+    ).sort("diameter_microns", descending=True)
+
+    frame = frame.with_columns(
+        [
+            (pl.col("percent_channel") / 100.0).alias("fraction_channel"),
+            pl.col("percent_channel").cum_sum().alias("cumulative_percent_finer"),
+            pl.col("percent_retained").alias("cumulative_percent_retained"),
+            (100.0 - pl.col("percent_retained")).alias("percent_finer_than"),
+        ]
+    )
+
+    metric_frame = frame.filter(pl.col("percent_channel") > 0).select(
+        "diameter_microns", "cumulative_percent_finer"
+    )
+
+    metrics: Dict[str, float] = {}
+    if metric_frame.height > 0:
+        diameters = metric_frame.get_column("diameter_microns").to_numpy()
+        cdf = metric_frame.get_column("cumulative_percent_finer").to_numpy()
+        metrics.update(
+            {
+                "d10_microns": _log_interp_percentile(diameters, cdf, 90.0),
+                "d50_microns": _log_interp_percentile(diameters, cdf, 50.0),
+                "d90_microns": _log_interp_percentile(diameters, cdf, 10.0),
+                "log_slope_fraction_finer": _log_size_slope(diameters, cdf),
+            }
+        )
+
+    return frame, metrics
+
+
+@lru_cache(maxsize=1)
+def load_regolith_spectra() -> tuple[pl.DataFrame, Dict[str, float]]:
+    """Return reflectance spectra for the regolith simulants with summary metrics."""
+
+    path = resolve_dataset_path("fig4_spectralData.csv")
+    if path is None or not path.exists():
+        return pl.DataFrame(), {}
+
+    frame = pl.read_csv(path).rename(
+        {
+            "Wavelength (nm)": "wavelength_nm",
+            "MMS1": "reflectance_mms1",
+            "MMS2": "reflectance_mms2",
+            "JSC Mars-1": "reflectance_jsc_mars_1",
+            "MGS-1 Prototype": "reflectance_mgs_1",
+        }
+    )
+
+    frame = frame.select(
+        [
+            pl.col("wavelength_nm").cast(pl.Float64),
+            pl.col("reflectance_mms1").cast(pl.Float64),
+            pl.col("reflectance_mms2").cast(pl.Float64),
+            pl.col("reflectance_jsc_mars_1").cast(pl.Float64),
+            pl.col("reflectance_mgs_1").cast(pl.Float64),
+        ]
+    ).sort("wavelength_nm")
+
+    metrics: Dict[str, float] = {}
+    for column in frame.columns:
+        if column == "wavelength_nm":
+            continue
+        metrics[f"mean_{column}"] = float(frame.get_column(column).mean())
+
+    window = frame.filter(
+        (pl.col("wavelength_nm") >= 700.0) & (pl.col("wavelength_nm") <= 1000.0)
+    )
+    if window.height >= 2:
+        wavelengths = window.get_column("wavelength_nm").to_numpy()
+        for column in window.columns:
+            if column == "wavelength_nm":
+                continue
+            values = window.get_column(column).to_numpy()
+            slope = float(np.polyfit(wavelengths, values, 1)[0])
+            metrics[f"slope_{column}_700_1000"] = slope
+
+    return frame, metrics
+
+
+@lru_cache(maxsize=1)
+def load_regolith_thermogravimetry() -> tuple[
+    pl.DataFrame,
+    pl.DataFrame,
+    Dict[str, float],
+    Dict[str, float],
+]:
+    """Return thermogravimetric and evolved gas analysis data with summaries."""
+
+    tg_path = resolve_dataset_path("fig5_tgData.csv")
+    ega_path = resolve_dataset_path("fig5_egaData.csv")
+
+    if tg_path is None or not tg_path.exists():
+        return pl.DataFrame(), pl.DataFrame(), {}, {}
+
+    tg_frame = (
+        pl.read_csv(tg_path, encoding="latin1")
+        .rename({"Temperature (¡C)": "temperature_c", "Mass (%)": "mass_percent"})
+        .select(
+            [
+                pl.col("temperature_c").cast(pl.Float64),
+                pl.col("mass_percent").cast(pl.Float64),
+            ]
+        )
+        .sort("temperature_c")
+    )
+
+    ega_metrics: Dict[str, float] = {}
+    ega_frame = pl.DataFrame()
+    if ega_path is not None and ega_path.exists():
+        ega_frame = (
+            pl.read_csv(ega_path, encoding="latin1")
+            .rename({"Temperature (¡C)": "temperature_c"})
+            .select([pl.all().cast(pl.Float64)])
+            .sort("temperature_c")
+        )
+
+        if ega_frame.height > 0:
+            temperatures = ega_frame.get_column("temperature_c").to_numpy()
+            for column in ega_frame.columns:
+                if column == "temperature_c":
+                    continue
+                series = ega_frame.get_column(column).to_numpy()
+                if series.size == 0:
+                    continue
+                peak_idx = int(np.argmax(series))
+                ega_metrics[f"peak_temperature_{slugify(column)}"] = float(
+                    temperatures[peak_idx]
+                )
+
+    temperatures = tg_frame.get_column("temperature_c").to_numpy()
+    mass = tg_frame.get_column("mass_percent").to_numpy()
+
+    thermal_metrics: Dict[str, float] = {}
+    if temperatures.size > 0 and mass.size > 0:
+        initial_mass = float(mass[0])
+        final_mass = float(mass[-1])
+        thermal_metrics["mass_loss_total_percent"] = max(0.0, initial_mass - final_mass)
+        thermal_metrics["residual_mass_percent"] = final_mass
+
+        ranges = (
+            (30.0, 200.0),
+            (200.0, 400.0),
+            (400.0, 600.0),
+            (600.0, min(800.0, float(temperatures[-1]))),
+        )
+        for start, stop in ranges:
+            if stop <= start:
+                continue
+            loss = _mass_loss_between(temperatures, mass, start, stop)
+            key = f"mass_loss_{int(start)}_{int(stop)}_c"
+            thermal_metrics[key] = loss
+
+    return tg_frame, ega_frame, thermal_metrics, ega_metrics
+
+
+@dataclass(frozen=True)
+class RegolithCharacterization:
+    particle_size: pl.DataFrame
+    particle_metrics: Mapping[str, float]
+    spectra: pl.DataFrame
+    spectral_metrics: Mapping[str, float]
+    thermogravimetry: pl.DataFrame
+    evolved_gas: pl.DataFrame
+    thermal_metrics: Mapping[str, float]
+    gas_release_peaks: Mapping[str, float]
+
+
+@lru_cache(maxsize=1)
+def load_regolith_characterization() -> RegolithCharacterization:
+    """Return a cached bundle with regolith particle, spectral and thermal summaries."""
+
+    particle_size, particle_metrics = load_regolith_particle_size()
+    spectra, spectral_metrics = load_regolith_spectra()
+    tg_frame, ega_frame, thermal_metrics, ega_metrics = load_regolith_thermogravimetry()
+
+    return RegolithCharacterization(
+        particle_size=particle_size,
+        particle_metrics=particle_metrics,
+        spectra=spectra,
+        spectral_metrics=spectral_metrics,
+        thermogravimetry=tg_frame,
+        evolved_gas=ega_frame,
+        thermal_metrics=thermal_metrics,
+        gas_release_peaks=ega_metrics,
+    )
 
 
 @dataclass
