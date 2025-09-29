@@ -12,6 +12,7 @@ from app.modules.analytics import pareto_front
 from app.modules.exporters import candidate_to_json, candidate_to_csv
 from app.modules.safety import check_safety  # recalcular badge al seleccionar
 from app.modules.ui_blocks import load_theme
+from app.modules.luxe_components import TeslaHero, MetricGalaxy, MetricItem
 
 # ⚠️ PRIMERA llamada
 st.set_page_config(page_title="Pareto & Export", page_icon="📤", layout="wide")
@@ -27,32 +28,27 @@ if not cands or not target:
     st.warning("Generá opciones en **3) Generador** primero.")
     st.stop()
 
-# ======== estilos (NASA/SpaceX-like) ========
-st.markdown(
-    """
-    <style>
-    .hero {border-radius:16px; padding:18px 18px 8px; background: radial-gradient(1200px 380px at 20% -10%, rgba(80,120,255,.08), transparent);}
-    .section-title{margin-top:6px; margin-bottom:6px}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
 # ======== HERO ========
-st.markdown("""
-<div class="hero">
-  <h1 style="margin:0 0 6px 0">📤 Pareto & Export</h1>
-  <div class="small" style="margin-bottom:10px">
-    Explorá el trade-off **Energía ↔ Agua ↔ Crew** con datos reales de tus candidatos.
-    Elegí uno y exportá el plan. Todo conectado al objetivo definido en <b>2) Target</b>.
-  </div>
-  <div class="legend">
-    <span class="pill info">Paso 1 — Explorar</span>
-    <span class="pill info">Paso 2 — Seleccionar</span>
-    <span class="pill ok">Paso 3 — Exportar</span>
-  </div>
-</div>
-""", unsafe_allow_html=True)
+TeslaHero(
+    title="Pareto & Export",
+    subtitle=(
+        "Explorá el trade-off Energía ↔ Agua ↔ Crew con datos reales de tus candidatos. "
+        "Elegí uno y exportá el plan enlazado al objetivo definido en 2) Target."
+    ),
+    chips=[
+        {"label": "Paso 1 — Explorar", "tone": "info"},
+        {"label": "Paso 2 — Seleccionar", "tone": "info"},
+        {"label": "Paso 3 — Exportar", "tone": "accent"},
+    ],
+    icon="📤",
+    gradient="linear-gradient(135deg, rgba(80,120,255,0.22), rgba(14,165,233,0.08))",
+    glow="rgba(99,102,241,0.42)",
+    density="cozy",
+    parallax_icons=[
+        {"icon": "🛰️", "top": "20%", "left": "76%", "size": "4rem", "speed": "20s"},
+        {"icon": "📦", "top": "62%", "left": "83%", "size": "3.6rem", "speed": "26s"},
+    ],
+).render()
 
 # ======== tabla base (derivada de candidates reales) ========
 df_raw = compare_table(cands, target, crew_time_low=target.get("crew_time_low", False)).copy()
@@ -82,11 +78,20 @@ if "Materiales" in df_raw:
 df_plot = df_raw.dropna(subset=["Energía (kWh)","Agua (L)","Crew (min)","Score"]).copy()
 
 # ======== KPIs ========
-colA, colB, colC, colD = st.columns(4)
-with colA: st.markdown(f'<div class="kpi"><h3>Opciones válidas</h3><div class="v">{len(df_plot)}</div></div>', unsafe_allow_html=True)
-with colB: st.markdown(f'<div class="kpi"><h3>Score máximo</h3><div class="v">{df_plot["Score"].max():.2f}</div></div>', unsafe_allow_html=True)
-with colC: st.markdown(f'<div class="kpi"><h3>Mín. Agua</h3><div class="v">{df_plot["Agua (L)"].min():.2f} L</div></div>', unsafe_allow_html=True)
-with colD: st.markdown(f'<div class="kpi"><h3>Mín. Energía</h3><div class="v">{df_plot["Energía (kWh)"].min():.2f} kWh</div></div>', unsafe_allow_html=True)
+kpi_items = []
+if not df_plot.empty:
+    kpi_items = [
+        MetricItem(label="Opciones válidas", value=str(len(df_plot)), icon="🪐"),
+        MetricItem(label="Score máximo", value=f"{df_plot['Score'].max():.2f}", icon="🌟"),
+        MetricItem(label="Mín. Agua", value=f"{df_plot['Agua (L)'].min():.2f} L", icon="💧"),
+        MetricItem(label="Mín. Energía", value=f"{df_plot['Energía (kWh)'].min():.2f} kWh", icon="⚡"),
+    ]
+else:
+    kpi_items = [
+        MetricItem(label="Opciones válidas", value="0", icon="🪐"),
+    ]
+
+MetricGalaxy(metrics=kpi_items, density="compact").render()
 
 # ======== What-If de límites ========
 st.markdown("### 🎛️ What-If (filtro visual)")
