@@ -13,12 +13,7 @@ from app.modules.ml_models import get_model_registry
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.process_planner import choose_process
 from app.modules.safety import check_safety, safety_badge
-from app.modules.ui_blocks import load_theme, futuristic_button
-
-st.set_page_config(page_title="Rex-AI • Generador", page_icon="🤖", layout="wide")
-
-from app.modules.ui_blocks import load_theme, layout_block
-from app.modules.ui_blocks import load_theme
+from app.modules.ui_blocks import futuristic_button, layout_block, load_theme
 from app.modules.luxe_components import TeslaHero, ChipRow
 
 st.set_page_config(page_title="Rex-AI • Generador", page_icon="🤖", layout="wide")
@@ -98,21 +93,6 @@ def _format_label_summary(summary: dict[str, dict[str, float]] | None) -> str:
     return " · ".join(parts)
 
 # ----------------------------- Hero -----------------------------
-st.markdown(
-    """
-    <section class="hero-gen layer-glow fade-in">
-      <h1>🤖 Generador asistido por IA</h1>
-      <p>Rex-AI explora combinaciones de residuos NASA, optimiza parámetros y explica cada predicción con bandas de confianza e importancias de features.</p>
-      <div class="chipline">
-        <span>RandomForest + XGBoost (alternativo)</span>
-        <span>Confianza 95%</span>
-        <span>Comparación heurística vs IA</span>
-        <span>Trazabilidad NASA + MGS-1</span>
-      </div>
-    </section>
-    """,
-    unsafe_allow_html=True,
-)
 TeslaHero(
     title="Generador asistido por IA",
     subtitle=(
