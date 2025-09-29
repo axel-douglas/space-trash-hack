@@ -21,3 +21,9 @@ def load_microinteractions_script() -> str:
 
 
 __all__ = ["PROJECT_ROOT", "load_microinteractions_script"]
+try:
+    from app.modules.visual_theme import apply_global_visual_theme
+except Exception:  # pragma: no cover - theme setup should not break imports
+    pass
+else:
+    apply_global_visual_theme()
