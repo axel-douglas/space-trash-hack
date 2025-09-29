@@ -6,6 +6,7 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
+from app.modules.candidate_showroom import render_candidate_showroom
 from app.modules.generator import generate_candidates
 from app.modules.io import load_waste_df, load_process_df  # si tu IO usa load_process_catalog, cámbialo aquí
 from app.modules.ml_models import get_model_registry
@@ -276,12 +277,6 @@ if not cands:
         )
     st.stop()
 
-# ----------------------------- Helpers -----------------------------
-def _res_bar(current: float, limit: float) -> float:
-    if limit is None or float(limit) <= 0:
-        return 0.0
-    return max(0.0, min(1.0, current/float(limit)))
-
 # ----------------------------- Historial del optimizador -----------------------------
 if isinstance(history_df, pd.DataFrame) and not history_df.empty:
     st.subheader("Convergencia del optimizador")
@@ -328,13 +323,14 @@ if summary_rows:
     summary_df = pd.DataFrame(summary_rows)
     st.dataframe(summary_df, hide_index=True, use_container_width=True)
 
-# ----------------------------- Render de candidatos -----------------------------
+# ----------------------------- Showroom de candidatos -----------------------------
 st.subheader("Resultados del generador")
 st.caption(
-    "Cada ‘Opción’ es una combinación concreta de residuos + proceso, con predicción de propiedades y consumo de recursos. "
-    "Usá los expanders para ver detalles y trazabilidad NASA."
+    "Explorá cada receta como card 3D con tabs de propiedades, recursos y trazabilidad. "
+    "Ajustá el timeline lateral para priorizar rigidez o agua y filtrar rápidamente."
 )
 
+filtered_cands = render_candidate_showroom(cands, target)
 for i, c in enumerate(cands):
     p = c["props"]
     header = f"Opción {i+1} — Score {c['score']} — Proceso {c['process_id']} {c['process_name']}"
@@ -529,7 +525,7 @@ for i, c in enumerate(cands):
             st.success("Opción seleccionada. Abrí **4) Resultados**, **5) Comparar & Explicar** o **6) Pareto & Export**.")
 
 # ----------------------------- Explicación en criollo (popover global) -----------------------------
-top = cands[0] if cands else None
+top = filtered_cands[0] if filtered_cands else (cands[0] if cands else None)
 pop = st.popover("🧠 ¿Por qué estas recetas pintan bien? (explicación en criollo)")
 with pop:
     bullets = []
