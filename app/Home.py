@@ -20,7 +20,7 @@ from app.modules.luxe_components import (
 )
 from app.modules.ml_models import get_model_registry
 from app.modules.navigation import set_active_step
-from app.modules.ui_blocks import futuristic_button, load_theme
+from app.modules.ui_blocks import enable_reveal_animation, futuristic_button, load_theme
 
 st.set_page_config(
     page_title="Rex-AI • Mission Copilot",
@@ -666,24 +666,7 @@ orbital_timeline(
     ]
 )
 # ──────────── Animación de aparición por scroll ────────────
-st.markdown(
-    """
-    <script>
-      const observer = new IntersectionObserver((entries) => {
-        entries.forEach(entry => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add('is-visible');
-          }
-        });
-      }, {threshold: 0.2});
-
-      document.querySelectorAll('.reveal').forEach((element) => {
-        observer.observe(element);
-      });
-    </script>
-    """,
-    unsafe_allow_html=True,
-)
+enable_reveal_animation()
 MetricGalaxy(
     metrics=hero_scene.metric_items(),
     density="cozy",
