@@ -70,6 +70,88 @@ MetricGalaxy(
 - El `delta` se renderiza en un subtítulo pequeño; usalo para diferencias heurística/ML.
 - `min_width` controla el ancho mínimo de cada tarjeta dentro de la grilla.
 
+### `MissionMetrics`
+Panel pegajoso para KPIs de misión con opción de grilla responsiva.
+
+```python
+from app.modules.luxe_components import MissionMetrics
+
+payload = [
+    {
+        "key": "status",
+        "label": "Estado",
+        "value": "✅ Modelo listo",
+        "details": ["Modelo <code>rexai-rf-ensemble</code>"],
+        "stage_key": "inventory",
+    },
+    {
+        "key": "training",
+        "label": "Entrenamiento",
+        "value": "15 ene 2024",
+        "details": ["Origen: dataset marciano", "Muestras: 1.2k"],
+        "stage_key": "generator",
+    },
+]
+
+mission_metrics = MissionMetrics.from_payload(payload)
+mission_metrics.render(highlight_key="generator")
+
+# Grilla compacta para resúmenes finales
+mission_metrics.render(layout="grid", detail_limit=2, show_title=False)
+```
+
+- `highlight_key` resalta la métrica asociada al paso activo del flujo.
+- `layout="grid"` reutiliza los mismos datos en formato tablero (ideal para secciones de resultados).
+- Ajustá `panel_density`/`grid_density` a `"compact"`, `"cozy"` o `"roomy"` según el espacio disponible.
+
+### `CarouselRail`
+Hilera horizontal scrollable para resúmenes rápidos (categorías, materiales, etc.).
+
+```python
+from app.modules.luxe_components import CarouselItem, CarouselRail
+
+CarouselRail(
+    items=[
+        CarouselItem(title="EVA scraps", value="320 kg", description="Volumen: 450 L"),
+        CarouselItem(title="Metales", value="210 kg", description="Volumen: 180 L"),
+    ],
+    data_track="categorias",
+    density="compact",
+).render()
+```
+
+- `density` controla gap y padding de cada tarjeta.
+- Podés dejar `data_track` vacío o usarlo como `data-*` para analytics.
+- Si necesitás componer dentro de otra tarjeta, usá `CarouselRail(...).markup()` y embébelo manualmente.
+
+### `ActionDeck`
+Grilla declarativa de CTAs o pasos operativos.
+
+```python
+from app.modules.luxe_components import ActionCard, ActionDeck
+
+ActionDeck(
+    cards=[
+        ActionCard(
+            title="Exportar receta",
+            body="Descargá Sankey + trazabilidad completa.",
+            icon="📤",
+        ),
+        ActionCard(
+            title="Simular objetivo",
+            body="Proba presets de energía, crew y materiales.",
+            icon="🧮",
+        ),
+    ],
+    columns_min="16rem",
+    density="cozy",
+).render()
+```
+
+- Usa `ActionDeck(..., reveal=False)` si no necesitás la animación de entrada.
+- `ActionCard.body` acepta HTML ligero (`<code>`, `<strong>`) para destacar datos clave.
+- Podés encadenar varios `ActionDeck` para separar pasos y CTAs secundarios manteniendo el mismo estilo.
+
 ### `GlassStack`
 Stack responsivo de tarjetas glassmórficas.
 
