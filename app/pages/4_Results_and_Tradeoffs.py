@@ -5,7 +5,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from app.modules.ui_blocks import load_theme
+from app.modules.ui_blocks import load_theme, layout_block
 
 from app.modules.data_sources import (
     load_regolith_granulometry,
@@ -48,36 +48,16 @@ def _load_regolith_context():
     }
 
 st.markdown(
-    """
-    <style>
-    .hero-res {padding:28px 30px; border-radius:26px; background: linear-gradient(135deg, rgba(20,184,166,0.18), rgba(14,165,233,0.08)); border:1px solid rgba(45,212,191,0.32);}
-    .hero-res h1 {margin-bottom:0.2rem;}
-    .hero-res p {margin:0; opacity:0.82; max-width:720px;}
-    .metrics {display:grid; grid-template-columns: repeat(auto-fit,minmax(190px,1fr)); gap:14px; margin:18px 0;}
-    .metrics div {background:rgba(13,17,23,0.68); border:1px solid rgba(148,163,184,0.22); border-radius:18px; padding:14px 16px;}
-    .metrics span {display:block; font-size:0.8rem; opacity:0.7;}
-    .metrics strong {display:block; font-size:1.35rem; margin-top:4px;}
-    .delta {font-size:0.82rem; opacity:0.75; margin-top:4px;}
-    .card {background:rgba(13,17,23,0.65); border:1px solid rgba(148,163,184,0.22); border-radius:20px; padding:20px 22px; margin-top:18px;}
-    .badge {display:inline-flex; gap:6px; align-items:center; padding:5px 12px; border-radius:999px; border:1px solid rgba(148,163,184,0.28); font-size:0.78rem;}
-    .chips {display:flex; flex-wrap:wrap; gap:8px; margin-top:8px;}
-    .chips span {padding:4px 10px; border-radius:999px; border:1px solid rgba(148,163,184,0.25); font-size:0.78rem;}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-st.markdown(
     f"""
-    <div class="hero-res">
+    <section class="hero-res layer-glow fade-in">
       <h1>📊 Resultado seleccionado · Score {score:.3f}</h1>
       <p>Proceso <strong>{cand['process_id']} · {cand['process_name']}</strong>. La IA Rex-AI proporciona predicciones con trazabilidad NASA, bandas de confianza y comparación contra heurísticas originales.</p>
-    </div>
+    </section>
     """,
     unsafe_allow_html=True,
 )
 
-cols = st.columns(5)
+cards = []
 labels = [
     ("Rigidez", props.rigidity, heur.rigidity, ci.get("rigidez")),
     ("Estanqueidad", props.tightness, heur.tightness, ci.get("estanqueidad")),
@@ -85,12 +65,20 @@ labels = [
     ("Agua (L)", props.water_l, heur.water_l, ci.get("water_l")),
     ("Crew (min)", props.crew_min, heur.crew_min, ci.get("crew_min")),
 ]
-for col, (label, val_ml, val_h, interval) in zip(cols, labels):
-    with col:
-        st.markdown("<div class='metrics'><div><span>{}</span><strong>{:.3f}</strong></div></div>".format(label, val_ml), unsafe_allow_html=True)
-        st.markdown(f"<div class='delta'>Heurística: {val_h:.3f} · Δ {val_ml - val_h:+.3f}</div>", unsafe_allow_html=True)
-        if interval:
-            st.caption(f"CI 95%: [{interval[0]:.3f}, {interval[1]:.3f}]")
+for label, val_ml, val_h, interval in labels:
+    ci_html = ""
+    if interval:
+        ci_html = f"<div class='delta'>CI 95%: [{interval[0]:.3f}, {interval[1]:.3f}]</div>"
+    cards.append(
+        f"<div class='stat-card layer-shadow'>"
+        f"<span>{label}</span>"
+        f"<strong>{val_ml:.3f}</strong>"
+        f"<div class='delta'>Heurística: {val_h:.3f} · Δ {val_ml - val_h:+.3f}</div>"
+        f"{ci_html}"
+        "</div>"
+    )
+metrics_html = "<div class='metric-grid fade-in'>" + "".join(cards) + "</div>"
+st.markdown(metrics_html, unsafe_allow_html=True)
 if uncertainty:
     st.caption("Desviaciones modelo: " + ", ".join(f"{k} {v:.3f}" for k, v in uncertainty.items()))
 
@@ -169,125 +157,125 @@ with st.container():
     spectra_df = context_data["spectra"]
     thermal_bundle = context_data["thermal"]
 
-    col_lab_a, col_lab_b = st.columns(2)
-    with col_lab_a:
-        st.markdown("**Granulometría acumulada MGS-1**")
-        if not gran_df.empty:
-            gran_chart = (
-                alt.Chart(gran_df)
-                .mark_line(color="#34d399", interpolate="monotone", size=2)
-                .encode(
-                    x=alt.X(
-                        "diameter_microns:Q",
-                        title="Tamaño de partícula (µm)",
-                        scale=alt.Scale(reverse=True),
-                    ),
-                    y=alt.Y("cumulative_retained:Q", title="% acumulado retenido"),
-                    tooltip=[
-                        alt.Tooltip("diameter_microns:Q", title="Tamiz", format=".0f"),
-                        alt.Tooltip("pct_retained:Q", title="% canal", format=".2f"),
-                        alt.Tooltip("cumulative_retained:Q", title="% acumulado", format=".1f"),
-                        alt.Tooltip("pct_passing:Q", title="% pasa", format=".1f"),
-                    ],
-                )
-            )
-            gran_points = gran_chart.mark_circle(size=60, color="#22d3ee")
-            st.altair_chart(gran_chart + gran_points, use_container_width=True)
-            st.caption(
-                "Tooltip → granulometría fina = mayor estanqueidad; un tamiz grueso aporta rigidez estructural."
-            )
-        else:
-            st.info("Sin datos granulométricos disponibles.")
-
-    with col_lab_b:
-        st.markdown("**Curva espectral VNIR**")
-        if not spectra_df.empty:
-            focus_label = "MGS-1 Prototype"
-            focus_curve = spectra_df[spectra_df["sample"] == focus_label]
-            others_curve = spectra_df[spectra_df["sample"] != focus_label]
-            layers = []
-            if not others_curve.empty:
-                base_chart = (
-                    alt.Chart(others_curve)
-                    .mark_line(color="#64748b", opacity=0.35)
+    with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None) as lab_grid:
+        with layout_block("depth-stack layer-shadow", parent=lab_grid) as gran_panel:
+            gran_panel.markdown("**Granulometría acumulada MGS-1**")
+            if not gran_df.empty:
+                gran_chart = (
+                    alt.Chart(gran_df)
+                    .mark_line(color="#34d399", interpolate="monotone", size=2)
                     .encode(
-                        x=alt.X("wavelength_nm:Q", title="Longitud de onda (nm)"),
-                        y=alt.Y("reflectance:Q", title="Reflectancia"),
+                        x=alt.X(
+                            "diameter_microns:Q",
+                            title="Tamaño de partícula (µm)",
+                            scale=alt.Scale(reverse=True),
+                        ),
+                        y=alt.Y("cumulative_retained:Q", title="% acumulado retenido"),
                         tooltip=[
-                            alt.Tooltip("sample:N", title="Muestra"),
-                            alt.Tooltip("wavelength_nm:Q", title="λ", format=".0f"),
-                            alt.Tooltip("reflectance_pct:Q", title="% reflectancia", format=".1f"),
+                            alt.Tooltip("diameter_microns:Q", title="Tamiz", format=".0f"),
+                            alt.Tooltip("pct_retained:Q", title="% canal", format=".2f"),
+                            alt.Tooltip("cumulative_retained:Q", title="% acumulado", format=".1f"),
+                            alt.Tooltip("pct_passing:Q", title="% pasa", format=".1f"),
                         ],
                     )
                 )
-                layers.append(base_chart)
-            highlight = (
-                alt.Chart(focus_curve)
-                .mark_line(color="#38bdf8", size=2.4)
-                .encode(
-                    x="wavelength_nm:Q",
-                    y="reflectance:Q",
-                    tooltip=[
-                        alt.Tooltip("wavelength_nm:Q", title="λ", format=".0f"),
-                        alt.Tooltip("reflectance_pct:Q", title="MGS-1 %", format=".1f"),
-                    ],
+                gran_points = gran_chart.mark_circle(size=60, color="#22d3ee")
+                gran_panel.altair_chart(gran_chart + gran_points, use_container_width=True)
+                gran_panel.caption(
+                    "Tooltip → granulometría fina = mayor estanqueidad; un tamiz grueso aporta rigidez estructural."
                 )
-            )
-            layers.append(highlight)
-            st.altair_chart(alt.layer(*layers), use_container_width=True)
-            st.caption(
-                "La firma espectral azul resalta olivinos/hematitas: ayuda a anticipar rigidez y compuestos refractarios."
-            )
-        else:
-            st.info("Sin espectros VNIR cargados.")
+            else:
+                gran_panel.info("Sin datos granulométricos disponibles.")
 
-    col_lab_c, col_lab_d = st.columns(2)
-    with col_lab_c:
-        st.markdown("**TG · masa residual vs temperatura**")
-        tg_df = thermal_bundle.tg_curve if thermal_bundle else pd.DataFrame()
-        if isinstance(tg_df, pd.DataFrame) and not tg_df.empty:
-            tg_chart = (
-                alt.Chart(tg_df)
-                .mark_line(color="#f97316", interpolate="monotone")
-                .encode(
-                    x=alt.X("temperature_c:Q", title="Temperatura (°C)"),
-                    y=alt.Y("mass_pct:Q", title="Masa residual (%)"),
-                    tooltip=[
-                        alt.Tooltip("temperature_c:Q", title="Temp", format=".0f"),
-                        alt.Tooltip("mass_pct:Q", title="Masa %", format=".2f"),
-                        alt.Tooltip("mass_loss_pct:Q", title="Pérdida %", format=".2f"),
-                    ],
+        with layout_block("depth-stack layer-shadow", parent=lab_grid) as spectra_panel:
+            spectra_panel.markdown("**Curva espectral VNIR**")
+            if not spectra_df.empty:
+                focus_label = "MGS-1 Prototype"
+                focus_curve = spectra_df[spectra_df["sample"] == focus_label]
+                others_curve = spectra_df[spectra_df["sample"] != focus_label]
+                layers = []
+                if not others_curve.empty:
+                    base_chart = (
+                        alt.Chart(others_curve)
+                        .mark_line(color="#64748b", opacity=0.35)
+                        .encode(
+                            x=alt.X("wavelength_nm:Q", title="Longitud de onda (nm)"),
+                            y=alt.Y("reflectance:Q", title="Reflectancia"),
+                            tooltip=[
+                                alt.Tooltip("sample:N", title="Muestra"),
+                                alt.Tooltip("wavelength_nm:Q", title="λ", format=".0f"),
+                                alt.Tooltip("reflectance_pct:Q", title="% reflectancia", format=".1f"),
+                            ],
+                        )
+                    )
+                    layers.append(base_chart)
+                highlight = (
+                    alt.Chart(focus_curve)
+                    .mark_line(color="#38bdf8", size=2.4)
+                    .encode(
+                        x="wavelength_nm:Q",
+                        y="reflectance:Q",
+                        tooltip=[
+                            alt.Tooltip("wavelength_nm:Q", title="λ", format=".0f"),
+                            alt.Tooltip("reflectance_pct:Q", title="MGS-1 %", format=".1f"),
+                        ],
+                    )
                 )
-                .properties(height=260)
-            )
-            st.altair_chart(tg_chart, use_container_width=True)
-            st.caption("Picos de pérdida → secado y desgasificación; anticipa tiempos de horno y consumo energético.")
-        else:
-            st.info("Sin perfil TG de NASA disponible.")
+                layers.append(highlight)
+                spectra_panel.altair_chart(alt.layer(*layers), use_container_width=True)
+                spectra_panel.caption(
+                    "La firma espectral azul resalta olivinos/hematitas: ayuda a anticipar rigidez y compuestos refractarios."
+                )
+            else:
+                spectra_panel.info("Sin espectros VNIR cargados.")
 
-    with col_lab_d:
-        st.markdown("**EGA · gases liberados**")
-        ega_df = thermal_bundle.ega_long if thermal_bundle else pd.DataFrame()
-        if isinstance(ega_df, pd.DataFrame) and not ega_df.empty:
-            ega_chart = (
-                alt.Chart(ega_df)
-                .mark_line()
-                .encode(
-                    x=alt.X("temperature_c:Q", title="Temperatura (°C)"),
-                    y=alt.Y("signal_ppb:Q", title="Señal relativa (ppb eq.)"),
-                    color=alt.Color("species_label:N", title="Gas"),
-                    tooltip=[
-                        alt.Tooltip("species_label:N", title="Gas"),
-                        alt.Tooltip("temperature_c:Q", title="Temp", format=".0f"),
-                        alt.Tooltip("signal_ppb:Q", title="Intensidad", format=".2f"),
-                    ],
+    with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None) as thermal_grid:
+        with layout_block("depth-stack layer-shadow", parent=thermal_grid) as tg_panel:
+            tg_panel.markdown("**TG · masa residual vs temperatura**")
+            tg_df = thermal_bundle.tg_curve if thermal_bundle else pd.DataFrame()
+            if isinstance(tg_df, pd.DataFrame) and not tg_df.empty:
+                tg_chart = (
+                    alt.Chart(tg_df)
+                    .mark_line(color="#f97316", interpolate="monotone")
+                    .encode(
+                        x=alt.X("temperature_c:Q", title="Temperatura (°C)"),
+                        y=alt.Y("mass_pct:Q", title="Masa residual (%)"),
+                        tooltip=[
+                            alt.Tooltip("temperature_c:Q", title="Temp", format=".0f"),
+                            alt.Tooltip("mass_pct:Q", title="Masa %", format=".2f"),
+                            alt.Tooltip("mass_loss_pct:Q", title="Pérdida %", format=".2f"),
+                        ],
+                    )
+                    .properties(height=260)
                 )
-                .properties(height=260)
-            )
-            st.altair_chart(ega_chart, use_container_width=True)
-            st.caption("H₂O/CO₂ altos → vigilar porosidad y estanqueidad; SO₂ indica impurezas que afectan sellado.")
-        else:
-            st.info("Sin gases EGA registrados.")
+                tg_panel.altair_chart(tg_chart, use_container_width=True)
+                tg_panel.caption("Picos de pérdida → secado y desgasificación; anticipa tiempos de horno y consumo energético.")
+            else:
+                tg_panel.info("Sin perfil TG de NASA disponible.")
+
+        with layout_block("depth-stack layer-shadow", parent=thermal_grid) as ega_panel:
+            ega_panel.markdown("**EGA · gases liberados**")
+            ega_df = thermal_bundle.ega_long if thermal_bundle else pd.DataFrame()
+            if isinstance(ega_df, pd.DataFrame) and not ega_df.empty:
+                ega_chart = (
+                    alt.Chart(ega_df)
+                    .mark_line()
+                    .encode(
+                        x=alt.X("temperature_c:Q", title="Temperatura (°C)"),
+                        y=alt.Y("signal_ppb:Q", title="Señal relativa (ppb eq.)"),
+                        color=alt.Color("species_label:N", title="Gas"),
+                        tooltip=[
+                            alt.Tooltip("species_label:N", title="Gas"),
+                            alt.Tooltip("temperature_c:Q", title="Temp", format=".0f"),
+                            alt.Tooltip("signal_ppb:Q", title="Intensidad", format=".2f"),
+                        ],
+                    )
+                    .properties(height=260)
+                )
+                ega_panel.altair_chart(ega_chart, use_container_width=True)
+                ega_panel.caption("H₂O/CO₂ altos → vigilar porosidad y estanqueidad; SO₂ indica impurezas que afectan sellado.")
+            else:
+                ega_panel.info("Sin gases EGA registrados.")
 
     if regolith_pct > 0:
         st.success(
@@ -300,68 +288,71 @@ with st.container():
         )
 
 st.markdown("### 📥 Export quick facts")
-top_left, top_right = st.columns([2, 1])
-with top_left:
-    st.json(
-        {
-            "process": {"id": cand["process_id"], "name": cand["process_name"]},
-            "materials": cand["materials"],
-            "weights": cand.get("weights", []),
-            "predictions": {
-                "rigidez": props.rigidity,
-                "estanqueidad": props.tightness,
-                "energy_kwh": props.energy_kwh,
-                "water_l": props.water_l,
-                "crew_min": props.crew_min,
+with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None) as export_grid:
+    with layout_block("depth-stack layer-shadow", parent=export_grid) as export_panel:
+        export_panel.json(
+            {
+                "process": {"id": cand["process_id"], "name": cand["process_name"]},
+                "materials": cand["materials"],
+                "weights": cand.get("weights", []),
+                "predictions": {
+                    "rigidez": props.rigidity,
+                    "estanqueidad": props.tightness,
+                    "energy_kwh": props.energy_kwh,
+                    "water_l": props.water_l,
+                    "crew_min": props.crew_min,
+                },
+                "confidence_interval": ci,
+                "uncertainty": uncertainty,
+                "model_metadata": metadata,
+                "score": score,
             },
-            "confidence_interval": ci,
-            "uncertainty": uncertainty,
-            "model_metadata": metadata,
-            "score": score,
-        },
-    )
-with top_right:
-    badge = safety
-    # Estado de seguridad (pill + popover de explicación)
-    level = badge.get("level", "OK").lower()
-    cls = "ok" if "ok" in level else ("risk" if "riesgo" in level or "risk" in level else "warn")
-    st.markdown(
-        f'<span class="pill {cls}">Seguridad: {badge.get("level", "OK")}</span>',
-        unsafe_allow_html=True,
-    )
-    pop = st.popover("¿Qué chequeamos?")
-    with pop:
-        st.write(badge.get("detail", "Sin observaciones."))
-        st.caption(
-            "Validaciones: PFAS/microplásticos evitados, sin incineración, flags NASA (EVA/CTB, multilayers, nitrilo)."
         )
+    with layout_block("side-panel layer-shadow", parent=export_grid) as safety_panel:
+        badge = safety
+        level = badge.get("level", "OK").lower()
+        cls = "ok" if "ok" in level else ("risk" if "riesgo" in level or "risk" in level else "warn")
+        safety_panel.markdown(
+            f'<span class="pill {cls}">Seguridad: {badge.get("level", "OK")}</span>',
+            unsafe_allow_html=True,
+        )
+        pop = safety_panel.popover("¿Qué chequeamos?")
+        with pop:
+            st.write(badge.get("detail", "Sin observaciones."))
+            st.caption(
+                "Validaciones: PFAS/microplásticos evitados, sin incineración, flags NASA (EVA/CTB, multilayers, nitrilo)."
+            )
 
 st.markdown("---")
 
 # ======== KPIs con contexto ========
-k1,k2,k3,k4,k5 = st.columns(5)
-with k1:
-    st.markdown('<div class="kpi"><h3>Score total</h3><div class="v">{:.2f}</div><div class="hint">Función + Recursos + Bono problemáticos</div></div>'.format(score), unsafe_allow_html=True)
-with k2:
-    st.markdown('<div class="kpi"><h3>Rigidez</h3><div class="v">{:.2f}</div><div class="hint">Objetivo: {:.2f}</div></div>'.format(props.rigidity, float(target["rigidity"])), unsafe_allow_html=True)
-with k3:
-    st.markdown('<div class="kpi"><h3>Estanqueidad</h3><div class="v">{:.2f}</div><div class="hint">Objetivo: {:.2f}</div></div>'.format(props.tightness, float(target["tightness"])), unsafe_allow_html=True)
-with k4:
-    st.markdown('<div class="kpi"><h3>Energía (kWh)</h3><div class="v">{:.2f}</div><div class="hint">Máx: {:.2f}</div></div>'.format(props.energy_kwh, float(target["max_energy_kwh"])), unsafe_allow_html=True)
-with k5:
-    st.markdown('<div class="kpi"><h3>Agua (L)</h3><div class="v">{:.2f}</div><div class="hint">Máx: {:.2f}</div></div>'.format(props.water_l, float(target["max_water_l"])), unsafe_allow_html=True)
+kpi_primary = [
+    ("Score total", f"{score:.2f}", "Función + Recursos + Bono problemáticos"),
+    ("Rigidez", f"{props.rigidity:.2f}", f"Objetivo: {float(target['rigidity']):.2f}"),
+    ("Estanqueidad", f"{props.tightness:.2f}", f"Objetivo: {float(target['tightness']):.2f}"),
+    ("Energía (kWh)", f"{props.energy_kwh:.2f}", f"Máx: {float(target['max_energy_kwh']):.2f}"),
+    ("Agua (L)", f"{props.water_l:.2f}", f"Máx: {float(target['max_water_l']):.2f}"),
+]
+primary_html = "<div class='metric-grid fade-in'>" + "".join(
+    f"<div class='kpi layer-shadow'><h3>{title}</h3><div class='v'>{value}</div><div class='hint'>{hint}</div></div>"
+    for title, value, hint in kpi_primary
+) + "</div>"
+st.markdown(primary_html, unsafe_allow_html=True)
 
-c1, c2, c3 = st.columns([1,1,1])
-with c1:
-    st.markdown('<div class="kpi"><h3>Crew-time (min)</h3><div class="v">{:.0f}</div><div class="hint">Máx: {:.0f}</div></div>'.format(props.crew_min, float(target["max_crew_min"])), unsafe_allow_html=True)
-with c2:
-    st.markdown('<div class="kpi"><h3>Masa final (kg)</h3><div class="v">{:.2f}</div><div class="hint">Post-proceso / mermas</div></div>'.format(props.mass_final_kg), unsafe_allow_html=True)
-with c3:
-    # Mini ayuda para crew-time-low
-    if target.get("crew_time_low", False):
-        st.markdown('<div class="kpi"><h3>Modo</h3><div class="v">Crew-time Low</div><div class="hint">Más peso al tiempo de tripulación</div></div>', unsafe_allow_html=True)
-    else:
-        st.markdown('<div class="kpi"><h3>Modo</h3><div class="v">Balanceado</div><div class="hint">Trade-off estándar</div></div>', unsafe_allow_html=True)
+kpi_secondary = [
+    ("Crew-time (min)", f"{props.crew_min:.0f}", f"Máx: {float(target['max_crew_min']):.0f}"),
+    ("Masa final (kg)", f"{props.mass_final_kg:.2f}", "Post-proceso / mermas"),
+    (
+        "Modo",
+        "Crew-time Low" if target.get("crew_time_low", False) else "Balanceado",
+        "Más peso al tiempo de tripulación" if target.get("crew_time_low", False) else "Trade-off estándar",
+    ),
+]
+secondary_html = "<div class='metric-grid fade-in'>" + "".join(
+    f"<div class='kpi layer-shadow'><h3>{title}</h3><div class='v'>{value}</div><div class='hint'>{hint}</div></div>"
+    for title, value, hint in kpi_secondary
+) + "</div>"
+st.markdown(secondary_html, unsafe_allow_html=True)
 
 # ======== Tabs principales: (1) Score anatomy (2) Flujo Sankey (3) Checklist (4) Trazabilidad ========
 tab1, tab2, tab3, tab4 = st.tabs(["🧩 Anatomía del Score", "🔀 Flujo del proceso (Sankey)", "🛠️ Checklist & Próximos pasos", "🛰️ Trazabilidad NASA"])
@@ -447,10 +438,12 @@ with tab3:
     """)
 
     st.markdown("### ⏱️ Recursos estimados")
-    cA,cB,cC = st.columns(3)
-    cA.metric("Energía", f"{props.energy_kwh:.2f} kWh")
-    cB.metric("Agua", f"{props.water_l:.2f} L")
-    cC.metric("Crew-time", f"{props.crew_min:.0f} min")
+    resource_html = "<div class='metric-grid fade-in'>" + "".join([
+        f"<div class='kpi layer-shadow'><h3>Energía</h3><div class='v'>{props.energy_kwh:.2f} kWh</div></div>",
+        f"<div class='kpi layer-shadow'><h3>Agua</h3><div class='v'>{props.water_l:.2f} L</div></div>",
+        f"<div class='kpi layer-shadow'><h3>Crew-time</h3><div class='v'>{props.crew_min:.0f} min</div></div>",
+    ]) + "</div>"
+    st.markdown(resource_html, unsafe_allow_html=True)
 
     pop3 = st.popover("¿Por qué importa?")
     with pop3:
