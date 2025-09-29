@@ -25,9 +25,9 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 LOGGER = logging.getLogger(__name__)
 
-INGESTION_ERROR_LOG_PATH = (
-    Path(__file__).resolve().parents[2] / "data" / "logs" / "ingestion.errors.jsonl"
-)
+from .paths import LOGS_DIR
+
+INGESTION_ERROR_LOG_PATH = LOGS_DIR / "ingestion.errors.jsonl"
 
 
 class InventoryRecord(BaseModel):

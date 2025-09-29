@@ -23,7 +23,9 @@ except Exception:  # pragma: no cover - pyarrow is expected in production
     pa = None  # type: ignore[assignment]
     pq = None  # type: ignore[assignment]
 
-LOGS_ROOT = Path(__file__).resolve().parents[2] / "data" / "logs"
+from .paths import LOGS_DIR
+
+LOGS_ROOT = LOGS_DIR
 
 
 @dataclass

@@ -5,11 +5,12 @@ import copy
 import json
 from functools import lru_cache
 from pathlib import Path
-
 import pandas as pd
 import polars as pl
 
-DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+from .paths import DATA_ROOT
+
+DATA_DIR = DATA_ROOT
 
 # Archivos que proporcionó NASA (ustedes)
 WASTE_CSV   = DATA_DIR / "waste_inventory_sample.csv"

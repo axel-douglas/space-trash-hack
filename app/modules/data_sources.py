@@ -29,7 +29,9 @@ import numpy as np
 import pandas as pd
 import polars as pl
 
-DATASETS_ROOT = Path(__file__).resolve().parents[2] / "datasets"
+from .paths import DATA_ROOT
+
+DATASETS_ROOT = DATA_ROOT.parent / "datasets"
 
 __all__ = [
     "DATASETS_ROOT",

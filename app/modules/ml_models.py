@@ -26,6 +26,8 @@ import pandas as pd
 import requests
 import streamlit as st
 
+from .paths import DATA_ROOT, MODELS_DIR
+
 try:  # Optional runtime for accelerated inference
     import onnxruntime as ort
 
@@ -47,8 +49,7 @@ except Exception:  # pragma: no cover - optional dependency missing
 LOGGER = logging.getLogger(__name__)
 
 # Rutas estándar
-DATA_ROOT = Path(__file__).resolve().parents[2] / "data"
-MODEL_DIR = DATA_ROOT / "models"
+MODEL_DIR = MODELS_DIR  # Backwards compatibility alias
 PIPELINE_PATH = MODEL_DIR / "rexai_regressor.joblib"
 METADATA_PATH = MODEL_DIR / "metadata_gold.json"
 LEGACY_METADATA_PATH = MODEL_DIR / "metadata.json"

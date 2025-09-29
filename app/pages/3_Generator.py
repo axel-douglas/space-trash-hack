@@ -138,6 +138,13 @@ with col_control:
         0, 60, 18,
         help="Loop bayesiano para maximizar score sin violar límites de recursos."
     )
+    seed_default = st.session_state.get("generator_seed_input", "")
+    seed_input = st.text_input(
+        "Semilla (opcional)",
+        value=seed_default,
+        help="Fijá una semilla entera para repetir los mismos candidatos en sesiones futuras.",
+    )
+    st.session_state["generator_seed_input"] = seed_input
     crew_low = target.get("crew_time_low", False)
     st.caption("Los resultados privilegian %s" % ("tiempo de tripulación" if crew_low else "un balance general"))
     run = st.button("Generar recomendaciones", type="primary", use_container_width=True)
@@ -185,6 +192,14 @@ with col_ai:
 
 # ----------------------------- Generación -----------------------------
 if run:
+    seed_value: int | None = None
+    seed_raw = st.session_state.get("generator_seed_input", "").strip()
+    if seed_raw:
+        try:
+            seed_value = int(seed_raw, 0)
+        except ValueError:
+            st.error("Ingresá un entero válido para la semilla (por ejemplo 42 o 0x2A).")
+            st.stop()
     result = generate_candidates(
         waste_df,
         proc_filtered,
@@ -193,6 +208,7 @@ if run:
         crew_time_low=target.get("crew_time_low", False),
         optimizer_evals=opt_evals,
         use_ml=use_ml,
+        seed=seed_value,
     )
     if isinstance(result, tuple):
         cands, history = result
