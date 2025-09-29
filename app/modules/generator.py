@@ -151,9 +151,11 @@ from app.modules.label_mapper import derive_recipe_id, lookup_labels
 from app.modules.ranking import derive_auxiliary_signals, score_recipe
 
 try:  # Lazy import to avoid circular dependency during training pipelines
-    from app.modules.ml_models import MODEL_REGISTRY
+    from app.modules.ml_models import get_model_registry
 except Exception:  # pragma: no cover - fallback when models are not available
-    MODEL_REGISTRY = None
+
+    def get_model_registry():  # type: ignore[return-value]
+        return None
 
 _REGOLITH_OXIDE_ITEMS = tuple(REGOLITH_VECTOR.items())
 _REGOLITH_OXIDE_NAMES = tuple(f"oxide_{name}" for name, _ in _REGOLITH_OXIDE_ITEMS)
@@ -2542,6 +2544,7 @@ def _finalize_candidate(
     target: dict,
     crew_time_low: bool,
     use_ml: bool,
+    registry: Any | None,
 ) -> dict | None:
     picks = components.picks
     proc = components.process
@@ -2613,31 +2616,31 @@ def _finalize_candidate(
         props = heuristic
         force_env = os.getenv("REXAI_FORCE_HEURISTIC", "").lower() in {"1", "true", "yes"}
         force_heuristic = (not use_ml) or force_env
-        if not force_heuristic and MODEL_REGISTRY is not None and getattr(MODEL_REGISTRY, "ready", False):
+        if not force_heuristic and registry is not None and getattr(registry, "ready", False):
             features_for_inference = dict(features)
             if prediction:
                 # prediction se inicializa vacío; mantener la rama por claridad estructural.
                 pass
             else:
                 try:
-                    prediction = MODEL_REGISTRY.predict(features_for_inference)
+                    prediction = registry.predict(features_for_inference)
                 except Exception as exc:  # pragma: no cover - defensive logging
-                    logging.getLogger(__name__).exception("MODEL_REGISTRY.predict failed")
+                    logging.getLogger(__name__).exception("Model registry prediction failed")
                     prediction = {}
                     prediction_error = f"Error al invocar el modelo ML: {exc}"
                     append_inference_log(
                         features_for_inference,
                         {"error": str(exc)},
                         {},
-                        MODEL_REGISTRY,
+                        registry,
                     )
                 else:
-                    logged_prediction = prediction or {"error": "MODEL_REGISTRY returned no data"}
+                    logged_prediction = prediction or {"error": "model registry returned no data"}
                     append_inference_log(
                         features_for_inference,
                         logged_prediction,
                         ((prediction or {}).get("uncertainty") if isinstance(prediction, dict) else {}),
-                        MODEL_REGISTRY,
+                        registry,
                     )
                     if prediction:
                         props = PredProps(
@@ -2671,14 +2674,14 @@ def _finalize_candidate(
                     else:
                         prediction = {}
                         prediction_error = "El modelo ML no devolvió resultados."
-                        logging.getLogger(__name__).error("MODEL_REGISTRY.predict returned no data")
+                        logging.getLogger(__name__).error("Model registry returned no data")
         if force_heuristic:
             features["prediction_mode"] = "heuristic"
 
     latent: Tuple[float, ...] | list[float] = []
-    if MODEL_REGISTRY is not None and getattr(MODEL_REGISTRY, "ready", False):
+    if registry is not None and getattr(registry, "ready", False):
         try:
-            emb = MODEL_REGISTRY.embed(features)  # type: ignore[attr-defined]
+            emb = registry.embed(features)  # type: ignore[attr-defined]
         except Exception:
             emb = ()
         if emb:
@@ -2721,6 +2724,7 @@ def _build_candidate(
     crew_time_low: bool,
     use_ml: bool,
     tuning: dict[str, Any] | None,
+    registry: Any | None,
 ) -> dict | None:
     components = _create_candidate_components(picks, proc_df, rng, tuning)
     if components is None:
@@ -2736,7 +2740,7 @@ def _build_candidate(
     if not features_batch:
         return None
 
-    return _finalize_candidate(components, features_batch[0], target, crew_time_low, use_ml)
+    return _finalize_candidate(components, features_batch[0], target, crew_time_low, use_ml, registry)
 
 
 # ---------------------------------------------------------------------------
@@ -2769,6 +2773,12 @@ def generate_candidates(
         return [], pd.DataFrame()
 
     df = prepare_waste_frame(waste_df)
+    registry: Any | None = None
+    if use_ml:
+        try:
+            registry = get_model_registry()
+        except Exception:  # pragma: no cover - defensive guard when cache is unavailable
+            registry = None
     resolved_seed = seed
     if resolved_seed is None:
         env_seed = os.getenv(_SEED_ENV_VAR)
@@ -2796,7 +2806,7 @@ def generate_candidates(
         local_rng = random.Random(seed_value)
         bias = float(override.get("problematic_bias", 2.0))
         picks = _pick_materials(df, local_rng, n=local_rng.choice([2, 3]), bias=bias)
-        return _build_candidate(picks, proc_df, local_rng, target, crew_time_low, use_ml, override)
+        return _build_candidate(picks, proc_df, local_rng, target, crew_time_low, use_ml, override, registry)
 
     candidates: list[dict] = []
     seeds = [_next_seed() for _ in range(n)]

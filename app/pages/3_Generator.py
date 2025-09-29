@@ -8,7 +8,7 @@ import streamlit as st
 
 from app.modules.generator import generate_candidates
 from app.modules.io import load_waste_df, load_process_df  # si tu IO usa load_process_catalog, cámbialo aquí
-from app.modules.ml_models import MODEL_REGISTRY
+from app.modules.ml_models import get_model_registry
 from app.modules.process_planner import choose_process
 from app.modules.safety import check_safety, safety_badge
 from app.modules.ui_blocks import load_theme
@@ -168,9 +168,10 @@ with col_control:
 
 with col_ai:
     st.markdown("### 🧠 Modelo Rex-AI")
-    trained_at = MODEL_REGISTRY.metadata.get("trained_at", "—")
-    n_samples = MODEL_REGISTRY.metadata.get("n_samples", "—")
-    top_features = MODEL_REGISTRY.feature_importance_avg[:5]
+    model_registry = get_model_registry()
+    trained_at = model_registry.metadata.get("trained_at", "—")
+    n_samples = model_registry.metadata.get("n_samples", "—")
+    top_features = model_registry.feature_importance_avg[:5]
     if top_features:
         df_feat = pd.DataFrame(top_features, columns=["feature", "weight"])
         chart = alt.Chart(df_feat).mark_bar(color="#60a5fa").encode(
@@ -179,14 +180,14 @@ with col_ai:
             tooltip=["feature", alt.Tooltip("weight", format=".3f")],
         ).properties(height=180)
         st.altair_chart(chart, use_container_width=True)
-    st.caption(f"Entrenado: {trained_at} · Muestras: {n_samples} · Features: {len(MODEL_REGISTRY.feature_names)}")
-    if MODEL_REGISTRY.metadata.get("random_forest", {}).get("metrics", {}).get("overall"):
-        overall = MODEL_REGISTRY.metadata["random_forest"]["metrics"]["overall"]
+    st.caption(f"Entrenado: {trained_at} · Muestras: {n_samples} · Features: {len(model_registry.feature_names)}")
+    if model_registry.metadata.get("random_forest", {}).get("metrics", {}).get("overall"):
+        overall = model_registry.metadata["random_forest"]["metrics"]["overall"]
         try:
             st.caption(f"MAE promedio: {overall.get('mae', float('nan')):.3f} · RMSE: {overall.get('rmse', float('nan')):.3f} · R²: {overall.get('r2', float('nan')):.3f}")
         except Exception:
             pass
-    label_summary_text = MODEL_REGISTRY.label_distribution_label()
+    label_summary_text = model_registry.label_distribution_label()
     if label_summary_text and label_summary_text != "—":
         st.caption(f"Fuentes de labels: {label_summary_text}")
 
@@ -364,7 +365,7 @@ for i, c in enumerate(cands):
                 latent_note = "" if not latent else f" · Vector latente {len(latent)}D"
                 st.caption(f"Predicción por modelo ML (**{src}**, entrenado {t_at}){latent_note}.")
                 summary_text = _format_label_summary(
-                    meta_payload.get("label_summary") or MODEL_REGISTRY.label_summary
+                    meta_payload.get("label_summary") or model_registry.label_summary
                 )
                 if summary_text:
                     st.caption(f"Dataset Rex-AI: {summary_text}")

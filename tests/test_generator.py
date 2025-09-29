@@ -132,7 +132,7 @@ def test_append_inference_log_reuses_daily_writer(monkeypatch, tmp_path):
         def close(self) -> None:  # pragma: no cover - test helper
             pass
 
-    def fake_writer(path: str, schema: Any) -> WriterSpy:
+    def fake_writer(path: str, schema: Any, **_kwargs: Any) -> WriterSpy:
         writer = WriterSpy(path, schema)
         created_paths.append(writer.path)
         return writer
@@ -210,7 +210,7 @@ def test_append_inference_log_skips_parquet_reads(monkeypatch, tmp_path):
         def close(self) -> None:  # pragma: no cover - helper
             pass
 
-    def fake_writer(path: str, schema: Any) -> WriterSpy:
+    def fake_writer(path: str, schema: Any, **_kwargs: Any) -> WriterSpy:
         writer = WriterSpy(path, schema)
         created_paths.append(writer.path)
         return writer
@@ -284,7 +284,7 @@ def test_append_inference_log_rotates_daily(monkeypatch, tmp_path):
         def close(self) -> None:  # pragma: no cover - test helper
             closed_paths.append(self.path)
 
-    def fake_writer(path: str, schema: Any) -> WriterSpy:
+    def fake_writer(path: str, schema: Any, **_kwargs: Any) -> WriterSpy:
         writer = WriterSpy(path, schema)
         created_paths.append(writer.path)
         return writer
@@ -719,7 +719,7 @@ def test_generate_candidates_uses_parallel_backend(monkeypatch):
 
     draws: list[float] = []
 
-    def fake_build(picks, proc_df, rng, target, crew_time_low, use_ml, tuning):
+    def fake_build(picks, proc_df, rng, target, crew_time_low, use_ml, tuning, registry):
         value = rng.random()
         draws.append(value)
         return {
@@ -830,7 +830,7 @@ def test_generate_candidates_parallel_is_deterministic(monkeypatch):
     )
     monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
 
-    def fake_build(picks, proc_df, rng, target, crew_time_low, use_ml, tuning):
+    def fake_build(picks, proc_df, rng, target, crew_time_low, use_ml, tuning, registry):
         value = round(rng.random(), 6)
         return {
             "score": value,
@@ -916,7 +916,7 @@ def test_generate_candidates_seed_reproducible(monkeypatch):
 
     monkeypatch.setattr(generator, "_pick_materials", fake_pick)
 
-    def fake_build(picks, proc_df, rng, target, crew_time_low, use_ml, tuning):
+    def fake_build(picks, proc_df, rng, target, crew_time_low, use_ml, tuning, registry):
         value = round(rng.random(), 6)
         return {
             "score": value,
@@ -1052,7 +1052,8 @@ def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
 
 
 def test_generate_candidates_appends_inference_log(monkeypatch, tmp_path):
-    monkeypatch.setattr(generator, "MODEL_REGISTRY", DummyRegistry())
+    dummy_registry = DummyRegistry()
+    monkeypatch.setattr(generator, "get_model_registry", lambda: dummy_registry)
     monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
     monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
     logging_utils._INFERENCE_LOG_MANAGER.close()
@@ -1130,7 +1131,9 @@ def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch, tmp_path):
         def embed(self, features):
             return []
 
-    monkeypatch.setattr(generator, "MODEL_REGISTRY", NoCallRegistry())
+    no_call_registry = NoCallRegistry()
+
+    monkeypatch.setattr(generator, "get_model_registry", lambda: no_call_registry)
     monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
     logging_utils._INFERENCE_LOG_MANAGER.close()
 
@@ -1228,7 +1231,7 @@ def test_generate_candidates_handles_missing_curated_labels(monkeypatch, tmp_pat
         "_compute_features_from_batch",
         lambda batch: [{"process_id": "P01"}],
     )
-    monkeypatch.setattr(generator, "MODEL_REGISTRY", None)
+    monkeypatch.setattr(generator, "get_model_registry", lambda: None)
 
     waste_df = picks_template.copy()
     proc_df = pd.DataFrame(

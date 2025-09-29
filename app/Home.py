@@ -3,7 +3,7 @@ import _bootstrap  # noqa: F401
 
 from datetime import datetime
 import streamlit as st
-from app.modules.ml_models import MODEL_REGISTRY
+from app.modules.ml_models import get_model_registry
 from app.modules.ui_blocks import load_theme
 
 st.set_page_config(
@@ -13,6 +13,8 @@ st.set_page_config(
 )
 
 load_theme()
+
+model_registry = get_model_registry()
 
 # ──────────── Estilos (oscuro, cards y métricas) ────────────
 st.markdown(
@@ -68,10 +70,10 @@ st.markdown(
 )
 
 # ──────────── Lectura segura de metadata del modelo ────────────
-trained_at_raw = MODEL_REGISTRY.metadata.get("trained_at")
+trained_at_raw = model_registry.metadata.get("trained_at")
 trained_label_value = (
-    MODEL_REGISTRY.metadata.get("trained_label")
-    or MODEL_REGISTRY.metadata.get("trained_on")
+    model_registry.metadata.get("trained_label")
+    or model_registry.metadata.get("trained_on")
 )
 
 try:
@@ -83,7 +85,7 @@ trained_at_display = (
     trained_dt.strftime("%d %b %Y %H:%M UTC") if trained_dt else "sin metadata"
 )
 
-trained_combo = MODEL_REGISTRY.trained_label()
+trained_combo = model_registry.trained_label()
 if trained_at_display == "sin metadata" and trained_combo and trained_combo != "—":
     trained_at_display = trained_combo
 
@@ -92,9 +94,9 @@ if not trained_label_value and trained_combo and trained_combo != "—":
 
 trained_label_value = trained_label_value or "—"
 
-n_samples = MODEL_REGISTRY.metadata.get("n_samples")
-model_name = MODEL_REGISTRY.metadata.get("model_name", "rexai-rf-ensemble")
-feature_count = len(getattr(MODEL_REGISTRY, "feature_names", []) or [])
+n_samples = model_registry.metadata.get("n_samples")
+model_name = model_registry.metadata.get("model_name", "rexai-rf-ensemble")
+feature_count = len(getattr(model_registry, "feature_names", []) or [])
 
 # ──────────── Hero ────────────
 st.markdown(
@@ -133,7 +135,7 @@ st.markdown(
 
 # ──────────── Pila/estado del modelo ────────────
 st.markdown("### Estado del modelo Rex-AI")
-ready = "✅ Modelo listo" if MODEL_REGISTRY.ready else "⚠️ Entrená localmente"
+ready = "✅ Modelo listo" if model_registry.ready else "⚠️ Entrená localmente"
 
 st.markdown(
     f"""
@@ -141,7 +143,7 @@ st.markdown(
       <div class="metric"><h5>Estado</h5><strong>{ready}</strong><p>Nombre: {model_name}</p></div>
       <div class="metric"><h5>Entrenado</h5><strong>{trained_at_display}</strong><p>Procedencia: {trained_label_value}</p><p>Muestras: {n_samples or '—'}</p></div>
       <div class="metric"><h5>Feature space</h5><strong>{feature_count}</strong><p>Ingeniería fisicoquímica + proceso</p></div>
-      <div class="metric"><h5>Incertidumbre</h5><strong>{MODEL_REGISTRY.uncertainty_label()}</strong><p>CI 95% en UI</p></div>
+      <div class="metric"><h5>Incertidumbre</h5><strong>{model_registry.uncertainty_label()}</strong><p>CI 95% en UI</p></div>
     </div>
     """,
     unsafe_allow_html=True,

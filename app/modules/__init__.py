@@ -14,7 +14,7 @@ from __future__ import annotations
 from importlib import import_module
 from typing import Any
 
-from .ml_models import MODEL_REGISTRY, ModelRegistry, PredictionResult
+from .ml_models import MODEL_REGISTRY, ModelRegistry, PredictionResult, get_model_registry
 from .io import (
     load_waste_df,
     save_waste_df,
@@ -46,6 +46,7 @@ __all__ = [
     "Acquisition",
     # ML
     "MODEL_REGISTRY",
+    "get_model_registry",
     "ModelRegistry",
     "PredictionResult",
     # Entrenamiento (lazy)
