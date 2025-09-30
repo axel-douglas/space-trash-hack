@@ -7,20 +7,18 @@ import pandas as pd
 import streamlit as st
 
 from app.modules.luxe_components import (
-    ActionCard,
-    ActionDeck,
     CarouselItem,
     CarouselRail,
     HeroFlowStage,
     MetricGalaxy,
     MinimalHero,
-    MissionFlowShowcase,
+    MissionBoard,
     MissionMetrics,
     guided_demo,
 )
 from app.modules.ml_models import get_model_registry
 from app.modules.navigation import set_active_step
-from app.modules.ui_blocks import enable_reveal_animation, futuristic_button, load_theme
+from app.modules.ui_blocks import enable_reveal_animation, load_theme
 
 st.set_page_config(
     page_title="Rex-AI • Mission Copilot",
@@ -219,14 +217,53 @@ with hero_col:
     hero_scene.render()
 with metrics_col:
     metrics_placeholder = st.empty()
+    board_placeholder = st.empty()
 
 mission_metric_payload = hero_scene.metrics_payload()
 mission_metrics_component = MissionMetrics.from_payload(
     mission_metric_payload,
     title="Panel de misión",
 )
+mission_board_payload = [
+    {
+        "key": "inventory",
+        "title": "Inventario",
+        "description": "Normalizá residuos NASA y marcá flags EVA o multilayer.",
+        "href": "./?page=1_Inventory_Builder",
+        "icon": "🧱",
+    },
+    {
+        "key": "target",
+        "title": "Target",
+        "description": "Define objetivo, límites de agua/energía y presets marcianos.",
+        "href": "./?page=2_Target_Designer",
+        "icon": "🎯",
+    },
+    {
+        "key": "generator",
+        "title": "Generador",
+        "description": "Compara recetas IA vs heurística y valida contribuciones.",
+        "href": "./?page=3_Generator",
+        "icon": "🤖",
+    },
+    {
+        "key": "results",
+        "title": "Resultados",
+        "description": "Exportá trade-offs, bandas 95% y Sankey para ingeniería.",
+        "href": "./?page=4_Results_and_Tradeoffs",
+        "icon": "📊",
+    },
+]
+mission_board_component = MissionBoard.from_payload(
+    mission_board_payload,
+    title="Próxima acción",
+)
 metrics_placeholder.markdown(
-    mission_metrics_component.markup(),
+    mission_metrics_component.markup(with_board=True),
+    unsafe_allow_html=True,
+)
+board_placeholder.markdown(
+    mission_board_component.markup(),
     unsafe_allow_html=True,
 )
 
@@ -284,39 +321,49 @@ with col_lab_a:
     )
 
 with col_lab_b:
-    composition_toggle = st.toggle(
-        "Mostrar composición científica de la receta base",
-        value=False,
-        key="toggle_composicion",
-    )
-
-    if composition_toggle and inventory_df is not None:
+    if inventory_df is not None:
         sample_materials = (
             inventory_df[
                 ["material", "material_family", "moisture_pct", "difficulty_factor"]
             ]
-            .head(5)
+            .head(4)
             .to_dict(orient="records")
         )
-        list_items = "".join(
-            f"<li><strong>{item['material']}</strong> · {item['material_family']} · humedad {item['moisture_pct']}% · dificultad {item['difficulty_factor']}</li>"
-            for item in sample_materials
-        )
-        st.markdown(
-            f"""
-            <div class="drawer reveal">
-              <h4>Determinantes fisicoquímicos</h4>
-              <ul>{list_items}</ul>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        if sample_materials:
+            list_items = "".join(
+                f"<li><strong>{item['material']}</strong> · {item['material_family']} · humedad {item['moisture_pct']}% · dificultad {item['difficulty_factor']}</li>"
+                for item in sample_materials
+            )
+            st.markdown(
+                f"""
+                <div class="drawer reveal">
+                  <h4>Determinantes fisicoquímicos</h4>
+                  <ul>{list_items}</ul>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
-scenario_toggle = st.toggle(
-    "Mostrar banderas críticas y telemetría",
-    value=False,
-    key="toggle_flags",
-)
+        flagged = (
+            inventory_df["flags"]
+            .dropna()
+            .loc[lambda series: series.astype(str).str.len() > 0]
+            .head(4)
+            .tolist()
+        )
+        if flagged:
+            bullet_items = "".join(
+                f"<li>{flag}</li>" for flag in flagged if isinstance(flag, str)
+            )
+            st.markdown(
+                f"""
+                <div class="drawer reveal">
+                  <h4>Flags operativos activos</h4>
+                  <ul>{bullet_items}</ul>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 # ──────────── Ruta guiada ────────────
 st.markdown("### Ruta de misión (guided flow)")
 
@@ -329,237 +376,16 @@ active_stage_key = (
     else None
 )
 metrics_placeholder.markdown(
-    mission_metrics_component.markup(highlight_key=active_stage_key),
-    unsafe_allow_html=True,
-)
-
-mission_showcase_insights = [
-    "<code>python -m app.modules.model_training</code> genera dataset y RandomForest multisalida listo.",
-    "Cada receta conserva IDs, categorías, flags de riesgo y metadatos de entrenamiento.",
-    "Contribuciones por feature, bandas 95% y comparador heurístico vs IA en UI.",
-    "Export Sankey y feedback listos para continuar el retraining marciano.",
-]
-
-MissionFlowShowcase(
-    stages=mission_stages,
-    title="Acciones siguientes",
-    subtitle="Mantené el contexto del laboratorio mientras ejecutás exports, simulaciones y reportes clave.",
-    timeline_title="¿Qué demuestra esta demo hoy?",
-    insights=mission_showcase_insights,
-    primary_actions=[
-        ActionCard(
-            title="Construir inventario",
-            body="Normalizá residuos NASA y etiquetá flags EVA, multilayer y nitrilo.",
-            icon="🧱",
-        ),
-        ActionCard(
-            title="Generador IA vs heurística",
-            body="Compara recetas propuestas, trade-offs y bandas de confianza.",
-            icon="🤖",
-        ),
-    ],
-    secondary_actions=[
-        ActionCard(
-            title="1. Inventario NASA",
-            body="Trabajá sobre <code>data/waste_inventory_sample.csv</code> o subí tu CSV normalizado.",
-        ),
-        ActionCard(
-            title="2. Objetivo",
-            body="Usá presets (container, utensil, tool, interior) o definí límites manuales.",
-        ),
-        ActionCard(
-            title="3. Generador con IA",
-            body="Revisá contribuciones de features y compará heurística vs modelo.",
-        ),
-        ActionCard(
-            title="4. Reportar",
-            body="Exportá recetas, Sankey y feedback/impact para seguir entrenando Rex-AI.",
-        ),
-    ],
-    action_density="cozy",
-    secondary_action_columns_min="14rem",
-).render()
-
-if scenario_toggle and inventory_df is not None:
-    flagged = inventory_df["flags"].dropna().head(6).tolist()
-    bullet_items = "".join(
-        f"<li>{flag}</li>" for flag in flagged if isinstance(flag, str)
-    )
-    st.markdown(
-        f"""
-        <div class="drawer reveal">
-          <h4>Flags operativos activos</h4>
-          <ul>{bullet_items}</ul>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-cta_col1, cta_col2 = st.columns(2, gap="large")
-with cta_col1:
-    ActionDeck(
-        cards=[
-            ActionCard(
-                title="Exportar receta y telemetría",
-                body="Descargá reportes con Sankey, contribuciones y feedback para seguimiento.",
-                icon="📤",
-            )
-        ],
-        columns_min="18rem",
-    ).render()
-
-    export_state_key = "home_cta_export_state"
-    if st.session_state.get(export_state_key) == "loading":
-        st.session_state[export_state_key] = "success"
-
-    export_state = st.session_state.setdefault(export_state_key, "idle")
-    if futuristic_button(
-        "Exportar\nreceta y telemetría",
-        key="home_cta_export",
-        icon="📤",
-        state=export_state,
-        loading_label="Generando reporte…",
-        success_label="Reporte enviado",
-        help_text="Descargá Sankey, contribuciones y feedback para seguimiento.",
-    ):
-        st.session_state[export_state_key] = "loading"
-        st.switch_page("pages/4_Results_and_Tradeoffs.py")
-
-with cta_col2:
-    ActionDeck(
-        cards=[
-            ActionCard(
-                title="Simular escenarios",
-                body="Prueba configuraciones de energía, crew y materiales para stress tests.",
-                icon="🧮",
-            )
-        ],
-        columns_min="18rem",
-    ).render()
-
-    sim_state_key = "home_cta_simulation_state"
-    if st.session_state.get(sim_state_key) == "loading":
-        st.session_state[sim_state_key] = "success"
-
-    sim_state = st.session_state.setdefault(sim_state_key, "idle")
-    if futuristic_button(
-        "Simular\nescenarios",
-        key="home_cta_simulation",
-        icon="🧮",
-        state=sim_state,
-        loading_label="Lanzando simulación…",
-        success_label="Escenarios listos",
-        help_text="Prueba configuraciones de energía, crew y materiales para stress tests.",
-    ):
-        st.session_state[sim_state_key] = "loading"
-        st.switch_page("pages/2_Target_Designer.py")
-
-st.markdown(
     mission_metrics_component.markup(
-        layout="grid",
         highlight_key=active_stage_key,
-        detail_limit=2,
-        show_title=False,
+        with_board=True,
     ),
     unsafe_allow_html=True,
 )
-
-# ──────────── CTA navegación ────────────
-st.markdown("### Siguiente acción")
-c1, c2, c3, c4 = st.columns(4)
-with c1:
-    if futuristic_button(
-        "🧱 Inventario",
-        key="home_nav_inventory",
-        help_text="Subí o limpiá tu CSV base",
-        loading_label="Abriendo…",
-        success_label="Inventario listo",
-        status_hints={
-            "idle": "",
-            "loading": "Preparando pantalla",
-            "success": "UI cargada",
-            "error": "",
-        },
-    ):
-        st.switch_page("pages/1_Inventory_Builder.py")
-with c2:
-    if futuristic_button(
-        "🎯 Target",
-        key="home_nav_target",
-        help_text="Configura límites y objetivos",
-        loading_label="Abriendo…",
-        success_label="Target listo",
-        status_hints={
-            "idle": "",
-            "loading": "Cargando diseñador",
-            "success": "UI cargada",
-            "error": "",
-        },
-    ):
-        st.switch_page("pages/2_Target_Designer.py")
-with c3:
-    if futuristic_button(
-        "🤖 Generador",
-        key="home_nav_generator",
-        help_text="Corre IA o heurísticas",
-        loading_label="Abriendo…",
-        success_label="Generador listo",
-        status_hints={
-            "idle": "",
-            "loading": "Cargando modelo",
-            "success": "UI cargada",
-            "error": "",
-        },
-    ):
-        st.switch_page("pages/3_Generator.py")
-with c4:
-    if futuristic_button(
-        "📊 Resultados",
-        key="home_nav_results",
-        help_text="Analiza trade-offs y export",
-        loading_label="Abriendo…",
-        success_label="Resultados listos",
-        status_hints={
-            "idle": "",
-            "loading": "Abriendo dashboards",
-            "success": "UI cargada",
-            "error": "",
-        },
-    ):
-        st.switch_page("pages/4_Results_and_Tradeoffs.py")
-cta_buttons = st.columns(2)
-with cta_buttons[0]:
-    inventory_state_key = "home_cta_inventory_state"
-    if st.session_state.get(inventory_state_key) == "loading":
-        st.session_state[inventory_state_key] = "success"
-    inventory_state = st.session_state.setdefault(inventory_state_key, "idle")
-    if futuristic_button(
-        "Abrir\ninventario",
-        key="cta_inventory",
-        icon="🧱",
-        state=inventory_state,
-        loading_label="Abriendo inventario…",
-        success_label="Inventario listo",
-        width="full",
-    ):
-        st.session_state[inventory_state_key] = "loading"
-        st.switch_page("pages/1_Inventory_Builder.py")
-with cta_buttons[1]:
-    generator_state_key = "home_cta_generator_state"
-    if st.session_state.get(generator_state_key) == "loading":
-        st.session_state[generator_state_key] = "success"
-    generator_state = st.session_state.setdefault(generator_state_key, "idle")
-    if futuristic_button(
-        "Abrir\ngenerador",
-        key="cta_generator",
-        icon="🤖",
-        state=generator_state,
-        loading_label="Activando Rex-AI…",
-        success_label="Generador listo",
-        width="full",
-    ):
-        st.session_state[generator_state_key] = "loading"
-        st.switch_page("pages/3_Generator.py")
+board_placeholder.markdown(
+    mission_board_component.markup(highlight_key=active_stage_key),
+    unsafe_allow_html=True,
+)
 
 # ──────────── Animación de aparición por scroll ────────────
 enable_reveal_animation()

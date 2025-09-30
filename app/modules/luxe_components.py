@@ -840,6 +840,11 @@ _LUXE_COMPONENT_CSS = """
   gap: 1rem;
 }
 
+.luxe-mission-panel--with-board {
+  gap: 0.85rem;
+  padding: var(--mission-panel-padding, 22px 24px);
+}
+
 .luxe-mission-panel__title {
   margin: 0;
 }
@@ -876,6 +881,98 @@ _LUXE_COMPONENT_CSS = """
   color: var(--accent);
   font-size: 1.1rem;
   margin-bottom: 2px;
+}
+
+.mission-board {
+  border-radius: 20px;
+  border: 1px solid color-mix(in srgb, var(--border-soft) 70%, transparent);
+  background: color-mix(in srgb, var(--surface-card) 92%, transparent);
+  padding: var(--mission-board-padding, 20px 22px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--mission-board-gap, 0.9rem);
+  position: relative;
+}
+
+.mission-board.reveal {opacity: 0; transform: translateY(32px); transition: opacity 0.6s ease, transform 0.6s ease;}
+.mission-board.reveal.is-visible {opacity: 1; transform: none;}
+
+.mission-board__title {
+  margin: 0;
+  font-size: 1.05rem;
+  letter-spacing: 0.01em;
+}
+
+.mission-board__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: mission-step;
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--mission-board-gap, 0.9rem) * 0.85);
+}
+
+.mission-board__item {
+  counter-increment: mission-step;
+}
+
+.mission-board__link {
+  text-decoration: none;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: start;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--border-soft) 60%, transparent);
+  background: color-mix(in srgb, var(--surface-panel) 88%, transparent);
+  transition: border 260ms ease, box-shadow 260ms ease, transform 260ms ease;
+  color: inherit;
+}
+
+.mission-board__link:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  box-shadow: 0 16px 42px -28px rgba(59, 130, 246, 0.55);
+  transform: translateY(-2px);
+}
+
+.mission-board__item.is-active .mission-board__link {
+  border-color: color-mix(in srgb, var(--accent) 62%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.mission-board__badge {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 0.92rem;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.mission-board__icon {
+  font-size: 1.1rem;
+}
+
+.mission-board__content {
+  display: grid;
+  gap: 4px;
+}
+
+.mission-board__content strong {
+  font-size: 0.98rem;
+}
+
+.mission-board__content p {
+  margin: 0;
+  color: var(--muted, rgba(226, 232, 240, 0.78));
+  font-size: 0.9rem;
 }
 
 .luxe-mission-metric h5 {
@@ -3393,6 +3490,7 @@ class MissionMetrics:
         layout: Literal["panel", "grid"] = "panel",
         detail_limit: int | None = None,
         show_title: bool | None = None,
+        with_board: bool = False,
     ) -> str:
         variant = layout
         highlight = highlight_key
@@ -3455,6 +3553,8 @@ class MissionMetrics:
             ),
         }
         classes = ["luxe-mission-panel"]
+        if with_board:
+            classes.append("luxe-mission-panel--with-board")
         if self.animate:
             classes.append("reveal")
         show_heading = self.title if show_title is None else show_title
@@ -3480,6 +3580,7 @@ class MissionMetrics:
         layout: Literal["panel", "grid"] = "panel",
         detail_limit: int | None = None,
         show_title: bool | None = None,
+        with_board: bool = False,
     ) -> None:
         _load_css()
         st.markdown(
@@ -3488,6 +3589,7 @@ class MissionMetrics:
                 layout=layout,
                 detail_limit=detail_limit,
                 show_title=show_title,
+                with_board=with_board,
             ),
             unsafe_allow_html=True,
         )
@@ -3868,6 +3970,100 @@ class MissionFlowShowcase:
             columns_min=columns_min,
         )
 
+@dataclass
+class MissionBoardStep:
+    key: str
+    title: str
+    description: str
+    href: str
+    icon: str | None = None
+
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, Any]) -> "MissionBoardStep":
+        return cls(
+            key=str(payload.get("key", "")),
+            title=str(payload.get("title", "")),
+            description=str(payload.get("description", "")),
+            href=str(payload.get("href", "")),
+            icon=payload.get("icon"),
+        )
+
+    def badge_label(self, index: int) -> str:
+        return f"{index}"
+
+
+@dataclass
+class MissionBoard:
+    steps: Sequence[MissionBoardStep]
+    title: str = "Próxima acción"
+    reveal: bool = True
+    density: Literal["compact", "cozy", "roomy"] = "cozy"
+
+    @classmethod
+    def from_payload(
+        cls,
+        payload: Sequence[Mapping[str, Any]],
+        *,
+        title: str = "Próxima acción",
+        reveal: bool = True,
+        density: Literal["compact", "cozy", "roomy"] = "cozy",
+    ) -> "MissionBoard":
+        steps = [MissionBoardStep.from_mapping(item) for item in payload]
+        return cls(steps=steps, title=title, reveal=reveal, density=density)
+
+    def _badge_style(self) -> str:
+        padding_map = {"compact": "12px 14px", "cozy": "14px 16px", "roomy": "16px 18px"}
+        gap_map = {"compact": "0.7rem", "cozy": "0.85rem", "roomy": "1rem"}
+        return _merge_styles(
+            {
+                "--mission-board-padding": padding_map.get(self.density, padding_map["cozy"]),
+                "--mission-board-gap": gap_map.get(self.density, gap_map["cozy"]),
+            },
+            {},
+        )
+
+    def markup(self, *, highlight_key: str | None = None) -> str:
+        _load_css()
+        classes = ["mission-board"]
+        if self.reveal:
+            classes.append("reveal")
+        list_items = []
+        for idx, step in enumerate(self.steps, start=1):
+            item_classes = ["mission-board__item"]
+            if highlight_key and step.key == highlight_key:
+                item_classes.append("is-active")
+            icon_html = (
+                f"<span class='mission-board__icon'>{escape(str(step.icon))}</span>"
+                if step.icon is not None
+                else ""
+            )
+            list_items.append(
+                (
+                    f"<li class='{_class_names(item_classes)}' data-key='{step.key}'>"
+                    f"<a class='mission-board__link' href='{escape(step.href)}' target='_self'>"
+                    f"<span class='mission-board__badge'>{escape(step.badge_label(idx))}</span>"
+                    f"{icon_html}"
+                    "<div class='mission-board__content'>"
+                    f"<strong>{escape(step.title)}</strong>"
+                    f"<p>{escape(step.description)}</p>"
+                    "</div>"
+                    "</a>"
+                    "</li>"
+                )
+            )
+        items_html = "".join(list_items)
+        return (
+            f"<section class='{_class_names(classes)}' style='{self._badge_style()}'>"
+            f"<h3 class='mission-board__title'>{escape(self.title)}</h3>"
+            "<ol class='mission-board__list'>"
+            f"{items_html}"
+            "</ol>"
+            "</section>"
+        )
+
+    def render(self, *, highlight_key: str | None = None) -> None:
+        st.markdown(self.markup(highlight_key=highlight_key), unsafe_allow_html=True)
+
 __all__ = [
     "BriefingCard",
     "TimelineMilestone",
@@ -3893,6 +4089,8 @@ __all__ = [
     "MissionMetric",
     "MissionMetrics",
     "MissionFlowShowcase",
+    "MissionBoardStep",
+    "MissionBoard",
     "CarouselItem",
     "CarouselRail",
     "ActionCard",

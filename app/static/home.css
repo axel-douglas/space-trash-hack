@@ -203,6 +203,23 @@ section {
   color: var(--muted);
 }
 
+#sticky-metrics {
+  margin-bottom: 0.5rem;
+}
+
+#sticky-metrics + .mission-board {
+  margin-top: 0.75rem;
+  box-shadow: 0 28px 60px -48px rgba(59, 130, 246, 0.45);
+}
+
+.mission-board__link strong {
+  color: var(--ink);
+}
+
+.mission-board__link:hover strong {
+  color: color-mix(in srgb, var(--accent) 88%, white 12%);
+}
+
 .timeline {
   margin-top: 18px;
   border-left: 2px solid color-mix(in srgb, var(--accent) 25%, transparent);
