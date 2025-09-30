@@ -5,7 +5,7 @@ La librería `app.modules.luxe_components` concentra los bloques visuales premiu
 ## Componentes disponibles
 
 ### `TeslaHero`
-Hero translúcido con capas parallax y chips animados.
+Hero translúcido con capas parallax y chips animados. Ahora soporta variantes `cinematic` (por defecto) y `minimal` para adaptar la densidad visual según la escena.
 
 ```python
 from app.modules.luxe_components import TeslaHero
@@ -21,10 +21,7 @@ TeslaHero(
     gradient="linear-gradient(135deg, rgba(59,130,246,0.24), rgba(14,165,233,0.08))",
     glow="rgba(56,189,248,0.45)",
     density="cozy",
-    parallax_icons=[
-        {"icon": "🛰️", "top": "20%", "left": "75%", "size": "4rem"},
-        {"icon": "🧪", "top": "60%", "left": "82%", "size": "3.4rem"},
-    ],
+    variant="minimal",
 ).render()
 ```
 
@@ -32,7 +29,8 @@ Parámetros clave:
 - **`gradient`**: define el fondo principal (acepta cualquier expresión CSS `linear-gradient`/`radial-gradient`).
 - **`glow`**: color de brillo dinámico aplicado al halo radial.
 - **`density`**: `"compact"`, `"cozy"` o `"roomy"` para ajustar paddings.
-- **`parallax_icons`**: lista de capas decorativas (emoji/SVG) con control de posición, tamaño y velocidad.
+- **`parallax_icons`**: lista de capas decorativas (emoji/SVG) con control de posición, tamaño y velocidad (solo visibles en modo `cinematic`).
+- **`variant`**: `"cinematic"` activa el loop de video y las capas parallax (ideal para briefings o demos inmersivas). `"minimal"` elimina el video y los elementos flotantes, reduce padding/typografía y se usa en vistas operativas (Home, Generador, Resultados) para priorizar métricas.
 
 ### `ChipRow`
 Hilera de chips glassmórficos reutilizables.

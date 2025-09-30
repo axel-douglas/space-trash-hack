@@ -93,6 +93,7 @@ TeslaHero(
         {"icon": "🛰️", "top": "18%", "left": "75%", "size": "4rem", "speed": "20s"},
         {"icon": "🧪", "top": "64%", "left": "82%", "size": "3.5rem", "speed": "26s"},
     ],
+    variant="minimal",
 ).render()
 
 # ----------------------------- Pre-condición: target -----------------------------

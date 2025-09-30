@@ -90,6 +90,7 @@ TeslaHero(
         {"icon": "🧪", "top": "18%", "left": "78%", "size": "3.6rem", "speed": "21s"},
         {"icon": "🛰️", "top": "60%", "left": "84%", "size": "4.2rem", "speed": "27s"},
     ],
+    variant="minimal",
 ).render()
 
 icon_map = {
