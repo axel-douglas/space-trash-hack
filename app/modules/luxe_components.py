@@ -445,6 +445,79 @@ _LUXE_COMPONENT_CSS = """
   opacity: 0.85;
 }
 
+.luxe-hero--minimal::after {
+  opacity: 0.65;
+}
+
+.luxe-hero__kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 16px;
+  margin-top: 1.8rem;
+}
+
+.luxe-hero__kpi {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 14px;
+  align-items: center;
+  padding: 16px 18px;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  background: rgba(15, 23, 42, 0.68);
+  box-shadow: 0 18px 34px -24px rgba(15, 23, 42, 0.8);
+}
+
+.luxe-hero__kpi-icon {
+  font-size: 1.6rem;
+  filter: drop-shadow(0 6px 12px rgba(14, 116, 144, 0.35));
+}
+
+.luxe-hero__kpi[data-tone='accent'] {
+  border-color: rgba(96, 165, 250, 0.55);
+  background: rgba(56, 189, 248, 0.15);
+}
+
+.luxe-hero__kpi[data-tone='info'] {
+  border-color: rgba(129, 140, 248, 0.5);
+  background: rgba(129, 140, 248, 0.14);
+}
+
+.luxe-hero__kpi[data-tone='success'] {
+  border-color: rgba(52, 211, 153, 0.55);
+  background: rgba(52, 211, 153, 0.16);
+}
+
+.luxe-hero__kpi[data-tone='warning'] {
+  border-color: rgba(245, 158, 11, 0.55);
+  background: rgba(245, 158, 11, 0.16);
+}
+
+.luxe-hero__kpi[data-tone='danger'] {
+  border-color: rgba(248, 113, 113, 0.55);
+  background: rgba(248, 113, 113, 0.16);
+}
+
+.luxe-hero__kpi-value {
+  display: block;
+  font-size: 1.35rem;
+  font-weight: 600;
+}
+
+.luxe-hero__kpi-label {
+  display: block;
+  font-size: 0.95rem;
+  color: rgba(226, 232, 240, 0.82);
+}
+
+.luxe-hero__kpi-caption {
+  margin-top: 6px;
+  display: block;
+  font-size: 0.82rem;
+  color: rgba(226, 232, 240, 0.68);
+}
+
 .luxe-hero__layer {
   position: absolute;
   top: 20%;
@@ -1688,7 +1761,7 @@ class TimelineHologramItem:
     aria_label: str | None = None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class HeroFlowStage:
     """Unified description for the mission flow used across hero layouts."""
 
@@ -1698,8 +1771,8 @@ class HeroFlowStage:
     hero_headline: str
     hero_copy: str
     card_body: str
-    compact_card_body: str | None = None
     icon: str
+    compact_card_body: str | None = None
     timeline_label: str
     timeline_description: str
     footer: str | None = None
@@ -2401,6 +2474,130 @@ def ChipRow(
     if render:
         st.markdown(html_markup, unsafe_allow_html=True)
     return html_markup
+
+
+@dataclass
+class MinimalHero:
+    """Compact hero optimized for operational telemetry overlays."""
+
+    title: str
+    subtitle: str
+    metrics: Sequence[Mapping[str, Any]] = field(default_factory=tuple)
+    icon: str | None = None
+    chips: Sequence[str | Mapping[str, str]] = field(default_factory=tuple)
+    gradient: str | None = None
+    glow: str | None = None
+    density: Literal["compact", "cozy", "roomy"] = "cozy"
+    flow: Sequence[HeroFlowStage] = field(default_factory=tuple)
+    _markup: str = field(init=False, repr=False, default="")
+
+    def __post_init__(self) -> None:
+        chips = list(self.chips)[:3]
+        self.chips = chips
+        normalized_metrics = [self._normalize_metric(metric) for metric in self.metrics]
+        self.metrics = normalized_metrics
+        self.flow = tuple(self.flow)
+        self._markup = self._render_markup()
+
+    def render(self) -> None:
+        _load_css()
+        st.markdown(self._markup, unsafe_allow_html=True)
+
+    @property
+    def markup(self) -> str:
+        return self._markup
+
+    def metrics_payload(self) -> list[Mapping[str, Any]]:
+        return [dict(metric) for metric in self.metrics]
+
+    def timeline_milestones(self) -> list[TimelineMilestone]:
+        return [
+            TimelineMilestone(
+                label=stage.timeline_label,
+                description=stage.timeline_description,
+                icon=stage.icon,
+            )
+            for stage in self.flow
+        ]
+
+    def stage_key_for_label(self, label: str) -> str | None:
+        for stage in self.flow:
+            if stage.timeline_label == label:
+                return stage.key
+        return None
+
+    def _render_markup(self) -> str:
+        padding_map = {
+            "compact": "1.9rem 2.2rem",
+            "cozy": "2.5rem 2.9rem",
+            "roomy": "3.1rem 3.4rem",
+        }
+        padding = padding_map.get(self.density, padding_map["cozy"])
+        hero_style = {
+            "--hero-padding": padding,
+        }
+        if self.gradient:
+            hero_style["--hero-gradient"] = self.gradient
+        if self.glow:
+            hero_style["--hero-glow"] = self.glow
+
+        chips_html = ChipRow(self.chips, render=False) if self.chips else ""
+        icon_html = (
+            f"<div class='luxe-hero__icon'>{escape(str(self.icon))}</div>"
+            if self.icon
+            else ""
+        )
+        kpi_html = "".join(self._render_kpi(metric) for metric in self.metrics[:2])
+        kpi_section = (
+            f"<div class='luxe-hero__kpis'>{kpi_html}</div>" if kpi_html else ""
+        )
+
+        return f"""
+        <div class='luxe-hero luxe-hero--minimal' style='{_merge_styles(hero_style, {})}'>
+          <div class='luxe-hero__content'>
+            {icon_html}
+            <h1>{self.title}</h1>
+            <p>{self.subtitle}</p>
+            {chips_html}
+            {kpi_section}
+          </div>
+        </div>
+        """
+
+    def _render_kpi(self, metric: Mapping[str, Any]) -> str:
+        tone = metric.get("tone")
+        tone_attr = f" data-tone='{tone}'" if tone else ""
+        icon = metric.get("icon")
+        icon_html = (
+            f"<span class='luxe-hero__kpi-icon'>{escape(str(icon))}</span>" if icon else ""
+        )
+        caption = metric.get("caption")
+        caption_html = (
+            f"<span class='luxe-hero__kpi-caption'>{escape(str(caption))}</span>"
+            if caption
+            else ""
+        )
+        value = escape(str(metric.get("value", "")))
+        label = escape(str(metric.get("label", "")))
+        return (
+            "<article class='luxe-hero__kpi'"
+            f"{tone_attr}>"
+            f"{icon_html}"
+            "<div>"
+            f"<span class='luxe-hero__kpi-value'>{value}</span>"
+            f"<span class='luxe-hero__kpi-label'>{label}</span>"
+            f"{caption_html}"
+            "</div>"
+            "</article>"
+        )
+
+    def _normalize_metric(self, metric: Mapping[str, Any]) -> dict[str, Any]:
+        normalized = dict(metric)
+        if "label" in normalized:
+            normalized["label"] = str(normalized["label"])
+        if "value" in normalized:
+            normalized["value"] = str(normalized["value"])
+        return normalized
 
 
 @dataclass
@@ -3686,7 +3883,8 @@ __all__ = [
     "render_card",
     "render_pill",
     "ChipRow",
-    "TeslaHero", 
+    "MinimalHero",
+    "TeslaHero",
     "TeslaHeroBriefingScene",
     "MetricGalaxy",
     "MetricItem",
