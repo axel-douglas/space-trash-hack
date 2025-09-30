@@ -9,14 +9,13 @@ import streamlit as st
 from app.modules.luxe_components import (
     ActionCard,
     ActionDeck,
-    BriefingCard,
     CarouselItem,
     CarouselRail,
     HeroFlowStage,
     MetricGalaxy,
+    MinimalHero,
     MissionFlowShowcase,
     MissionMetrics,
-    TeslaHero,
     guided_demo,
 )
 from app.modules.ml_models import get_model_registry
@@ -44,6 +43,8 @@ def load_inventory_sample() -> pd.DataFrame | None:
         return pd.read_csv(sample_path)
     except Exception:
         return None
+
+
 def format_mass(value: float | int | None) -> str:
     if value is None:
         return "—"
@@ -82,33 +83,6 @@ model_name = model_registry.metadata.get("model_name", "rexai-rf-ensemble")
 feature_count = len(getattr(model_registry, "feature_names", []) or [])
 
 # ──────────── Hero interactivo ────────────
-mission_briefing(
-    title="Mission Briefing • Rex-AI en órbita marciana",
-    tagline="Sincronizá sensores, crew y modelo para reciclar basura orbital en hardware vital.",
-    video_path=Path(__file__).resolve().parent / "static" / "mission_briefing_loop.mp4",
-    cards=[
-        BriefingCard(
-            title="Crew Ops + IA",
-            body="La cabina recibe datos del inventario NASA, restricciones de crew-time y energía en tiempo real.",
-            accent="#38bdf8",
-        ),
-        BriefingCard(
-            title="Trazabilidad total",
-            body="Cada decisión enlaza features, flags de riesgo y la receta final exportable a ingeniería.",
-            accent="#a855f7",
-        ),
-        BriefingCard(
-            title="Seguridad primero",
-            body="Bandas de confianza, monitoreo de toxicidad EVA y comparadores heurísticos siempre visibles.",
-            accent="#f97316",
-        ),
-    ],
-    steps=[
-        ("Calibrá el inventario", "Normalizá residuos, detectá flags EVA y estructuras multi-layer."),
-        ("Seleccioná objetivo", "Define límites de agua, energía y logística con presets marcianos."),
-        ("Generá y valida", "Rex-AI mezcla, explica contribuciones y exporta procesos listos para la tripulación."),
-    ],
-)
 ready = "✅ Modelo listo" if model_registry.ready else "⚠️ Entrená localmente"
 
 mission_stages = [
@@ -177,24 +151,6 @@ mission_stages = [
     ),
 ]
 
-briefing_cards = [
-    BriefingCard(
-        title="Crew Ops + IA",
-        body="La cabina recibe datos del inventario NASA, restricciones de crew-time y energía en tiempo real.",
-        accent="#38bdf8",
-    ),
-    BriefingCard(
-        title="Trazabilidad total",
-        body="Cada decisión enlaza features, flags de riesgo y la receta final exportable a ingeniería.",
-        accent="#a855f7",
-    ),
-    BriefingCard(
-        title="Seguridad primero",
-        body="Bandas de confianza, monitoreo de toxicidad EVA y comparadores heurísticos siempre visibles.",
-        accent="#f97316",
-    ),
-]
-
 mission_metrics = [
     {
         "key": "status",
@@ -204,6 +160,7 @@ mission_metrics = [
         "caption": f"Nombre: {model_name}",
         "icon": "🛰️",
         "stage_key": "inventory",
+        "tone": "accent",
     },
     {
         "key": "training",
@@ -216,6 +173,7 @@ mission_metrics = [
         "caption": f"Procedencia: {trained_label_value} · Muestras: {n_samples or '—'}",
         "icon": "🧪",
         "stage_key": "target",
+        "tone": "info",
     },
     {
         "key": "feature_space",
@@ -239,35 +197,26 @@ mission_metrics = [
 
 hero_col, metrics_col = st.columns([2.8, 1.2], gap="large")
 with hero_col:
-    hero_scene = TeslaHero.with_briefing(
+    hero_scene = MinimalHero(
         title="Rex-AI orquesta el reciclaje orbital y marciano",
         subtitle=(
             "Un loop autónomo que mezcla regolito MGS-1, polímeros EVA y residuos de carga "
             "para fabricar piezas listas para misión. El copiloto gestiona riesgos, "
             "energía y trazabilidad sin perder contexto."
         ),
-        tagline="Sincronizá sensores, crew y modelo para reciclar basura orbital en hardware vital.",
-        video_url="https://cdn.coverr.co/videos/coverr-into-the-blue-nebula-9071/1080p.mp4",
         chips=[
             {"label": "RandomForest multisalida", "tone": "accent"},
-            {"label": "Comparadores: XGBoost / Tabular", "tone": "info"},
-            {"label": "Bandas de confianza 95%", "tone": "accent"},
-            {"label": "Telemetría NASA · Crew safe", "tone": "info"},
+            {"label": "Comparadores heurísticos", "tone": "info"},
+            {"label": "Crew telemetry ready", "tone": "accent"},
         ],
         icon="🛰️",
         gradient="linear-gradient(135deg, rgba(59,130,246,0.28), rgba(14,165,233,0.08))",
         glow="rgba(96,165,250,0.45)",
         density="roomy",
-        parallax_icons=[
-            {"icon": "🛰️", "top": "8%", "left": "74%", "size": "4.8rem", "speed": "22s"},
-            {"icon": "🪐", "top": "62%", "left": "80%", "size": "5.2rem", "speed": "28s"},
-            {"icon": "✨", "top": "20%", "left": "12%", "size": "3.2rem", "speed": "18s"},
-        ],
-        flow=mission_stages,
-        briefing_video_path=Path(__file__).resolve().parent / "static" / "mission_briefing_loop.mp4",
-        briefing_cards=briefing_cards,
         metrics=mission_metrics,
+        flow=mission_stages,
     )
+    hero_scene.render()
 with metrics_col:
     metrics_placeholder = st.empty()
 
