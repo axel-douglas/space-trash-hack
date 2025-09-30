@@ -11,9 +11,11 @@ from app.modules.luxe_components import (
     CarouselRail,
     HeroFlowStage,
     MetricGalaxy,
-    MinimalHero,
+    MetricItem,
     MissionBoard,
     MissionMetrics,
+    TeslaHero,
+    TimelineMilestone,
     guided_demo,
 )
 from app.modules.ml_models import get_model_registry
@@ -195,7 +197,7 @@ mission_metrics = [
 
 hero_col, metrics_col = st.columns([2.8, 1.2], gap="large")
 with hero_col:
-    hero_scene = MinimalHero(
+    TeslaHero(
         title="Rex-AI orquesta el reciclaje orbital y marciano",
         subtitle=(
             "Un loop autónomo que mezcla regolito MGS-1, polímeros EVA y residuos de carga "
@@ -211,15 +213,20 @@ with hero_col:
         gradient="linear-gradient(135deg, rgba(59,130,246,0.28), rgba(14,165,233,0.08))",
         glow="rgba(96,165,250,0.45)",
         density="roomy",
-        metrics=mission_metrics,
-        flow=mission_stages,
-    )
-    hero_scene.render()
+        variant="minimal",
+    ).render()
 with metrics_col:
     metrics_placeholder = st.empty()
     board_placeholder = st.empty()
 
-mission_metric_payload = hero_scene.metrics_payload()
+mission_metric_payload = []
+for metric in mission_metrics:
+    normalized = dict(metric)
+    if "label" in normalized:
+        normalized["label"] = str(normalized["label"])
+    if "value" in normalized:
+        normalized["value"] = str(normalized["value"])
+    mission_metric_payload.append(normalized)
 mission_metrics_component = MissionMetrics.from_payload(
     mission_metric_payload,
     title="Panel de misión",
@@ -260,6 +267,26 @@ mission_board_component = MissionBoard.from_payload(
     title="Próxima acción",
     reveal=False,
 )
+timeline_milestones = [
+    TimelineMilestone(
+        label=stage.timeline_label,
+        description=stage.timeline_description,
+        icon=stage.icon,
+    )
+    for stage in mission_stages
+]
+stage_by_label = {stage.timeline_label: stage.key for stage in mission_stages}
+hero_metric_items = [
+    MetricItem(
+        label=str(metric.get("label", "")),
+        value=str(metric.get("value", "")),
+        caption=metric.get("caption"),
+        delta=metric.get("delta"),
+        icon=metric.get("icon"),
+        tone=metric.get("tone"),
+    )
+    for metric in mission_metrics
+]
 metrics_placeholder.markdown(
     mission_metrics_component.markup(with_board=True),
     unsafe_allow_html=True,
@@ -371,11 +398,11 @@ if info_cards:
 # ──────────── Ruta guiada ────────────
 st.markdown("### Ruta de misión (guided flow)")
 
-demo_steps = hero_scene.timeline_milestones()
+demo_steps = timeline_milestones
 active_demo_step = guided_demo(steps=demo_steps, step_duration=6.5)
 
 active_stage_key = (
-    hero_scene.stage_key_for_label(active_demo_step.label)
+    stage_by_label.get(active_demo_step.label)
     if active_demo_step
     else None
 )
@@ -393,7 +420,7 @@ board_placeholder.markdown(
 
 # ──────────── Métricas de misión ────────────
 MetricGalaxy(
-    metrics=hero_scene.metric_items(),
+    metrics=hero_metric_items,
     density="cozy",
 ).render()
 

@@ -429,24 +429,44 @@ _LUXE_COMPONENT_CSS = """
 }
 
 .luxe-hero__content h1 {
-  font-size: clamp(2.5rem, 4vw, 3.2rem);
+  font-size: var(--hero-title-size, clamp(2.5rem, 4vw, 3.2rem));
   margin-bottom: 0.7rem;
 }
 
 .luxe-hero__content p {
-  font-size: 1.05rem;
+  font-size: var(--hero-subtitle-size, 1.05rem);
   color: rgba(226, 232, 240, 0.82);
   margin: 0 0 1rem 0;
 }
 
 .luxe-hero__icon {
   font-size: 2rem;
-  margin-bottom: 1rem;
+  margin-bottom: var(--hero-icon-gap, 1rem);
   opacity: 0.85;
+}
+
+.luxe-hero--minimal {
+  animation: none;
+  box-shadow: 0 20px 48px rgba(8, 15, 35, 0.32);
+  --hero-title-size: clamp(2rem, 3.2vw, 2.6rem);
+  --hero-subtitle-size: 0.95rem;
+  --hero-icon-gap: 0.8rem;
 }
 
 .luxe-hero--minimal::after {
   opacity: 0.65;
+}
+
+.luxe-hero--minimal .luxe-hero__content {
+  max-width: 460px;
+}
+
+.luxe-hero--minimal .luxe-hero__content h1 {
+  margin-bottom: 0.55rem;
+}
+
+.luxe-hero--minimal .luxe-hero__content p {
+  margin-bottom: 0.8rem;
 }
 
 .luxe-hero__kpis {
@@ -2708,17 +2728,25 @@ class TeslaHero:
     glow: str | None = None
     density: str = "cozy"
     parallax_icons: Sequence[Mapping[str, str]] = field(default_factory=list)
+    variant: Literal["cinematic", "minimal"] = "cinematic"
 
     def render(self) -> None:
         _load_css()
         st.markdown(self._render_markup(), unsafe_allow_html=True)
 
     def _render_markup(self) -> str:
-        padding_map = {
+        variant = getattr(self, "variant", "cinematic")
+        base_padding_map = {
             "compact": "1.9rem 2.2rem",
             "cozy": "2.5rem 2.9rem",
             "roomy": "3.1rem 3.4rem",
         }
+        minimal_padding_map = {
+            "compact": "1.35rem 1.6rem",
+            "cozy": "1.75rem 2.1rem",
+            "roomy": "2.25rem 2.5rem",
+        }
+        padding_map = minimal_padding_map if variant == "minimal" else base_padding_map
         padding = padding_map.get(self.density, padding_map["cozy"])
         hero_style = {
             "--hero-padding": padding,
@@ -2728,32 +2756,38 @@ class TeslaHero:
         if self.glow:
             hero_style["--hero-glow"] = self.glow
 
-        layers = []
-        for idx, layer in enumerate(self.parallax_icons):
-            icon = layer.get("icon", "✦")
-            top = layer.get("top", f"{10 + idx * 12}%")
-            left = layer.get("left", f"{55 + idx * 8}%")
-            size = layer.get("size", "4rem")
-            speed = layer.get("speed", f"{16 + idx * 4}s")
-            layers.append(
-                f"<span class='luxe-hero__layer' style='top:{top};left:{left};--layer-size:{size};--layer-speed:{speed};'>"
-                f"{icon}</span>"
-            )
+        hero_classes = ["luxe-hero"]
+        if variant == "minimal":
+            hero_classes.append("luxe-hero--minimal")
 
         chips_html = ChipRow(self.chips, render=False) if self.chips else ""
         icon_html = f"<div class='luxe-hero__icon'>{self.icon}</div>" if self.icon else ""
         video_markup = ""
-        if self.video_url:
+        if variant != "minimal" and self.video_url:
             video_markup = (
                 f"<video class='luxe-hero__video' autoplay muted loop playsinline>"
                 f"<source src='{self.video_url}' type='video/mp4' />"
                 "</video>"
                 "<div class='luxe-hero__veil'></div>"
             )
-        layers_html = "".join(layers)
+        layers_html = ""
+        if variant != "minimal":
+            layer_fragments = []
+            for idx, layer in enumerate(self.parallax_icons):
+                icon = layer.get("icon", "✦")
+                top = layer.get("top", f"{10 + idx * 12}%")
+                left = layer.get("left", f"{55 + idx * 8}%")
+                size = layer.get("size", "4rem")
+                speed = layer.get("speed", f"{16 + idx * 4}s")
+                layer_fragments.append(
+                    "<span class='luxe-hero__layer' "
+                    f"style='top:{top};left:{left};--layer-size:{size};--layer-speed:{speed};'>"
+                    f"{icon}</span>"
+                )
+            layers_html = "".join(layer_fragments)
 
         return f"""
-        <div class='luxe-hero' style='{_merge_styles(hero_style, {})}'>
+        <div class='{' '.join(hero_classes)}' style='{_merge_styles(hero_style, {})}'>
           {video_markup}
           {layers_html}
           <div class='luxe-hero__content'>
@@ -2779,6 +2813,7 @@ class TeslaHero:
         glow: str | None = None,
         density: str = "cozy",
         parallax_icons: Sequence[Mapping[str, str]] = (),
+        variant: Literal["cinematic", "minimal"] = "cinematic",
         flow: Sequence[HeroFlowStage] = (),
         briefing_video_path: Path | str | None = None,
         briefing_cards: Sequence[BriefingCard] = (),
@@ -2796,6 +2831,7 @@ class TeslaHero:
             glow=glow,
             density=density,
             parallax_icons=parallax_icons,
+            variant=variant,
         )
 
         normalized_steps: Sequence[tuple[str, str]]
