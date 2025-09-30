@@ -234,6 +234,27 @@ $colorblind-modes: (
   safe: $colorblind-safe
 );
 
+$home-minimal: (
+  content-max: 58rem,
+  stack-gap: clamp(2.5rem, 4vw, 3.5rem),
+  section-gap: clamp(1.1rem, calc(1.2rem + 0.5vw), 1.8rem),
+  header-gap: var(--space-sm),
+  icon-size: 2.5rem,
+  icon-radius: 0.9rem,
+  icon-font-size: 1.35rem,
+  text-max: 62ch,
+  lead-size: clamp(1rem, calc(0.98rem + 0.28vw), 1.2rem),
+  card-gap: var(--space-lg),
+  card-padding: clamp(1.1rem, calc(0.9rem + 1vw), 1.9rem),
+  card-radius: 1.25rem,
+  card-shadow: var(--shadow-soft),
+  heading-spacing: var(--space-sm),
+  list-gap: var(--space-xs),
+  list-indent: 1.25rem,
+  board-gap: var(--space-md),
+  muted: var(--muted)
+);
+
 @mixin emit-token-map($map) {
   @each $key, $value in $map {
     @if $key == color-scheme {
@@ -244,8 +265,15 @@ $colorblind-modes: (
   }
 }
 
+@mixin emit-home-map($map) {
+  @each $key, $value in $map {
+    --home-#{$key}: #{$value};
+  }
+}
+
 :root {
   @include emit-token-map(map-get($themes, dark));
+  @include emit-home-map($home-minimal);
 }
 
 body {
@@ -256,6 +284,7 @@ body {
   body[data-rexai-theme="#{$theme-name}"],
   .stApp[data-rexai-theme="#{$theme-name}"] {
     @include emit-token-map($tokens);
+    @include emit-home-map($home-minimal);
   }
 }
 
@@ -272,6 +301,9 @@ body {
     .stApp[data-rexai-colorblind="#{$mode}"] {
       @include emit-token-map($tokens);
     }
+  }
+}
+
 $primary-scale: (
   50: #f2f6ff,
   100: #dbe6ff,

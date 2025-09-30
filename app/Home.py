@@ -18,7 +18,7 @@ from app.modules.luxe_components import (
 )
 from app.modules.ml_models import get_model_registry
 from app.modules.navigation import set_active_step
-from app.modules.ui_blocks import enable_reveal_animation, load_theme
+from app.modules.ui_blocks import load_theme
 
 st.set_page_config(
     page_title="Rex-AI • Mission Copilot",
@@ -223,6 +223,7 @@ mission_metric_payload = hero_scene.metrics_payload()
 mission_metrics_component = MissionMetrics.from_payload(
     mission_metric_payload,
     title="Panel de misión",
+    animate=False,
 )
 mission_board_payload = [
     {
@@ -257,6 +258,7 @@ mission_board_payload = [
 mission_board_component = MissionBoard.from_payload(
     mission_board_payload,
     title="Próxima acción",
+    reveal=False,
 )
 metrics_placeholder.markdown(
     mission_metrics_component.markup(with_board=True),
@@ -270,9 +272,12 @@ board_placeholder.markdown(
 # ──────────── Laboratorio profundo ────────────
 st.markdown(
     """
-    <section class="lab-block reveal" id="laboratorio-profundo">
-      <div class="section-title"><span class="icon">🧪</span><h2>Laboratorio profundo</h2></div>
-      <p>Radiografiamos el inventario NASA, destacamos masas críticas y exponemos hipótesis de proceso en paneles compactos.</p>
+    <section class="home-section" id="laboratorio-profundo">
+      <div class="home-section__header">
+        <span class="home-section__icon">🧪</span>
+        <h2>Laboratorio profundo</h2>
+      </div>
+      <p class="home-section__lead">Radiografiamos el inventario NASA, destacamos masas críticas y exponemos hipótesis de proceso en paneles compactos.</p>
     </section>
     """,
     unsafe_allow_html=True,
@@ -298,72 +303,71 @@ if inventory_df is not None and not inventory_df.empty:
         )
 
 if category_items:
-    CarouselRail(items=category_items, data_track="categorias").render()
+    CarouselRail(
+        items=category_items,
+        data_track="categorias",
+        reveal=False,
+    ).render()
 
-col_lab_a, col_lab_b = st.columns([1.6, 1], gap="large")
+info_cards: list[str] = [
+    """
+    <article class="home-card">
+      <h4>Ruta guiada de misión</h4>
+      <ol class="home-card__list">
+        <li>Inventario: normalizá residuos y marca flags EVA, multilayer y nitrilo.</li>
+        <li>Target: define producto, límites de agua, energía y crew-time.</li>
+        <li>Generador: Rex-AI mezcla ítems, sugiere procesos y explica cada paso.</li>
+        <li>Resultados: trade-offs, confianza 95% y comparativa heurística.</li>
+      </ol>
+    </article>
+    """
+]
 
-with col_lab_a:
+if inventory_df is not None:
+    sample_materials = (
+        inventory_df[["material", "material_family", "moisture_pct", "difficulty_factor"]]
+        .head(4)
+        .to_dict(orient="records")
+    )
+    if sample_materials:
+        list_items = "".join(
+            f"<li><strong>{item['material']}</strong> · {item['material_family']} · humedad {item['moisture_pct']}% · dificultad {item['difficulty_factor']}</li>"
+            for item in sample_materials
+        )
+        info_cards.append(
+            f"""
+            <article class="home-card">
+              <h4>Determinantes fisicoquímicos</h4>
+              <ul class="home-card__list">{list_items}</ul>
+            </article>
+            """
+        )
+
+    flagged = (
+        inventory_df["flags"]
+        .dropna()
+        .loc[lambda series: series.astype(str).str.len() > 0]
+        .head(4)
+        .tolist()
+    )
+    if flagged:
+        bullet_items = "".join(
+            f"<li>{flag}</li>" for flag in flagged if isinstance(flag, str)
+        )
+        info_cards.append(
+            f"""
+            <article class="home-card">
+              <h4>Flags operativos activos</h4>
+              <ul class="home-card__list">{bullet_items}</ul>
+            </article>
+            """
+        )
+
+if info_cards:
     st.markdown(
-        """
-        <div class="lab-grid">
-          <div class="drawer reveal">
-            <h4>Ruta guiada de misión</h4>
-            <ol>
-              <li>Inventario: normalizá residuos y marca flags EVA, multilayer y nitrilo.</li>
-              <li>Target: define producto, límites de agua, energía y crew-time.</li>
-              <li>Generador: Rex-AI mezcla ítems, sugiere procesos y explica cada paso.</li>
-              <li>Resultados: trade-offs, confianza 95% y comparativa heurística.</li>
-            </ol>
-          </div>
-        </div>
-        """,
+        f"<div class=\"home-card-stack\">{''.join(info_cards)}</div>",
         unsafe_allow_html=True,
     )
-
-with col_lab_b:
-    if inventory_df is not None:
-        sample_materials = (
-            inventory_df[
-                ["material", "material_family", "moisture_pct", "difficulty_factor"]
-            ]
-            .head(4)
-            .to_dict(orient="records")
-        )
-        if sample_materials:
-            list_items = "".join(
-                f"<li><strong>{item['material']}</strong> · {item['material_family']} · humedad {item['moisture_pct']}% · dificultad {item['difficulty_factor']}</li>"
-                for item in sample_materials
-            )
-            st.markdown(
-                f"""
-                <div class="drawer reveal">
-                  <h4>Determinantes fisicoquímicos</h4>
-                  <ul>{list_items}</ul>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-        flagged = (
-            inventory_df["flags"]
-            .dropna()
-            .loc[lambda series: series.astype(str).str.len() > 0]
-            .head(4)
-            .tolist()
-        )
-        if flagged:
-            bullet_items = "".join(
-                f"<li>{flag}</li>" for flag in flagged if isinstance(flag, str)
-            )
-            st.markdown(
-                f"""
-                <div class="drawer reveal">
-                  <h4>Flags operativos activos</h4>
-                  <ul>{bullet_items}</ul>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
 # ──────────── Ruta guiada ────────────
 st.markdown("### Ruta de misión (guided flow)")
 
@@ -387,8 +391,7 @@ board_placeholder.markdown(
     unsafe_allow_html=True,
 )
 
-# ──────────── Animación de aparición por scroll ────────────
-enable_reveal_animation()
+# ──────────── Métricas de misión ────────────
 MetricGalaxy(
     metrics=hero_scene.metric_items(),
     density="cozy",
