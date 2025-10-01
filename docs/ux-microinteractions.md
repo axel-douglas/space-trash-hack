@@ -28,7 +28,7 @@ Comparar la experiencia actual (`st.button` plano) vs. el nuevo componente con p
 - "El glow verde post-éxito me deja claro que ya puedo scrollear." (Ops)
 - "Cuando da error la semilla ahora sé que pasó algo real, no un freeze." (ML)
 - "Parámetros densos, pero el microcopy debajo del botón guía bien." (UX)
-- Sugestión: exponer toggle global para sonido (quedó anotado en backlog).
+- Sugestión: exponer toggle global para sonido (ticket creado en Linear → columna "En progreso").
 
 ## Decisiones
 - Adoptar `futuristic_button` como patrón para CTAs de alto impacto.

@@ -82,6 +82,8 @@ optimizador) se mantengan iguales entre ejecuciones.
    pasan a provenir del ensemble entrenado (RandomForest + ensambles opcionales) con intervalos de
    confianza y explicabilidad verificables vía `python -m scripts.verify_model_ready`.
 
+> Seguimiento operativo: el backlog de implementación vive ahora en Linear (proyecto "ML Delivery"). El snapshot manual que se replica en la wiki quedó en [`docs/ml-pipeline-roadmap.md`](docs/ml-pipeline-roadmap.md).
+
 ## Entrenar y generar artefactos de IA
 
 El pipeline de entrenamiento consume datasets físicos/químicos alineados con
