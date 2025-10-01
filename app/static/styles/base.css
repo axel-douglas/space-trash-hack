@@ -1,0 +1,345 @@
+/*
+ * NASA-inspired base theme for the Streamlit UI.
+ * Lightweight palette + grid primitives without HUD widgets or heavy effects.
+ */
+
+:root {
+  --color-background: #0b1f3a;
+  --color-background-alt: #102a4d;
+  --color-surface: #112c52;
+  --color-surface-sunken: #081327;
+  --color-surface-raised: #1b3f6f;
+  --color-glass: rgba(24, 49, 86, 0.65);
+  --color-border: rgba(133, 165, 210, 0.24);
+  --color-border-strong: rgba(133, 165, 210, 0.4);
+  --color-text: #f4f7fb;
+  --color-text-muted: #9fb3d1;
+  --color-accent: #2ba6ff;
+  --color-accent-soft: #7ec6ff;
+  --color-success: #4cd6c0;
+  --color-warn: #ffb347;
+  --color-risk: #ff6f91;
+
+  --font-body: "Source Sans Pro", "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", "SFMono-Regular", ui-monospace, monospace;
+
+  --space-xs: 0.25rem;
+  --space-sm: 0.5rem;
+  --space-md: 0.875rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2.25rem;
+  --space-xxl: 3.5rem;
+
+  --radius-sm: 0.5rem;
+  --radius-md: 0.875rem;
+  --radius-lg: 1.25rem;
+
+  --shadow-soft: 0 6px 18px rgba(7, 19, 40, 0.35);
+  --shadow-lift: 0 12px 32px rgba(9, 26, 54, 0.4);
+  --shadow-float: 0 18px 44px rgba(10, 30, 60, 0.45);
+
+  --grid-max-width: 1180px;
+}
+
+body,
+.stApp {
+  margin: 0;
+  min-height: 100vh;
+  background: radial-gradient(circle at 15% -20%, rgba(79, 144, 237, 0.18), transparent)
+      var(--color-background);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  line-height: 1.55;
+}
+
+.stApp {
+  padding-bottom: var(--space-xxl);
+}
+
+main .block-container {
+  max-width: var(--grid-max-width);
+  padding-top: var(--space-xl);
+  padding-bottom: var(--space-xl);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--color-text);
+}
+
+p,
+li,
+label,
+span,
+small {
+  color: inherit;
+}
+
+p,
+li {
+  font-size: 1rem;
+}
+
+small,
+.stCaption,
+caption,
+.stMarkdown small {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+a {
+  color: var(--color-accent);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+}
+
+a:hover,
+a:focus {
+  color: var(--color-accent-soft);
+}
+
+code,
+pre,
+.stCode {
+  font-family: var(--font-mono);
+  color: var(--color-accent-soft);
+}
+
+.stButton > button,
+button[kind="secondary"] {
+  border-radius: var(--radius-md);
+}
+
+/* Layout primitives */
+.layout-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.layout-grid {
+  display: grid;
+  gap: var(--space-lg);
+  align-items: start;
+  width: min(100%, var(--grid-max-width));
+  margin-inline: auto;
+}
+
+.layout-grid--dual {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.layout-grid--flow {
+  grid-auto-flow: row;
+}
+
+.depth-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.side-panel,
+.pane {
+  background: linear-gradient(180deg, rgba(32, 62, 112, 0.65), rgba(16, 42, 77, 0.9));
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-xl);
+}
+
+.layer-shadow {
+  box-shadow: var(--shadow-soft);
+}
+
+.fade-in,
+.fade-in-delayed {
+  opacity: 1 !important;
+  transform: none !important;
+}
+
+/* Surface system */
+.rex-surface {
+  position: relative;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  padding: var(--space-lg);
+  color: var(--color-text);
+}
+
+.rex-surface[data-tone="sunken"] {
+  background: var(--color-surface-sunken);
+}
+
+.rex-surface[data-tone="raised"] {
+  background: var(--color-surface-raised);
+  box-shadow: var(--shadow-lift);
+}
+
+.rex-surface.rex-glass,
+.rex-glass {
+  backdrop-filter: blur(14px);
+  background: var(--color-glass);
+  border: 1px solid var(--color-border-strong);
+  box-shadow: var(--shadow-soft);
+}
+
+/* Chip + badge helpers */
+.chipline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.chipline span {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  background: rgba(133, 165, 210, 0.15);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.badge-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+  margin-block: var(--space-sm);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  border: 1px solid transparent;
+}
+
+.badge:nth-of-type(3n + 1) {
+  background: rgba(76, 214, 192, 0.12);
+  color: var(--color-success);
+  border-color: rgba(76, 214, 192, 0.4);
+}
+
+.badge:nth-of-type(3n + 2) {
+  background: rgba(255, 179, 71, 0.12);
+  color: var(--color-warn);
+  border-color: rgba(255, 179, 71, 0.35);
+}
+
+.badge:nth-of-type(3n + 3) {
+  background: rgba(255, 111, 145, 0.12);
+  color: var(--color-risk);
+  border-color: rgba(255, 111, 145, 0.35);
+}
+
+.hr-micro {
+  height: 1px;
+  width: 100%;
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgba(133, 165, 210, 0.45),
+    transparent
+  );
+  margin-block: var(--space-lg);
+}
+
+/* Minimal CTA */
+.rexai-minimal-wrapper {
+  display: inline-flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  width: 100%;
+}
+
+.rexai-minimal-wrapper[data-width="auto"] {
+  width: auto;
+}
+
+.rexai-minimal-button {
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 0.95rem 1.4rem;
+  font-weight: 600;
+  font-size: 1rem;
+  background: rgba(23, 50, 90, 0.9);
+  color: var(--color-text);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.rexai-minimal-button:hover,
+.rexai-minimal-button:focus {
+  background: rgba(27, 65, 115, 0.95);
+  box-shadow: var(--shadow-soft);
+}
+
+.rexai-minimal-button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.rexai-minimal-text {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-xs);
+  text-align: center;
+}
+
+.rexai-minimal-text[data-layout="inline"] {
+  flex-direction: row;
+}
+
+.rexai-minimal-status {
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.rexai-minimal-help {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+/* Responsive adjustments */
+@media (min-width: 56rem) {
+  .layout-grid--dual {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .side-panel,
+  .pane {
+    padding: var(--space-xl) calc(var(--space-xl) * 1.1);
+  }
+}
+
+@media (max-width: 48rem) {
+  main .block-container {
+    padding-inline: var(--space-md);
+  }
+
+  .side-panel,
+  .pane,
+  .rex-surface {
+    padding: var(--space-lg);
+  }
+}

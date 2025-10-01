@@ -56,20 +56,12 @@ if not hasattr(SafeSessionState, "get"):
     SafeSessionState.get = _safe_state_get  # type: ignore[attr-defined]
 
 
-def _static_path(filename: str) -> Path:
-    return Path(__file__).resolve().parents[1] / "static" / filename
+def _static_path(filename: str | Path) -> Path:
+    return Path(__file__).resolve().parents[1] / "static" / Path(filename)
 
 
-def _theme_path() -> Path:
-    return _static_path("theme.min.css")
-
-
-def _layout_path() -> Path:
-    return _static_path("layout.css")
-
-
-def _home_path() -> Path:
-    return _static_path("home.css")
+def _base_css_path() -> Path:
+    return _static_path(Path("styles") / "base.css")
 
 
 def _ensure_defaults() -> None:
@@ -85,13 +77,10 @@ def _ensure_defaults() -> None:
 
 
 def _read_css_bundle() -> str:
-    css_parts: list[str] = []
-    for path in (_theme_path(), _layout_path(), _home_path()):
-        try:
-            css_parts.append(path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            continue
-    return "\n".join(css_parts)
+    try:
+        return _base_css_path().read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ""
 
 
 def _inject_css_once() -> None:
@@ -179,15 +168,11 @@ _MINIMAL_BUTTON_STYLES = """
 
 
 def load_theme(*, show_hud: bool = True) -> None:
-    """Inject shared CSS and expose HUD toggles for the Rex-AI theme."""
+    """Inject the lightweight NASA-inspired base stylesheet."""
 
-    _ensure_defaults()
+    del show_hud  # compatibility no-op
     _inject_css_once()
     _inject_interactions_script_once()
-    _apply_runtime_theme()
-
-    if show_hud:
-        _render_hud()
 
 
 def enable_reveal_animation() -> None:
