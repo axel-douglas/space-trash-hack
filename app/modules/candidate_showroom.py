@@ -182,6 +182,8 @@ def render_candidate_showroom(
         st.warning("No hay candidatos que cumplan con los filtros seleccionados.")
         return []
 
+    scenario_label = str(target.get("scenario") or "").strip()
+
     _render_candidate_table(
         rows,
         success_data,
@@ -189,6 +191,7 @@ def render_candidate_showroom(
         only_safe,
         threshold_active,
         resource_labels,
+        scenario=scenario_label,
     )
 
     return [row["candidate"] for row in rows]
@@ -282,6 +285,8 @@ def _render_candidate_table(
     only_safe: bool,
     threshold_active: bool,
     resource_labels: Sequence[str],
+    *,
+    scenario: str | None = None,
 ) -> None:
     st.markdown("#### Ranking de candidatos por score")
 
@@ -310,6 +315,7 @@ def _render_candidate_table(
 
     for rank, row in enumerate(rows, start=1):
         _render_candidate_row(rank, row, success_data, column_weights)
+        _render_candidate_row(rank, row, success_data, scenario=scenario)
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -319,6 +325,8 @@ def _render_candidate_row(
     row: dict[str, Any],
     success_data: dict[str, Any],
     column_weights: Sequence[float],
+    *,
+    scenario: str | None = None,
 ) -> None:
     (
         process_col,
@@ -404,11 +412,15 @@ def _render_candidate_row(
 
     if st.session_state.get(_MODAL_KEY) == candidate_key:
         with st.modal("Confirmación holográfica", key=f"modal_{candidate_key}"):
-            st.markdown(_modal_html(row["candidate"], badge), unsafe_allow_html=True)
+            st.markdown(
+                _modal_html(row["candidate"], badge, scenario=scenario),
+                unsafe_allow_html=True,
+            )
             col_ok, col_cancel = st.columns(2)
             with col_ok:
+                confirm_label = _scenario_result_cta(scenario)
                 if futuristic_button(
-                    "Confirmar selección",
+                    confirm_label,
                     key=f"confirm_{candidate_key}",
                     state="idle",
                     width="full",
@@ -446,19 +458,71 @@ def _render_candidate_row(
         )
 
 
-def _modal_html(cand: dict, badge: dict) -> str:
+def _scenario_result_cta(scenario: str | None) -> str:
+    scenario_key = (scenario or "").strip().casefold()
+    label_map = {
+        "residence renovations": "Enviar a Resultados Residence",
+        "daring discoveries": "Enviar a Resultados Daring",
+        "cosmic celebrations": "Enviar a Resultados Cosmic",
+    }
+    default_label = "Enviar a Resultados"
+    return label_map.get(scenario_key, default_label if not scenario_key else f"Enviar a Resultados {scenario.strip()}")
+
+
+def _scenario_steps(scenario: str | None) -> list[str]:
+    scenario_key = (scenario or "").strip().casefold()
+    base_steps = [
+        "Revisá resultados detallados en la pestaña 4.",
+        "Compará alternativas en la pestaña 5.",
+        "Exportá plan u órdenes en la pestaña 6.",
+    ]
+    if scenario_key == "residence renovations":
+        return [
+            "Verificá paneles laminados antes de sellar la cabina Residence.",
+            base_steps[0],
+            base_steps[1],
+        ]
+    if scenario_key == "daring discoveries":
+        return [
+            "Prepará junta conductiva para el ensamblaje Daring.",
+            base_steps[0],
+            base_steps[2],
+        ]
+    if scenario_key == "cosmic celebrations":
+        return [
+            "Coordina logística ceremonial con la tripulación Cosmic.",
+            base_steps[0],
+            base_steps[1],
+        ]
+    return base_steps
+
+
+def _safety_reminders(badge: dict) -> list[str]:
+    detail = str(badge.get("detail", ""))
+    lowered = detail.casefold()
+    reminders: list[str] = []
+    if "pfas" in lowered or "fluor" in lowered:
+        reminders.append("⚠️ Aislar compuestos con indicios PFAS antes de continuar con el plan.")
+    if "micropl" in lowered:
+        reminders.append("⚠️ Capturá microplásticos generados durante el procesamiento y regístralos.")
+    return reminders
+
+
+def _modal_html(cand: dict, badge: dict, *, scenario: str | None = None) -> str:
     process = f"{cand.get('process_id', '')} · {cand.get('process_name', '')}".strip()
     score = _safe_number(cand.get("score"))
+    steps_html = "".join(f"<li>{step}</li>" for step in _scenario_steps(scenario))
+    reminders = _safety_reminders(badge)
+    reminders_html = "".join(f"<p class='modal-reminder'>{text}</p>" for text in reminders)
     return f"""
     <div class='modal-holo'>
       <h2>Confirmar receta seleccionada</h2>
       <p>Proceso <strong>{process or 'Proceso'}</strong> con score <strong>{score:.3f}</strong>.</p>
       <ol>
-        <li>Revisá resultados detallados en la pestaña 4.</li>
-        <li>Compará alternativas en la pestaña 5.</li>
-        <li>Exportá plan u órdenes en la pestaña 6.</li>
+        {steps_html}
       </ol>
       <div class='modal-badge'>Seguridad {badge['level']} · {badge['detail']}</div>
+      {reminders_html}
     </div>
     """
 
