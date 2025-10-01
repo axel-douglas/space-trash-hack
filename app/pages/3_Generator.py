@@ -2,6 +2,8 @@ import _bootstrap  # noqa: F401
 
 from typing import Any
 
+import math
+
 import altair as alt
 import pandas as pd
 import streamlit as st
@@ -22,7 +24,7 @@ from app.modules.ui_blocks import (
     minimal_button,
     pill,
 )
-from app.modules.luxe_components import ChipRow, MetricSpec, RankingCockpit
+from app.modules.luxe_components import MetricSpec, RankingCockpit
 from app.modules.visualizations import ConvergenceScene
 
 st.set_page_config(page_title="Rex-AI • Generador", page_icon="🤖", layout="wide")
@@ -41,6 +43,32 @@ TARGET_DISPLAY = {
     "water_l": "Agua (L)",
     "crew_min": "Crew (min)",
 }
+
+
+def _safe_float(value: object) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(number):
+        return None
+    return number
+
+
+def _format_number(value: object, precision: int = 2) -> str:
+    number = _safe_float(value)
+    if number is None:
+        return "—"
+    return f"{number:.{precision}f}"
+
+
+def _format_resource_text(value: object, limit: object, precision: int = 2) -> str:
+    value_text = _format_number(value, precision)
+    limit_number = _safe_float(limit)
+    if limit_number is None:
+        return value_text
+    limit_text = f"{limit_number:.{precision}f}"
+    return f"{value_text} / {limit_text}"
 
 
 def _format_label_summary(summary: dict[str, dict[str, float]] | None) -> str:
@@ -102,6 +130,205 @@ def render_safety_indicator(candidate: dict[str, Any]) -> dict[str, str]:
 
     return badge
 
+
+def render_candidate_card(
+    candidate: dict[str, Any],
+    idx: int,
+    target_data: dict[str, Any],
+    model_registry: Any,
+) -> None:
+    props = candidate.get("props")
+    if props is None:
+        return
+
+    score_text = _format_number(candidate.get("score"))
+    process_id = str(candidate.get("process_id") or "—")
+    process_name = str(candidate.get("process_name") or "")
+    process_label = " ".join(part for part in [process_id, process_name] if part).strip()
+    header = f"Opción {idx} — Score {score_text} — Proceso {process_label}"
+
+    with st.expander(header, expanded=(idx == 1)):
+        card = st.container()
+
+        badges: list[str] = []
+        regolith_badge_pct = _safe_float(candidate.get("regolith_pct"))
+        if regolith_badge_pct and regolith_badge_pct > 0:
+            badges.append("⛰️ ISRU: +MGS-1")
+        src_cats = " ".join(map(str, candidate.get("source_categories", []))).lower()
+        src_flags = " ".join(map(str, candidate.get("source_flags", []))).lower()
+        problem_present = any(
+            key in src_cats or key in src_flags
+            for key in ["pouches", "multilayer", "foam", "ctb", "eva", "nitrile", "wipe"]
+        )
+        if problem_present:
+            badges.append("♻️ Valorización de problemáticos")
+        aux = candidate.get("auxiliary") or {}
+        if aux.get("passes_seal") is False:
+            badges.append("⚠️ Revisar estanqueidad")
+        elif aux.get("passes_seal"):
+            badges.append("✅ Sellado OK")
+        risk_label = aux.get("process_risk_label")
+        if risk_label:
+            badges.append(f"🏷️ Riesgo {risk_label}")
+        if badges:
+            card.markdown(" ".join(badges))
+
+        pred_error = candidate.get("prediction_error")
+        if pred_error:
+            card.error(f"Predicción ML no disponible: {pred_error}")
+
+        info_col, process_col = card.columns([1.7, 1.3])
+
+        with info_col:
+            materials = ", ".join(map(str, candidate.get("materials", []))) or "—"
+            info_col.markdown("**🧪 Materiales**")
+            info_col.write(materials)
+
+            weights = candidate.get("weights")
+            info_col.markdown("**⚖️ Pesos en mezcla**")
+            info_col.write(weights if weights is not None else "—")
+
+            info_col.markdown("**🔬 Predicción**" if not pred_error else "**🔬 Estimación heurística**")
+            metrics = [
+                ("Rigidez", getattr(props, "rigidity", None), 2),
+                ("Estanqueidad", getattr(props, "tightness", None), 2),
+                ("Masa final (kg)", getattr(props, "mass_final_kg", None), 2),
+            ]
+            metric_cols = info_col.columns(len(metrics))
+            for col, (label, value, precision) in zip(metric_cols, metrics):
+                col.metric(label, _format_number(value, precision))
+
+            src = candidate.get("prediction_source", "heuristic")
+            meta_payload = {}
+            if isinstance(candidate.get("ml_prediction"), dict):
+                meta_payload = candidate["ml_prediction"].get("metadata", {}) or {}
+            if pred_error:
+                info_col.caption("Fallback heurístico mostrado por indisponibilidad del modelo.")
+            elif str(src).startswith("rexai"):
+                trained_at = meta_payload.get("trained_at", "?")
+                latent = candidate.get("latent_vector", [])
+                latent_note = "" if not latent else f" · Vector latente {len(latent)}D"
+                info_col.caption(
+                    f"Predicción por modelo ML (**{src}**, entrenado {trained_at}){latent_note}."
+                )
+                summary_text = _format_label_summary(
+                    meta_payload.get("label_summary") or model_registry.label_summary
+                )
+                if summary_text:
+                    info_col.caption(f"Dataset Rex-AI: {summary_text}")
+            else:
+                info_col.caption("Predicción heurística basada en reglas.")
+
+            ci = candidate.get("confidence_interval") or {}
+            unc = candidate.get("uncertainty") or {}
+            if ci:
+                rows: list[dict[str, float | str]] = []
+                for key, bounds in ci.items():
+                    label = TARGET_DISPLAY.get(key, key)
+                    try:
+                        lo_val, hi_val = float(bounds[0]), float(bounds[1])
+                    except (TypeError, ValueError, IndexError):
+                        lo_val, hi_val = float("nan"), float("nan")
+                    row: dict[str, float | str] = {
+                        "Variable": label,
+                        "Lo": lo_val,
+                        "Hi": hi_val,
+                    }
+                    sigma_val = unc.get(key)
+                    if sigma_val is not None:
+                        try:
+                            row["σ (std)"] = float(sigma_val)
+                        except (TypeError, ValueError):
+                            row["σ (std)"] = float("nan")
+                    rows.append(row)
+                if rows and not pred_error:
+                    info_col.markdown("**📉 Intervalos de confianza (95%)**")
+                    ci_df = pd.DataFrame(rows)
+                    info_col.dataframe(ci_df, hide_index=True, use_container_width=True)
+
+            feature_imp = candidate.get("feature_importance") or []
+            if feature_imp and not pred_error:
+                info_col.markdown("**🪄 Features que más influyen**")
+                fi_df = pd.DataFrame(feature_imp, columns=["feature", "impact"])
+                chart = alt.Chart(fi_df).mark_bar(color="#60a5fa").encode(
+                    x=alt.X("impact", title="Impacto relativo"),
+                    y=alt.Y("feature", sort="-x", title="Feature"),
+                    tooltip=["feature", alt.Tooltip("impact", format=".3f")],
+                ).properties(height=180)
+                info_col.altair_chart(chart, use_container_width=True)
+
+        with process_col:
+            process_col.markdown("**🔧 Proceso**")
+            process_col.write(process_label or "—")
+
+            process_col.markdown("**📉 Recursos estimados**")
+            resources = [
+                ("Energía (kWh)", getattr(props, "energy_kwh", None), target_data.get("max_energy_kwh"), 2),
+                ("Agua (L)", getattr(props, "water_l", None), target_data.get("max_water_l"), 1),
+                ("Crew (min)", getattr(props, "crew_min", None), target_data.get("max_crew_min"), 0),
+            ]
+            for label, value, limit, precision in resources:
+                resource_text = _format_resource_text(value, limit, precision)
+                process_col.markdown(f"- **{label}:** {resource_text}")
+
+        st.divider()
+
+        st.markdown("**🛰️ Trazabilidad NASA**")
+        st.write("IDs usados:", ", ".join(candidate.get("source_ids", [])) or "—")
+        st.write(
+            "Categorías:",
+            ", ".join(map(str, candidate.get("source_categories", []))) or "—",
+        )
+        st.write("Flags:", ", ".join(map(str, candidate.get("source_flags", []))) or "—")
+        regolith_pct = _safe_float(candidate.get("regolith_pct"))
+        if regolith_pct and regolith_pct > 0:
+            st.write(f"**MGS-1 agregado:** {regolith_pct * 100:.0f}%")
+
+        feat = candidate.get("features", {})
+        if feat:
+            feat_summary = {
+                "Masa total (kg)": feat.get("total_mass_kg"),
+                "Densidad (kg/m³)": feat.get("density_kg_m3"),
+                "Humedad": feat.get("moisture_frac"),
+                "Dificultad": feat.get("difficulty_index"),
+                "Recupero gas": feat.get("gas_recovery_index"),
+                "Reuso logístico": feat.get("logistics_reuse_index"),
+            }
+            feat_df = pd.DataFrame([feat_summary])
+            st.markdown("**Features NASA/ML (alimentan la IA)**")
+            st.dataframe(feat_df, hide_index=True, use_container_width=True)
+            if feat.get("latent_vector"):
+                st.caption("Latente Rex-AI incluido para análisis generativo.")
+
+        breakdown = candidate.get("score_breakdown") or {}
+        contribs = breakdown.get("contributions") or {}
+        penalties = breakdown.get("penalties") or {}
+        if contribs or penalties:
+            st.markdown("**⚖️ Desglose del score**")
+            contrib_col, penalty_col = st.columns(2)
+            if contribs:
+                contrib_df = pd.DataFrame(
+                    [{"Factor": k, "+": float(v)} for k, v in contribs.items()]
+                ).sort_values("+", ascending=False)
+                with contrib_col:
+                    st.markdown("**Contribuciones**")
+                    st.dataframe(contrib_df, hide_index=True, use_container_width=True)
+            if penalties:
+                pen_df = pd.DataFrame(
+                    [{"Penalización": k, "-": float(v)} for k, v in penalties.items()]
+                ).sort_values("-", ascending=False)
+                with penalty_col:
+                    st.markdown("**Penalizaciones**")
+                    st.dataframe(pen_df, hide_index=True, use_container_width=True)
+
+        badge = render_safety_indicator(candidate)
+
+        if st.button(f"✅ Seleccionar Opción {idx}", key=f"pick_{idx}"):
+            st.session_state["selected"] = {"data": candidate, "safety": badge}
+            st.success(
+                "Opción seleccionada. Abrí **4) Resultados**, **5) Comparar & Explicar** o **6) Pareto & Export**."
+            )
+
 # ----------------------------- Encabezado -----------------------------
 st.header("Generador IA")
 badge_group(
@@ -144,6 +371,8 @@ if "candidates" not in st.session_state:
     st.session_state["candidates"] = []
 if "optimizer_history" not in st.session_state:
     st.session_state["optimizer_history"] = pd.DataFrame()
+
+model_registry = get_model_registry()
 
 # ----------------------------- Panel de control + IA -----------------------------
 with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None) as grid:
@@ -268,7 +497,6 @@ with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None
 
         with layout_block("depth-stack layer-shadow fade-in-delayed", parent=right_column) as ai_panel:
             ai_panel.markdown("### 🧠 Modelo IA")
-            model_registry = get_model_registry()
             trained_at = model_registry.metadata.get("trained_at", "—")
             n_samples = model_registry.metadata.get("n_samples", "—")
             top_features = model_registry.feature_importance_avg[:5]
@@ -457,195 +685,8 @@ st.caption(
 )
 
 filtered_cands = render_candidate_showroom(cands, target)
-for i, c in enumerate(cands):
-    p = c["props"]
-    header = f"Opción {i+1} — Score {c['score']} — Proceso {c['process_id']} {c['process_name']}"
-    with st.expander(header, expanded=(i == 0)):
-        # Badges
-        badges = []
-        if c.get("regolith_pct", 0) > 0:
-            badges.append("⛰️ ISRU: +MGS-1")
-        src_cats = " ".join(map(str, c.get("source_categories", []))).lower()
-        src_flags = " ".join(map(str, c.get("source_flags", []))).lower()
-        problem_present = any([
-            "pouches" in src_cats, "multilayer" in src_flags,
-            "foam" in src_cats, "ctb" in src_flags, "eva" in src_cats,
-            "nitrile" in src_cats, "wipe" in src_flags
-        ])
-        if problem_present:
-            badges.append("♻️ Valorización de problemáticos")
-        aux = c.get("auxiliary") or {}
-        if aux:
-            if aux.get("passes_seal") is False:
-                badges.append("⚠️ Revisar estanqueidad")
-            elif aux.get("passes_seal"):
-                badges.append("✅ Sellado OK")
-            risk_label = aux.get("process_risk_label")
-            if risk_label:
-                badges.append(f"🏷️ Riesgo {risk_label}")
-        if badges:
-            badge_group(badges)
-            ChipRow([{ "label": badge } for badge in badges], tone="accent")
-
-        pred_error = c.get("prediction_error")
-        if pred_error:
-            st.error(f"Predicción ML no disponible: {pred_error}")
-
-        # Resumen técnico
-        with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None) as detail_grid:
-            with layout_block("depth-stack layer-shadow", parent=detail_grid) as left_panel:
-                left_panel.markdown("**🧪 Materiales**")
-                left_panel.write(", ".join(c["materials"]))
-                left_panel.markdown("**⚖️ Pesos en mezcla**")
-                left_panel.write(c["weights"])
-
-                left_panel.markdown("**🔬 Predicción**" if not pred_error else "**🔬 Estimación heurística**")
-                if pred_error:
-                    metrics_html = (
-                        f"<div class='metric-grid'>"
-                        f"<div class='stat-card'><span>Rigidez</span><strong>{p.rigidity:.2f}</strong></div>"
-                        f"<div class='stat-card'><span>Estanqueidad</span><strong>{p.tightness:.2f}</strong></div>"
-                        f"<div class='stat-card'><span>Masa final</span><strong>{p.mass_final_kg:.2f} kg</strong></div>"
-                        f"</div>"
-                    )
-                    left_panel.markdown(metrics_html, unsafe_allow_html=True)
-                else:
-                    metrics_html = (
-                        f"<div class='metric-grid fade-in'>"
-                        f"<div class='stat-card layer-glow'><span>Rigidez</span><strong>{p.rigidity:.2f}</strong></div>"
-                        f"<div class='stat-card layer-glow'><span>Estanqueidad</span><strong>{p.tightness:.2f}</strong></div>"
-                        f"<div class='stat-card layer-glow'><span>Masa final</span><strong>{p.mass_final_kg:.2f} kg</strong></div>"
-                        f"</div>"
-                    )
-                    left_panel.markdown(metrics_html, unsafe_allow_html=True)
-                src = c.get("prediction_source", "heuristic")
-                meta_payload = {}
-                if isinstance(c.get("ml_prediction"), dict):
-                    meta_payload = c["ml_prediction"].get("metadata", {}) or {}
-                if pred_error:
-                    left_panel.caption("Fallback heurístico mostrado por indisponibilidad del modelo.")
-                elif str(src).startswith("rexai"):
-                    t_at = meta_payload.get("trained_at", "?")
-                    latent = c.get("latent_vector", [])
-                    latent_note = "" if not latent else f" · Vector latente {len(latent)}D"
-                    left_panel.caption(f"Predicción por modelo ML (**{src}**, entrenado {t_at}){latent_note}.")
-                    summary_text = _format_label_summary(
-                        meta_payload.get("label_summary") or model_registry.label_summary
-                    )
-                    if summary_text:
-                        left_panel.caption(f"Dataset Rex-AI: {summary_text}")
-                else:
-                    left_panel.caption("Predicción heurística basada en reglas.")
-
-                ci = c.get("confidence_interval") or {}
-                unc = c.get("uncertainty") or {}
-                if ci:
-                    rows: list[dict[str, float | str]] = []
-                    for key, bounds in ci.items():
-                        label = TARGET_DISPLAY.get(key, key)
-                        try:
-                            lo_val, hi_val = float(bounds[0]), float(bounds[1])
-                        except (TypeError, ValueError, IndexError):
-                            lo_val, hi_val = float("nan"), float("nan")
-                        row: dict[str, float | str] = {
-                            "Variable": label,
-                            "Lo": lo_val,
-                            "Hi": hi_val,
-                        }
-                        sigma_val = unc.get(key)
-                        if sigma_val is not None:
-                            try:
-                                row["σ (std)"] = float(sigma_val)
-                            except (TypeError, ValueError):
-                                row["σ (std)"] = float("nan")
-                        rows.append(row)
-                    if rows and not pred_error:
-                        left_panel.markdown("**📉 Intervalos de confianza (95%)**")
-                        ci_df = pd.DataFrame(rows)
-                        left_panel.dataframe(ci_df, hide_index=True, use_container_width=True)
-
-                feature_imp = c.get("feature_importance") or []
-                if feature_imp and not pred_error:
-                    left_panel.markdown("**🪄 Features que más influyen**")
-                    fi_df = pd.DataFrame(feature_imp, columns=["feature", "impact"])
-                    chart = alt.Chart(fi_df).mark_bar(color="#60a5fa").encode(
-                        x=alt.X("impact", title="Impacto relativo"),
-                        y=alt.Y("feature", sort="-x", title="Feature"),
-                        tooltip=["feature", alt.Tooltip("impact", format=".3f")],
-                    ).properties(height=180)
-                    left_panel.altair_chart(chart, use_container_width=True)
-
-            with layout_block("depth-stack layer-shadow", parent=detail_grid) as right_panel:
-                right_panel.markdown("**🔧 Proceso**")
-                right_panel.write(f"{c['process_id']} — {c['process_name']}")
-                right_panel.markdown("**📉 Recursos estimados**")
-                resources = [
-                    ("Energía (kWh)", p.energy_kwh, target["max_energy_kwh"], f"{p.energy_kwh:.2f} / {target['max_energy_kwh']}"),
-                    ("Agua (L)", p.water_l, target["max_water_l"], f"{p.water_l:.2f} / {target['max_water_l']}"),
-                    ("Crew (min)", p.crew_min, target["max_crew_min"], f"{p.crew_min:.0f} / {target['max_crew_min']}"),
-                ]
-                with layout_block("resource-grid", parent=right_panel) as res_grid:
-                    for label, value, limit, caption in resources:
-                        with layout_block("resource-card layer-shadow", parent=res_grid) as card:
-                            card.markdown(f"**{label}**")
-                            card.progress(_res_bar(value, limit))
-                            card.caption(caption)
-
-        micro_divider()
-
-        # Trazabilidad NASA
-        st.markdown("**🛰️ Trazabilidad NASA**")
-        st.write("IDs usados:", ", ".join(c.get("source_ids", [])) or "—")
-        st.write("Categorías:", ", ".join(map(str, c.get("source_categories", []))) or "—")
-        st.write("Flags:", ", ".join(map(str, c.get("source_flags", []))) or "—")
-        if c.get("regolith_pct", 0) > 0:
-            st.write(f"**MGS-1 agregado:** {c['regolith_pct']*100:.0f}%")
-
-        # Features resumen (si los hay)
-        feat = c.get("features", {})
-        if feat:
-            feat_summary = {
-                "Masa total (kg)": feat.get("total_mass_kg"),
-                "Densidad (kg/m³)": feat.get("density_kg_m3"),
-                "Humedad": feat.get("moisture_frac"),
-                "Dificultad": feat.get("difficulty_index"),
-                "Recupero gas": feat.get("gas_recovery_index"),
-                "Reuso logístico": feat.get("logistics_reuse_index"),
-            }
-            feat_df = pd.DataFrame([feat_summary])
-            st.markdown("**Features NASA/ML (alimentan la IA)**")
-            st.dataframe(feat_df, hide_index=True, use_container_width=True)
-            if feat.get("latent_vector"):
-                st.caption("Latente Rex-AI incluido para análisis generativo.")
-
-        breakdown = c.get("score_breakdown") or {}
-        contribs = breakdown.get("contributions") or {}
-        penalties = breakdown.get("penalties") or {}
-        if contribs or penalties:
-            st.markdown("**⚖️ Desglose del score**")
-            with layout_block("layout-grid layout-grid--balanced", parent=None) as score_grid:
-                if contribs:
-                    contrib_df = pd.DataFrame([
-                        {"Factor": k, "+": float(v)} for k, v in contribs.items()
-                    ]).sort_values("+", ascending=False)
-                    with layout_block("depth-stack layer-shadow", parent=score_grid) as positive_card:
-                        positive_card.markdown("**Contribuciones**")
-                        positive_card.dataframe(contrib_df, hide_index=True, use_container_width=True)
-                if penalties:
-                    pen_df = pd.DataFrame([
-                        {"Penalización": k, "-": float(v)} for k, v in penalties.items()
-                    ]).sort_values("-", ascending=False)
-                    with layout_block("depth-stack layer-shadow", parent=score_grid) as penalty_card:
-                        penalty_card.markdown("**Penalizaciones**")
-                        penalty_card.dataframe(pen_df, hide_index=True, use_container_width=True)
-
-        # Seguridad
-        badge = render_safety_indicator(c)
-
-        # Botón de selección
-        if st.button(f"✅ Seleccionar Opción {i+1}", key=f"pick_{i}"):
-            st.session_state["selected"] = {"data": c, "safety": badge}
-            st.success("Opción seleccionada. Abrí **4) Resultados**, **5) Comparar & Explicar** o **6) Pareto & Export**.")
+for idx, candidate in enumerate(cands, start=1):
+    render_candidate_card(candidate, idx, target, model_registry)
 
 # ----------------------------- Explicación rápida (popover global) -----------------------------
 top = filtered_cands[0] if filtered_cands else (cands[0] if cands else None)
