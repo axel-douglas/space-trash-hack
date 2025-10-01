@@ -6,6 +6,7 @@ import base64
 import json
 import math
 import re
+import time
 import unicodedata
 from dataclasses import dataclass, field
 from html import escape
@@ -2500,14 +2501,57 @@ def _gauge(title: str, value: float, max_value: float, unit: str, color: str = "
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 
-def _build_audio_clip() -> bytes:
-    """Create a short sine beep encoded as WAV bytes."""
+_TARGET_SLIDER_SPAN = {
+    "rigidity": 1.0,
+    "tightness": 1.0,
+    "max_water_l": 3.0,
+    "max_energy_kwh": 3.0,
+    "max_crew_min": 55.0,
+}
+
+
+_TARGET_LABELS = {
+    "rigidity": "Rigidez",
+    "tightness": "Estanqueidad",
+    "max_water_l": "Agua",
+    "max_energy_kwh": "Energía",
+    "max_crew_min": "Crew",
+}
+
+
+_TARGET_TONE_BASE = {
+    "rigidity": 440,
+    "tightness": 554,
+    "max_water_l": 659,
+    "max_energy_kwh": 740,
+    "max_crew_min": 880,
+}
+
+
+def _build_audio_clip(normalized_changes: Dict[str, float]) -> bytes:
+    """Create a short multi-tone clip representing slider deltas."""
+
+    if not normalized_changes:
+        return b""
 
     sample_rate = 44100
-    duration = 0.25
-    frequency = 880
+    duration = 0.6
     t = np.linspace(0, duration, int(sample_rate * duration), False)
-    tone = 0.5 * np.sin(2 * np.pi * frequency * t)
+    tone = np.zeros_like(t)
+
+    for key, normalized_delta in normalized_changes.items():
+        base_freq = _TARGET_TONE_BASE[key]
+        frequency = base_freq * (1 + 0.35 * np.clip(normalized_delta, -1.0, 1.0))
+        amplitude = min(0.8, 0.4 + 0.6 * abs(normalized_delta)) / len(normalized_changes)
+        tone += amplitude * np.sin(2 * np.pi * frequency * t)
+
+    # Apply a simple attack/decay envelope for a softer clip
+    attack = np.linspace(0.0, 1.0, int(0.1 * len(t)))
+    sustain = np.ones(int(0.8 * len(t)))
+    release = np.linspace(1.0, 0.0, len(t) - attack.size - sustain.size)
+    envelope = np.concatenate([attack, sustain, release])
+    tone *= envelope
+    tone = np.clip(tone, -1.0, 1.0)
     audio = np.int16(tone * 32767)
 
     from io import BytesIO
@@ -2549,16 +2593,18 @@ def target_configurator(
             "scenario": default_scenario,
             "crew_time_low": False,
         }
+        st.session_state.pop("_target_prev_values", None)
     elif current_target.get("name") != selected_name:
         st.session_state["target"] = {
             **selected_preset,
             "scenario": current_target.get("scenario", default_scenario),
             "crew_time_low": current_target.get("crew_time_low", False),
         }
+        st.session_state.pop("_target_prev_values", None)
 
     current_target = st.session_state["target"]
 
-    previous_values = st.session_state.get("_target_prev_values", {})
+    previous_values = st.session_state.get("_target_prev_values")
 
     base = {
         key: float(selected_preset[key]) if "max_" not in key else selected_preset[key]
@@ -2683,14 +2729,7 @@ def target_configurator(
             audio_enabled = st.checkbox(
                 "Audio feedback", value=st.session_state.get("_target_audio", False)
             )
-            haptic_enabled = st.checkbox(
-                "Vibración háptica", value=st.session_state.get("_target_haptic", False)
-            )
             st.session_state["_target_audio"] = audio_enabled
-            st.session_state["_target_haptic"] = haptic_enabled
-
-            if audio_enabled:
-                st.audio(_build_audio_clip(), format="audio/wav", sample_rate=44100)
 
     with main_col:
         st.markdown("#### Simulación visual")
@@ -2712,18 +2751,49 @@ def target_configurator(
         "max_crew_min": max_crew,
     }
 
-    if previous_values and current_values != previous_values:
-        messages = []
-        if st.session_state.get("_target_audio"):
-            messages.append("🔊 Audio feedback (simulado)")
-        if st.session_state.get("_target_haptic"):
-            messages.append("🤲 Haptic pulse (simulado)")
-        if messages:
-            feedback_area.success(" ".join(messages))
+    normalized_changes: Dict[str, float] = {}
+    if previous_values is not None:
+        for key, value in current_values.items():
+            if key not in previous_values:
+                continue
+            delta = value - previous_values[key]
+            span = _TARGET_SLIDER_SPAN.get(key, 1.0)
+            if not span:
+                continue
+            normalized_delta = delta / span
+            if abs(normalized_delta) >= 0.01:
+                normalized_changes[key] = normalized_delta
+
+    if normalized_changes:
+        change_score = min(1.0, sum(abs(delta) for delta in normalized_changes.values()))
+        top_metric = max(normalized_changes, key=lambda name: abs(normalized_changes[name]))
+        intensity_percent = max(1, min(100, int(round(change_score * 100))))
+
+        with feedback_area.container():
+            st.markdown("#### Feedback de ajuste")
+            progress_bar = st.progress(0)
+            step = max(1, intensity_percent // 6)
+            for progress in range(0, intensity_percent + step, step):
+                progress_bar.progress(min(progress, 100))
+                time.sleep(0.03)
+            progress_bar.progress(intensity_percent)
+
+            if st.session_state.get("_target_audio"):
+                audio_clip = _build_audio_clip(normalized_changes)
+                if audio_clip:
+                    st.audio(audio_clip, format="audio/wav", sample_rate=44100)
+            else:
+                st.info("Activá el audio para escuchar el sample asociado al cambio.")
+
+            direction = "↑" if normalized_changes[top_metric] > 0 else "↓"
+            st.caption(
+                f"Intensidad estimada: {intensity_percent}% · Mayor variación: "
+                f"{direction} {_TARGET_LABELS.get(top_metric, top_metric)}"
+            )
     else:
         feedback_area.empty()
 
-    st.session_state["_target_prev_values"] = current_values
+    st.session_state["_target_prev_values"] = current_values.copy()
 
     with summary_col:
         st.markdown("### Resumen")
