@@ -19,7 +19,7 @@ Este backlog transforma el plan técnico en sprints accionables. Cada tarea se p
 | S0.1 | Inventariar datasets existentes (`datasets/`, `data/`, `feedback/`) y mapear columnas a features/targets | 🔴 | data | — | `docs/data_inventory.md` |
 | S0.2 | Definir esquema Parquet unificado (`features.parquet`, `labels.parquet`) con `recipe_id`, `process_id`, `label_source`, `label_weight` | 🔴 | data | S0.1 | `datasets/schema.yaml` |
 | S0.3 | Configurar entorno (dependencias scikit-learn, xgboost, torch opcional) y verificar ejecución de `python -m app.modules.model_training --help` | 🔴 | infra | — | Log de instalación + `requirements-lock.txt` opcional |
-| S0.4 | Crear tablero de seguimiento (Notion/Jira) enlazando estas tareas e identificando owners | 🟠 | ops | — | URL del tablero |
+| S0.4 | Crear tablero de seguimiento (Notion/Jira) enlazando estas tareas e identificando owners | 🟠 | ops | — | URL del tablero (ver `docs/CHANGELOG.md`) |
 
 ## Sprint 1 — Pipeline de datos + modelo base (días 1–2)
 

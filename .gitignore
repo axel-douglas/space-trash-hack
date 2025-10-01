@@ -10,13 +10,11 @@ __pycache__/
 
 # Processed datasets
 /data/processed/
-!/data/processed/
 /data/logs/*
 !/data/logs/.gitkeep
 /datasets/processed/
 !/datasets/processed/
 /datasets/derived/
-!/data/processed/.gitkeep
 !/datasets/processed/.gitkeep
 
 # Binary dataset and model artefacts
