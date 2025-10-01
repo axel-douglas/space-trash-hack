@@ -7,6 +7,17 @@ from dataclasses import dataclass, asdict, field
 from datetime import datetime
 from typing import Any
 
+__all__ = [
+    "ImpactEntry",
+    "FeedbackEntry",
+    "append_impact",
+    "append_feedback",
+    "load_impact_df",
+    "load_feedback_df",
+    "summarize_impact",
+    "parse_extra_blob",
+]
+
 import pandas as pd
 
 try:  # Optional dependency used for streaming Parquet writes
@@ -184,17 +195,49 @@ def append_feedback(entry: FeedbackEntry) -> str:
     return payload["run_id"]
 
 
+def parse_extra_blob(blob: Any) -> dict[str, Any]:
+    """Return a dictionary representation for arbitrary ``extra`` blobs."""
+
+    if isinstance(blob, dict):
+        return blob
+    if not isinstance(blob, str):
+        return {}
+
+    text = blob.strip()
+    if not text:
+        return {}
+
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        parsed = None
+
+    if isinstance(parsed, dict):
+        return parsed
+    if parsed is not None:
+        return {"raw": parsed}
+
+    data: dict[str, Any] = {}
+    leftovers: list[str] = []
+
+    for chunk in text.split(";"):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if "=" in chunk:
+            key, value = chunk.split("=", 1)
+            data[key.strip()] = value.strip()
+        else:
+            leftovers.append(chunk)
+
+    if leftovers and "raw" not in data:
+        data["raw"] = "; ".join(leftovers)
+
+    return data
+
+
 def _parse_extra_column(value: Any) -> dict[str, Any]:
-    if isinstance(value, dict):
-        return value
-    if isinstance(value, str) and value:
-        try:
-            parsed = json.loads(value)
-            if isinstance(parsed, dict):
-                return parsed
-        except json.JSONDecodeError:
-            pass
-    return {}
+    return parse_extra_blob(value)
 
 
 def _load_parquet(pattern: str) -> pd.DataFrame:

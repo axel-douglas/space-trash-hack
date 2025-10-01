@@ -15,17 +15,25 @@ load_theme()
 
 render_breadcrumbs("feedback")
 
-import json
 import pandas as pd
 from datetime import datetime
 from io import StringIO
 from typing import Any
 
 from app.modules.impact import (
-    ImpactEntry, FeedbackEntry, append_impact, append_feedback,
-    load_impact_df, load_feedback_df, summarize_impact
+    ImpactEntry,
+    FeedbackEntry,
+    append_impact,
+    append_feedback,
+    load_impact_df,
+    load_feedback_df,
+    parse_extra_blob,
+    summarize_impact,
 )
-from app.modules.data_sources import load_regolith_thermal_profiles
+from app.modules.data_sources import (
+    load_regolith_thermal_profiles,
+    regolith_observation_lines,
+)
 
 
 @st.cache_data(show_spinner=False)
@@ -54,71 +62,6 @@ def _regolith_thermal_summary():
     return {"peaks": peaks, "events": events}
 
 
-def _regolith_observation_lines(
-    regolith_pct: float, thermo: dict[str, Any] | None
-) -> list[str]:
-    if regolith_pct <= 0 or not thermo:
-        return []
-
-    lines: list[str] = []
-    lines.append(
-        f"{regolith_pct * 100:.0f}% de MGS-1: monitorear densificación, ventilación y sellos al liberar volátiles."
-    )
-
-    peaks = thermo.get("peaks", []) if isinstance(thermo, dict) else []
-    for peak in peaks[:2]:
-        temperature = peak.get("temperature_c")
-        species = peak.get("species_label") or peak.get("species") or "Volátiles"
-        signal = peak.get("signal_ppb")
-        temp_txt = f"{temperature:.0f} °C" if isinstance(temperature, (int, float)) else "pico térmico"
-        signal_txt = f" (~{signal:.2f} ppb eq.)" if isinstance(signal, (int, float)) else ""
-        lines.append(f"TG/EGA: {species} con liberación cerca de {temp_txt}{signal_txt}.")
-
-    events = thermo.get("events", []) if isinstance(thermo, dict) else []
-    for event in events[:2]:
-        label = (event.get("event") or "").replace("_", " ").strip().capitalize()
-        mass_pct = event.get("mass_pct")
-        temperature = event.get("temperature_c")
-        mass_txt = f"{mass_pct:.1f}%" if isinstance(mass_pct, (int, float)) else "variación"
-        temp_txt = f"{temperature:.0f} °C" if isinstance(temperature, (int, float)) else "el perfil térmico"
-        lines.append(f"TG: {label or 'Evento'} → {mass_txt} alrededor de {temp_txt}.")
-
-    return lines
-
-
-def _parse_extra_blob(blob: Any) -> dict:
-    """Convierte el campo `extra` a un dict manejando texto plano o JSON."""
-    if isinstance(blob, dict):
-        return blob
-    if not isinstance(blob, str):
-        return {}
-    text = blob.strip()
-    if not text:
-        return {}
-    try:
-        parsed = json.loads(text)
-        if isinstance(parsed, dict):
-            return parsed
-        return {"raw": parsed}
-    except json.JSONDecodeError:
-        pass
-
-    data = {}
-    leftovers: list[str] = []
-    for chunk in text.split(";"):
-        chunk = chunk.strip()
-        if not chunk:
-            continue
-        if "=" in chunk:
-            key, value = chunk.split("=", 1)
-            data[key.strip()] = value.strip()
-        else:
-            leftovers.append(chunk)
-    if leftovers and "raw" not in data:
-        data["raw"] = "; ".join(leftovers)
-    return data
-
-
 def _with_extra_columns(df: pd.DataFrame, rename_map: dict[str, str] | None = None) -> pd.DataFrame:
     if df is None or df.empty:
         return df
@@ -130,7 +73,7 @@ def _with_extra_columns(df: pd.DataFrame, rename_map: dict[str, str] | None = No
     if "extra" not in work.columns:
         work["extra"] = [{} for _ in range(len(work))]
         return work
-    meta_df = pd.DataFrame([_parse_extra_blob(val) for val in work["extra"]])
+    meta_df = pd.DataFrame([parse_extra_blob(val) for val in work["extra"]])
     if meta_df.empty:
         return work
     if rename_map:
@@ -156,7 +99,7 @@ if target:
     scenario_label = str(target.get("scenario") or "").strip()
 scenario_key = scenario_label.casefold()
 thermo_summary = _regolith_thermal_summary() if regolith_pct > 0 else None
-regolith_observations = _regolith_observation_lines(regolith_pct, thermo_summary)
+regolith_observations = regolith_observation_lines(regolith_pct, thermo_summary)
 
 
 def _scenario_side_hints(scenario_key: str) -> list[str]:
