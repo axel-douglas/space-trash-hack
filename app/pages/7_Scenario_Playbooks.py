@@ -198,8 +198,8 @@ with col_sel:
             "scenario": pb.name,
             "filters": filters_payload,
         }
-        st.experimental_set_query_params(page="3_Generator")
-        st.experimental_rerun()
+        st.session_state["mission_active_step"] = "generator"
+        st.switch_page("pages/3_Generator.py")
 
 # ======== Brief del Playbook + Estado de datos ========
 st.markdown("### 🧪 Brief del escenario")
