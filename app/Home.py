@@ -200,14 +200,15 @@ with hero_col:
     TeslaHero(
         title="Rex-AI coordina el reciclaje orbital y marciano",
         subtitle=(
-            "Automatiza mezclas con regolito MGS-1, polímeros EVA y residuos de carga "
-            "para producir piezas listas para misión. Gestiona riesgos, energía y trazabilidad "
-            "en una sola vista."
+            "8 astronautas generan 12.6 t de residuos en misión y Rex-AI los convierte en "
+            "equipamiento listo. Automatiza mezclas con regolito MGS-1 del cráter Jezero, "
+            "polímeros EVA y residuos de carga útil para entregar piezas auditables y trazables."
         ),
         chips=[
-            {"label": "RandomForest multisalida", "tone": "accent"},
-            {"label": "Comparadores heurísticos", "tone": "info"},
-            {"label": "Crew telemetry ready", "tone": "accent"},
+            {"label": "Hook: 8 astronautas → 12.6 t", "tone": "warning"},
+            {"label": "Playbook • Residence Renovations", "tone": "accent"},
+            {"label": "Playbook • Daring Discoveries", "tone": "accent"},
+            {"label": "RandomForest multisalida", "tone": "info"},
         ],
         icon="🛰️",
         gradient="linear-gradient(135deg, rgba(59,130,246,0.28), rgba(14,165,233,0.08))",
@@ -390,6 +391,74 @@ if inventory_df is not None:
             """
         )
 
+# Tarjetas de escenarios con inputs/outputs clave
+scenario_cards = [
+    {
+        "name": "Residence Renovations",
+        "inputs": [
+            "Marcos y CTB de aluminio reutilizados",
+            "Espumas ZOTEK/bubble wrap y films MLI",
+            "Opcional: regolito MGS-1 para refuerzos",
+        ],
+        "outputs": [
+            "Estanterías y particiones modulares",
+            "Paneles aislantes laminados para habitat",
+        ],
+        "why": (
+            "Maximiza puntos al transformar masa estructural pesada en mejoras de habitabilidad "
+            "con bajo crew-time y alto puntaje de resiliencia térmica."
+        ),
+    },
+    {
+        "name": "Cosmic Celebrations",
+        "inputs": [
+            "Textiles limpios y wipes de poliéster/nylon",
+            "Films multicapa encapsulados",
+            "Herrajes CTB o clips reutilizables",
+        ],
+        "outputs": [
+            "Utilería y decoración segura sin agua",
+            "Elementos modulares para morale boost",
+        ],
+        "why": (
+            "Maximiza puntos morales y de bajo consumo al priorizar procesos secos de rápido "
+            "ensamblaje y energía mínima."
+        ),
+    },
+    {
+        "name": "Daring Discoveries",
+        "inputs": [
+            "Carbono residual clasificado",
+            "Meshes metálicas/poliméricas",
+            "Polímeros y MGS-1 para sinterizado",
+        ],
+        "outputs": [
+            "Componentes rígidos para ciencia y filtros",
+            "Superficies reforzadas anti-impacto",
+        ],
+        "why": (
+            "Maximiza puntos científicos al entregar piezas de alta rigidez y trazabilidad "
+            "que habilitan experimentos críticos con mínima merma."
+        ),
+    },
+]
+
+for card in scenario_cards:
+    inputs_html = "".join(f"<li>{item}</li>" for item in card["inputs"])
+    outputs_html = "".join(f"<li>{item}</li>" for item in card["outputs"])
+    info_cards.append(
+        f"""
+        <article class="home-card">
+          <h4>{card['name']}</h4>
+          <p><strong>Inputs clave</strong></p>
+          <ul class="home-card__list">{inputs_html}</ul>
+          <p><strong>Outputs estrella</strong></p>
+          <ul class="home-card__list">{outputs_html}</ul>
+          <p class="home-card__note">¿Por qué maximiza puntos? {card['why']}</p>
+        </article>
+        """
+    )
+
 if info_cards:
     st.markdown(
         f"<div class=\"home-card-stack\">{''.join(info_cards)}</div>",
@@ -427,4 +496,8 @@ MetricGalaxy(
 st.info(
     "Usá el **Mission HUD** superior para saltar entre pasos o presioná las teclas `1-9` "
     "para navegar rápido por el flujo guiado."
+)
+st.caption(
+    "Trash → Tools → Survival: cada feedback acelera el salto de residuo a herramienta "
+    "y de herramienta a supervivencia marciana."
 )
