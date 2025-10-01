@@ -16,7 +16,6 @@ from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.process_planner import choose_process
 from app.modules.safety import check_safety, safety_badge
 from app.modules.ui_blocks import (
-    badge_group,
     layout_block,
     layout_stack,
     load_theme,
@@ -103,6 +102,32 @@ def _format_label_summary(summary: dict[str, dict[str, float]] | None) -> str:
         parts.append(fragment)
 
     return " · ".join(parts)
+
+
+def _collect_target_badges(target: dict[str, Any] | None) -> list[tuple[str, str]]:
+    if not isinstance(target, dict):
+        return []
+
+    badges: list[tuple[str, str]] = []
+
+    water_limit = _safe_float(target.get("max_water_l"))
+    if water_limit is not None:
+        badges.append((f"💧 Agua ≤ {water_limit:.0f} L", "warn"))
+
+    energy_limit = _safe_float(target.get("max_energy_kwh"))
+    if energy_limit is not None:
+        badges.append((f"⚡ Energía ≤ {energy_limit:.0f} kWh", "warn"))
+
+    if target.get("crew_time_low"):
+        badges.append(("⏱️ Crew-time priorizado", "warn"))
+
+    target_name = str(target.get("name") or "").strip().casefold()
+    if target_name == "residence renovations":
+        badges.append(("🏠 Prioridad: volumen habitable", "ok"))
+    elif target_name == "daring discoveries":
+        badges.append(("🛰️ Prioridad: rigidez estructural", "ok"))
+
+    return badges
 
 
 def render_safety_indicator(candidate: dict[str, Any]) -> dict[str, str]:
@@ -331,23 +356,22 @@ def render_candidate_card(
                 "Opción seleccionada. Abrí **4) Resultados**, **5) Comparar & Explicar** o **6) Pareto & Export**."
             )
 
+target = st.session_state.get("target")
+
 # ----------------------------- Encabezado -----------------------------
 st.header("Generador IA")
-badge_group(
-    (
-        "RandomForest + XGBoost (alternativo)",
-        "Confianza 95%",
-        "Comparación heurística vs IA",
-        "Trazabilidad NASA + MGS-1",
-    )
-)
+header_badges = _collect_target_badges(target)
+if header_badges:
+    badge_columns = st.columns(len(header_badges))
+    for column, (label, kind) in zip(badge_columns, header_badges):
+        with column:
+            pill(label, kind=kind)
 st.caption(
     "Rex-AI combina residuos NASA, ejecuta Ax + BoTorch y muestra trazabilidad con métricas"
-    " explicables en cada lote."
+    " explicables en cada lote. Ranking ponderado energía↔agua↔crew con penalizaciones de estanqueidad."
 )
 
 # ----------------------------- Pre-condición: target -----------------------------
-target = st.session_state.get("target")
 if not target:
     st.warning("Configura primero el objetivo en **2 · Target Designer** para habilitar el generador.")
     st.stop()
@@ -476,8 +500,9 @@ with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None
             target_card.markdown(f"**{target.get('name', '—')}**")
             scenario_label = target.get("scenario") or "Escenario general"
             target_card.caption(f"Escenario: {scenario_label}")
-            if target.get("crew_time_low"):
-                badge_group(["⏱️ Prioriza crew-time"], parent=target_card)
+            target_badges = _collect_target_badges(target)
+            for label, kind in target_badges:
+                pill(label, kind=kind)
             limits = [
                 ("Rigidez objetivo", target.get("rigidity")),
                 ("Estanqueidad objetivo", target.get("tightness")),
