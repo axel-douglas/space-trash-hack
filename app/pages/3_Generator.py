@@ -310,13 +310,101 @@ def render_candidate_card(
         info_col, process_col = card.columns([1.7, 1.3])
 
         with info_col:
-            materials = ", ".join(map(str, candidate.get("materials", []))) or "—"
-            info_col.markdown("**🧪 Materiales**")
-            info_col.write(materials)
+            info_col.markdown("**🧪 Materiales y mezcla**")
 
-            weights = candidate.get("weights")
-            info_col.markdown("**⚖️ Pesos en mezcla**")
-            info_col.write(weights if weights is not None else "—")
+            materials_raw = candidate.get("materials") or []
+            if isinstance(materials_raw, (list, tuple, set)):
+                material_labels = [str(item) for item in materials_raw]
+            elif materials_raw:
+                material_labels = [str(materials_raw)]
+            else:
+                material_labels = []
+
+            weights_raw = candidate.get("weights")
+            if isinstance(weights_raw, Mapping):
+                weights_list = [
+                    _safe_float(weights_raw.get(label)) for label in material_labels
+                ]
+            elif isinstance(weights_raw, (list, tuple, set)):
+                weights_list = [_safe_float(value) for value in weights_raw]
+            elif weights_raw is None:
+                weights_list = []
+            else:
+                try:
+                    weights_list = [_safe_float(weights_raw)]
+                except Exception:  # noqa: BLE001
+                    weights_list = []
+
+            row_count = max(len(material_labels), len(weights_list))
+            if row_count == 0:
+                info_col.write("—")
+            else:
+                if len(material_labels) < row_count:
+                    material_labels.extend(
+                        [f"Componente {idx+1}" for idx in range(len(material_labels), row_count)]
+                    )
+                if len(weights_list) < row_count:
+                    weights_list.extend([None] * (row_count - len(weights_list)))
+
+                numeric_weights: list[float | None] = []
+                for value in weights_list:
+                    number = _safe_float(value)
+                    numeric_weights.append(number)
+
+                valid_weights = [w for w in numeric_weights if w is not None and math.isfinite(w)]
+                total_weight = sum(valid_weights) if valid_weights else 0.0
+
+                features = candidate.get("features") or {}
+                total_mass = _safe_float(features.get("total_mass_kg"))
+
+                fractions: list[float | None] = []
+                masses: list[float | None] = []
+                for weight in numeric_weights:
+                    if weight is not None and math.isfinite(weight) and total_weight > 0:
+                        frac = weight / total_weight
+                    elif total_weight > 0:
+                        frac = None
+                    else:
+                        frac = None
+                    fractions.append(frac)
+
+                    if total_mass is not None and frac is not None:
+                        masses.append(total_mass * frac)
+                    elif total_mass is None and weight is not None and math.isfinite(weight):
+                        masses.append(weight)
+                    else:
+                        masses.append(None)
+
+                mix_df = pd.DataFrame(
+                    {
+                        "Material": material_labels,
+                        "Masa (kg)": masses,
+                        "Fracción (%)": [
+                            frac * 100 if frac is not None else float("nan") for frac in fractions
+                        ],
+                    }
+                )
+
+                def _highlight_critical(row: pd.Series) -> list[str]:
+                    material = str(row.get("Material", "")).casefold()
+                    critical_tokens = ("mgs-1", "mgs1", "regolith")
+                    if any(token in material for token in critical_tokens):
+                        return ["background-color: #fef3c7"] * len(row)
+                    return [""] * len(row)
+
+                styled_mix = mix_df.style.format(
+                    {
+                        "Masa (kg)": lambda v: "—" if pd.isna(v) else f"{float(v):.2f} kg",
+                        "Fracción (%)": lambda v: "—" if pd.isna(v) else f"{float(v):.1f}%",
+                    }
+                ).apply(_highlight_critical, axis=1)
+
+                try:
+                    styled_mix = styled_mix.hide(axis="index")
+                except AttributeError:
+                    styled_mix = styled_mix.hide_index()
+
+                info_col.dataframe(styled_mix, use_container_width=True)
 
             info_col.markdown("**🔬 Predicción**" if not pred_error else "**🔬 Estimación heurística**")
             metrics = [
