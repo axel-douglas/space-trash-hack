@@ -1473,9 +1473,36 @@ _LUXE_COMPONENT_CSS = """
   gap: 0.4rem;
 }
 
+.luxe-carousel-card--highlight {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
 .luxe-carousel-card h4 {
   margin: 0;
   font-size: 1.02rem;
+}
+
+.luxe-carousel-card__badge {
+  justify-self: start;
+  padding: 0.12rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: color-mix(in srgb, var(--border-soft) 70%, transparent);
+  color: color-mix(in srgb, var(--text-muted) 92%, transparent);
+}
+
+.luxe-carousel-card__badge--residences {
+  background: color-mix(in srgb, var(--accent) 38%, transparent);
+  color: color-mix(in srgb, var(--accent) 82%, white 18%);
+}
+
+.luxe-carousel-card__badge--daring {
+  background: color-mix(in srgb, var(--warning) 35%, transparent);
+  color: color-mix(in srgb, var(--warning) 78%, white 22%);
 }
 
 .luxe-carousel-card__value {
@@ -1492,6 +1519,10 @@ _LUXE_COMPONENT_CSS = """
 .luxe-carousel-card__icon {
   font-size: 1.4rem;
   opacity: 0.75;
+}
+
+.luxe-carousel-card--highlight .luxe-carousel-card__value {
+  color: color-mix(in srgb, var(--accent) 75%, var(--text-primary) 25%);
 }
 
 .luxe-action-deck {
@@ -4222,6 +4253,9 @@ class CarouselItem:
     value: str | None = None
     description: str | None = None
     icon: str | None = None
+    badge: str | None = None
+    badge_tone: str | None = None
+    highlight: bool = False
 
     def markup(self) -> str:
         icon_html = (
@@ -4239,8 +4273,22 @@ class CarouselItem:
             if self.description
             else ""
         )
+        badge_class = (
+            f" luxe-carousel-card__badge--{self.badge_tone}"
+            if self.badge and self.badge_tone
+            else ""
+        )
+        badge_html = (
+            f"<span class='luxe-carousel-card__badge{badge_class}'>{self.badge}</span>"
+            if self.badge
+            else ""
+        )
+        classes = ["luxe-carousel-card"]
+        if self.highlight:
+            classes.append("luxe-carousel-card--highlight")
         return (
-            "<div class='luxe-carousel-card'>"
+            f"<div class='{' '.join(classes)}'>"
+            f"{badge_html}"
             f"{icon_html}"
             f"<h4>{self.title}</h4>"
             f"{value_html}"
