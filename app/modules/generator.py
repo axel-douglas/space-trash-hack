@@ -225,6 +225,31 @@ _COMPOSITION_DENSITY_MAP = {
     "Plastic_Resin_pct": 950.0,
 }
 
+_MATERIAL_METRIC_COLUMNS: tuple[tuple[str, str, Any], ...] = (
+    ("pc_density_density_g_per_cm3", "official_density_kg_m3", lambda value: float(value) * 1000.0),
+    ("pc_density_density_kg_m3", "official_density_kg_m3", float),
+    ("pc_mechanics_tensile_strength_mpa", "official_tensile_strength_mpa", float),
+    ("pc_mechanics_stress_mpa", "official_tensile_strength_mpa", float),
+    ("pc_mechanics_yield_strength_mpa", "official_yield_strength_mpa", float),
+    ("pc_mechanics_modulus_gpa", "official_modulus_gpa", float),
+    ("pc_mechanics_strain_pct", "official_strain_pct", float),
+    ("pc_thermal_glass_transition_c", "official_glass_transition_c", float),
+    ("pc_thermal_onset_temperature_c", "official_decomposition_onset_c", float),
+    ("pc_ignition_ignition_temperature_c", "official_ignition_temperature_c", float),
+    ("pc_ignition_burn_time_min", "official_burn_time_min", float),
+    ("aluminium_tensile_strength_mpa", "official_tensile_strength_mpa", float),
+    ("aluminium_yield_strength_mpa", "official_yield_strength_mpa", float),
+    ("aluminium_elongation_pct", "official_elongation_pct", float),
+)
+
+_REFERENCE_METRIC_LOOKUPS: Dict[str, tuple[str, ...]] = {
+    "pc_density": ("pc_density_sample_label",),
+    "pc_mechanics": ("pc_mechanics_sample_label",),
+    "pc_thermal": ("pc_thermal_sample_label",),
+    "pc_ignition": ("pc_ignition_sample_label",),
+    "aluminium": ("aluminium_processing_route", "aluminium_class_id"),
+}
+
 _CATEGORY_DENSITY_DEFAULTS = {
     "foam packaging": 100.0,
     "food packaging": 650.0,
@@ -392,6 +417,7 @@ class _OfficialFeaturesBundle(NamedTuple):
     processing_metrics: Dict[str, Dict[str, float]]
     leo_mass_savings: Dict[str, Dict[str, float]]
     propellant_benefits: Dict[str, Dict[str, float]]
+    reference_metrics: Dict[str, Dict[str, float]]
     l2l_constants: Dict[str, float]
     l2l_category_features: Dict[str, Dict[str, float]]
     l2l_item_features: Dict[str, Dict[str, float]]
@@ -424,16 +450,16 @@ _OfficialFeaturesBundle.__new__ = staticmethod(_official_features_bundle_new)
 
 
 _OfficialFeaturesBundle.__new__.__defaults__ = (
-    np.empty((0, 0), dtype=np.float64),
-    tuple(),
     np.asarray([], dtype=np.float64),
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
-    None,
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    {},
+    np.zeros((0, 0), dtype=np.float64),
 )
 
 
@@ -642,6 +668,7 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
         processing_metrics=raw_bundle.processing_metrics,
         leo_mass_savings=raw_bundle.leo_mass_savings,
         propellant_benefits=raw_bundle.propellant_benefits,
+        reference_metrics=raw_bundle.reference_metrics,
         l2l_constants=constants,
         l2l_category_features=category_features,
         l2l_item_features=item_features,
@@ -731,6 +758,7 @@ def _official_features_bundle() -> _OfficialFeaturesBundle:
         processing_metrics=raw_bundle.processing_metrics,
         leo_mass_savings=raw_bundle.leo_mass_savings,
         propellant_benefits=raw_bundle.propellant_benefits,
+        reference_metrics=raw_bundle.reference_metrics,
         l2l_constants=constants,
         l2l_category_features=category_features,
         l2l_item_features=item_features,
@@ -773,12 +801,20 @@ def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], s
             index = bundle.direct_map.get(key)
             if index is not None and 0 <= index < bundle.value_matrix.shape[0]:
                 payload = _build_payload_from_row(bundle.value_matrix[index], bundle.value_columns)
+                metrics = _translate_official_material_metrics(payload, bundle, key)
+                if metrics:
+                    payload = dict(payload)
+                    payload.update(metrics)
                 return payload, key
 
     for family in families:
         category_index = bundle.direct_map.get(family)
         if category_index is not None and 0 <= category_index < bundle.value_matrix.shape[0]:
             payload = _build_payload_from_row(bundle.value_matrix[category_index], bundle.value_columns)
+            metrics = _translate_official_material_metrics(payload, bundle, family)
+            if metrics:
+                payload = dict(payload)
+                payload.update(metrics)
             return payload, family
 
     token_candidates = [value for value in candidates if value]
@@ -804,6 +840,10 @@ def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], s
                     continue
                 if tokens.issubset(reference) and 0 <= index < bundle.value_matrix.shape[0]:
                     payload = _build_payload_from_row(bundle.value_matrix[index], bundle.value_columns)
+                    metrics = _translate_official_material_metrics(payload, bundle, str(match_key))
+                    if metrics:
+                        payload = dict(payload)
+                        payload.update(metrics)
                     return payload, str(match_key)
 
     return {}, ""
@@ -2067,6 +2107,90 @@ def _apply_official_composition_overrides(
     )
     if hydrogen_total > 0:
         features["hydrogen_rich_frac"] = float(np.clip(hydrogen_total, 0.0, 1.0))
+
+
+def _metric_slug(prefix: str, *values: Any) -> str:
+    parts = [prefix]
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if not text:
+            continue
+        parts.append(slugify(text))
+    return "_".join(part for part in parts if part)
+
+
+def _coerce_metric_value(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float, np.floating)):
+        numeric = float(value)
+        if not np.isfinite(numeric):
+            return None
+        return numeric
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(numeric):
+        return None
+    return numeric
+
+
+def _translate_official_material_metrics(
+    payload: Mapping[str, Any],
+    bundle: _OfficialFeaturesBundle,
+    match_key: str,
+) -> Dict[str, float]:
+    translated: Dict[str, float] = {}
+
+    def _apply(column: str, raw_value: Any) -> None:
+        numeric = _coerce_metric_value(raw_value)
+        if numeric is None:
+            return
+        for source_column, target_name, transform in _MATERIAL_METRIC_COLUMNS:
+            if column != source_column:
+                continue
+            if target_name in translated:
+                return
+            try:
+                translated[target_name] = float(transform(numeric))
+            except (TypeError, ValueError):
+                continue
+            return
+
+    for column, value in payload.items():
+        _apply(column, value)
+
+    reference_metrics = getattr(bundle, "reference_metrics", {}) or {}
+    if reference_metrics:
+        slug_candidates = []
+        if match_key:
+            slug_candidates.append(str(match_key))
+        for prefix, columns in _REFERENCE_METRIC_LOOKUPS.items():
+            values = []
+            for column in columns:
+                candidate = payload.get(column)
+                if candidate is None or candidate == "":
+                    continue
+                if isinstance(candidate, float) and not np.isfinite(candidate):
+                    continue
+                values.append(candidate)
+            if not values:
+                continue
+            slug = _metric_slug(prefix, *values)
+            if slug:
+                slug_candidates.append(slug)
+
+        for slug in slug_candidates:
+            metrics = reference_metrics.get(slug)
+            if not metrics:
+                continue
+            for column, value in metrics.items():
+                _apply(column, value)
+
+    return translated
 
 
 def _apply_weighted_metrics(
