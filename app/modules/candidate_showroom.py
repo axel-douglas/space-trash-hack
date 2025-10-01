@@ -228,6 +228,7 @@ def _render_candidate_card(
         loading_label="Abriendo holograma…",
         success_label="Receta seleccionada",
         help_text="Previsualizá la receta y confirmá desde la ventana holográfica.",
+        mode="cinematic",
     ):
         st.session_state["showroom_modal"] = idx
         current = _normalize_success(st.session_state.get(_SUCCESS_KEY))
@@ -246,6 +247,7 @@ def _render_candidate_card(
                     width="full",
                     loading_label="Sincronizando…",
                     success_label="Receta confirmada",
+                    mode="cinematic",
                 ):
                     st.session_state["selected"] = {"data": cand, "safety": badge}
                     st.session_state[_SUCCESS_KEY] = {
@@ -263,6 +265,7 @@ def _render_candidate_card(
                     state="idle",
                     width="full",
                     sound=False,
+                    mode="cinematic",
                 ):
                     st.session_state.pop("showroom_modal", None)
 

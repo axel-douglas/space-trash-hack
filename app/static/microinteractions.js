@@ -96,7 +96,8 @@
       "rgba(129,140,248,0.8)",
     ];
 
-    if (!button) {
+    const fxMode = root.dataset ? root.dataset.fx : undefined;
+    if (!button || fxMode !== "cinematic") {
       return null;
     }
 

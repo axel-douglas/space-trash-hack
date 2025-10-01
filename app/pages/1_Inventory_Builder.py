@@ -5,7 +5,7 @@ import pandas as pd
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
 from app.modules.io import load_waste_df, save_waste_df
 from app.modules.navigation import set_active_step
-from app.modules.ui_blocks import load_theme
+from app.modules.ui_blocks import load_theme, minimal_button
 
 _SAVE_SUCCESS_FLAG = "_inventory_save_success"
 
@@ -24,7 +24,8 @@ set_active_step("inventory")
 
 load_theme()
 
-if st.session_state.pop(_SAVE_SUCCESS_FLAG, False):
+save_success = st.session_state.pop(_SAVE_SUCCESS_FLAG, False)
+if save_success:
     st.success("Inventario guardado.")
 
 st.title("1) Inventario de residuos")
@@ -366,7 +367,21 @@ with preview_col:
 
 colA, colB = st.columns(2)
 with colA:
-    if st.button("💾 Guardar inventario", type="primary"):
+    button_state = "success" if save_success else "idle"
+    if minimal_button(
+        "💾 Guardar inventario",
+        key="inventory_save",
+        state=button_state,
+        width="full",
+        help_text="Se exporta a data/waste_inventory_sample.csv",
+        success_label="Inventario guardado",
+        status_hints={
+            "idle": "",
+            "loading": "Guardando dataset",
+            "success": "Inventario actualizado",
+            "error": "",
+        },
+    ):
         out = st.session_state["inventory_data"][["id", "category", "material_family", "mass_kg", "volume_l", "flags"]].copy()
         save_waste_df(out)
         st.session_state[_SAVE_SUCCESS_FLAG] = True
