@@ -157,31 +157,8 @@ def _build_editable_df(source: pd.DataFrame) -> pd.DataFrame:
     editable["flags"] = editable["flags"].astype(str)
     editable["key_materials"] = editable["key_materials"].astype(str)
     editable["notes"] = editable["notes"].astype(str)
-    id_col = _pick_col(source, ["id"])
-    cat_col = _pick_col(source, ["category", "Category"])
-    mat_col = _pick_col(source, ["material_family", "material", "Material"])
-    mass_col = _pick_col(source, ["mass_kg", "kg", "Mass_kg"])
-    vol_col = _pick_col(source, ["volume_l", "Volume_L"])
-    flags_col = _pick_col(source, ["flags", "Flags"])
-
-    editable = pd.DataFrame(
-        {
-            "id": source[id_col] if id_col else source.index.astype(str),
-            "category": source[cat_col] if cat_col else "",
-            "material_family": source[mat_col] if mat_col else "",
-            "mass_kg": (
-                pd.to_numeric(source[mass_col], errors="coerce").fillna(0.0)
-                if mass_col
-                else 0.0
-            ),
-            "volume_l": (
-                pd.to_numeric(source[vol_col], errors="coerce").fillna(0.0)
-                if vol_col
-                else 0.0
-            ),
-            "flags": (source[flags_col].astype(str) if flags_col else ""),
-        }
-    )
+    if editable["id"].eq("").all():
+        editable["id"] = source.index.astype(str)
     editable["_problematic"] = problematic_mask(editable)
     return editable
 
