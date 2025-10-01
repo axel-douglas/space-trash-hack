@@ -88,11 +88,17 @@ def _with_extra_columns(df: pd.DataFrame, rename_map: dict[str, str] | None = No
 # (Se cargan desde app/static/theme.css vía el tema global)
 
 # ========= estado compartido =========
-target      = st.session_state.get("target", None)
-state_sel   = st.session_state.get("selected", None)
-candidato   = state_sel["data"] if state_sel else None
-props       = candidato["props"] if candidato else None
+target       = st.session_state.get("target", None)
+state_sel    = st.session_state.get("selected", None)
+candidato    = state_sel["data"] if state_sel else None
+props        = candidato["props"] if candidato else None
 regolith_pct = (candidato.get("regolith_pct", 0.0) if candidato else 0.0)
+scenario_label = ""
+if target:
+    scenario_label = str(target.get("scenario") or "").strip()
+scenario_key = scenario_label.casefold()
+thermo_summary = _regolith_thermal_summary() if regolith_pct > 0 else None
+regolith_observations = _regolith_observation_lines(regolith_pct, thermo_summary)
 
 
 @st.cache_data(show_spinner=False)
@@ -101,6 +107,127 @@ def _regolith_thermal_summary():
     peaks = bundle.gas_peaks.to_dict("records") if isinstance(bundle.gas_peaks, pd.DataFrame) else []
     events = bundle.mass_events.to_dict("records") if isinstance(bundle.mass_events, pd.DataFrame) else []
     return {"peaks": peaks, "events": events}
+
+
+def _regolith_observation_lines(regolith_pct: float, thermo: dict[str, Any] | None) -> list[str]:
+    if regolith_pct <= 0 or not thermo:
+        return []
+
+    lines: list[str] = []
+    lines.append(
+        f"{regolith_pct * 100:.0f}% de MGS-1: monitorear densificación, ventilación y sellos al liberar volátiles."
+    )
+
+    peaks = thermo.get("peaks", []) if isinstance(thermo, dict) else []
+    for peak in peaks[:2]:
+        temperature = peak.get("temperature_c")
+        species = peak.get("species_label") or peak.get("species") or "Volátiles"
+        signal = peak.get("signal_ppb")
+        temp_txt = f"{temperature:.0f} °C" if isinstance(temperature, (int, float)) else "pico térmico"
+        signal_txt = f" (~{signal:.2f} ppb eq.)" if isinstance(signal, (int, float)) else ""
+        lines.append(f"TG/EGA: {species} con liberación cerca de {temp_txt}{signal_txt}.")
+
+    events = thermo.get("events", []) if isinstance(thermo, dict) else []
+    for event in events[:2]:
+        label = (event.get("event") or "").replace("_", " ").strip().capitalize()
+        mass_pct = event.get("mass_pct")
+        temperature = event.get("temperature_c")
+        mass_txt = f"{mass_pct:.1f}%" if isinstance(mass_pct, (int, float)) else "variación"
+        temp_txt = f"{temperature:.0f} °C" if isinstance(temperature, (int, float)) else "el perfil térmico"
+        lines.append(f"TG: {label or 'Evento'} → {mass_txt} alrededor de {temp_txt}.")
+
+    return lines
+
+
+def _scenario_side_hints(scenario_key: str) -> list[str]:
+    base_map: dict[str, list[str]] = {
+        "residence renovations": [
+            "Priorizar paneles compactados que recuperen volumen habitable.",
+            "Registrar rigidez en marcos reforzados y sellado de bordes laminados.",
+            "Comparar tiempo de prensado vs. minutos de crew para futuras corridas.",
+        ],
+        "daring discoveries": [
+            "Validar unión del carbono recuperado con la matriz polimérica.",
+            "Inspeccionar fijación de mallas/filtros tras compactación o sinterizado.",
+            "Documentar cualquier cambio en conductividad o manejo de polvo fino.",
+        ],
+    }
+    return base_map.get(scenario_key, [])
+
+
+_FEEDBACK_FIELD_KEYS = {
+    "overall": "feedback_overall",
+    "rigidity": "feedback_rigidity",
+    "porosity": "feedback_porosity",
+    "surface": "feedback_surface",
+    "bonding": "feedback_bonding",
+    "ease": "feedback_ease",
+    "failure": "feedback_failure",
+    "issues": "feedback_issues",
+    "notes": "feedback_notes",
+}
+
+
+_PRESET_BASES: dict[str, dict[str, Any]] = {
+    "Residence checklist": {
+        "fields": {
+            "overall": 8,
+            "rigidity": 8,
+            "porosity": 4,
+            "surface": 7,
+            "bonding": 8,
+            "ease": 7,
+            "failure": "Delaminación",
+        },
+        "issues": [
+            "Verificar microcanales en paneles laminados post-prensado.",
+            "Confirmar rigidez de bordes reforzados con regolito y CTB.",
+        ],
+        "notes": [
+            "Checklist: documentar tiempo/temperatura de prensado y uso de refuerzos CTB.",
+            "Ventilar el horno al escalar temperatura para evitar degradación de espumas.",
+        ],
+    },
+    "Daring checklist": {
+        "fields": {
+            "overall": 7,
+            "rigidity": 7,
+            "porosity": 5,
+            "surface": 6,
+            "bonding": 8,
+            "ease": 6,
+            "failure": "Agarre insuficiente",
+        },
+        "issues": [
+            "Revisar zonas con falta de unión por exceso de carbono en la mezcla.",
+            "Inspeccionar fijación de mallas/filtros conductivos tras compactación.",
+        ],
+        "notes": [
+            "Checklist: registrar % de carbono añadido y presión/tiempo de compactación.",
+            "Medir continuidad eléctrica o sellos anti-polvo según aplique.",
+        ],
+    },
+}
+
+
+def _build_feedback_preset(name: str, *, regolith_lines: list[str]) -> dict[str, Any]:
+    preset = _PRESET_BASES.get(name)
+    if not preset:
+        return {}
+
+    payload: dict[str, Any] = dict(preset.get("fields", {}))
+    issues_lines = list(preset.get("issues", []))
+    notes_lines = list(preset.get("notes", []))
+
+    if regolith_lines:
+        rego_issue = [f"Revisá: {line}" for line in regolith_lines[:2]]
+        rego_notes = [f"TG/EGA: {line}" for line in regolith_lines]
+        issues_lines.extend(rego_issue)
+        notes_lines.extend(rego_notes)
+
+    payload["issues"] = "\n".join(f"- {line}" for line in issues_lines)
+    payload["notes"] = "\n".join(f"- {line}" for line in notes_lines)
+    return payload
 
 # ========= HERO =========
 st.markdown("""
@@ -128,30 +255,31 @@ with colA:
         st.info("Seleccioná un candidato en **3) Generador** / **6) Pareto** para habilitar registro con datos reales.")
     else:
         st.markdown("**Contexto**")
-        st.write(f"- Escenario: **{target.get('scenario','-')}**")
+        st.write(f"- Escenario: **{scenario_label or '-'}**")
         st.write(f"- Target: **{target.get('name','-')}**")
         st.write(f"- Proceso: **{candidato['process_id']} {candidato['process_name']}**")
         st.write(f"- Materiales: **{', '.join(candidato['materials'])}**")
         if regolith_pct > 0:
             st.write(f"- MGS-1 (regolito): **{regolith_pct*100:.0f}%** de la mezcla")
-            thermo = _regolith_thermal_summary()
+            thermo = thermo_summary or {}
             peak_lines: list[str] = []
             for peak in thermo.get("peaks", []):
-                peak_lines.append(
-                    f"    - {peak['species_label'] if 'species_label' in peak else peak['species']}: "
-                    f"pico a {peak['temperature_c']:.0f} °C (~{peak['signal_ppb']:.2f} ppb eq.)"
-                )
+                species = peak.get("species_label") or peak.get("species") or "Pico"
+                temperature = peak.get("temperature_c")
+                signal = peak.get("signal_ppb")
+                temp_txt = f"{temperature:.0f} °C" if isinstance(temperature, (int, float)) else "temperatura clave"
+                signal_txt = f" (~{signal:.2f} ppb eq.)" if isinstance(signal, (int, float)) else ""
+                peak_lines.append(f"    - {species}: pico a {temp_txt}{signal_txt}")
             event_lines: list[str] = []
             for event in thermo.get("events", []):
                 label = event.get("event", "")
-                if label.startswith("mass_"):
-                    event_lines.append(
-                        f"    - Masa ≤ {event['mass_pct']:.1f}% cerca de {event['temperature_c']:.0f} °C"
-                    )
+                temperature = event.get("temperature_c")
+                temp_txt = f"{temperature:.0f} °C" if isinstance(temperature, (int, float)) else "el perfil térmico"
+                mass_pct = event.get("mass_pct")
+                if isinstance(mass_pct, (int, float)) and label.startswith("mass_"):
+                    event_lines.append(f"    - Masa ≤ {mass_pct:.1f}% cerca de {temp_txt}")
                 elif label == "max_mass_loss_rate":
-                    event_lines.append(
-                        f"    - Mayor tasa de desgasificación cerca de {event['temperature_c']:.0f} °C"
-                    )
+                    event_lines.append(f"    - Mayor tasa de desgasificación cerca de {temp_txt}")
             if peak_lines or event_lines:
                 st.markdown("**Guía térmica NASA (TG/EGA):**")
                 if peak_lines:
@@ -203,47 +331,181 @@ st.markdown("---")
 # ========= Panel B: Feedback TÉCNICO de MATERIALES =========
 st.markdown("### B) Feedback técnico (materiales) — nivel laboratorio")
 
-with st.form("feedback_form"):
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        astronaut = st.text_input("Operador / Astronauta", "")
-        option_idx = st.number_input("Opción elegida #", min_value=1, step=1, value=1)
-        overall = st.slider("Satisfacción global", 0, 10, 8, help="0=Malísimo, 10=Excelente")
-    with col2:
-        rigid_ok = st.slider("Rigidez percibida", 0, 10, 8)
-        porosity = st.slider("Porosidad / compactación", 0, 10, 3, help="0=baja porosidad (mejor), 10=muy poroso")
-        surface  = st.slider("Calidad de superficie", 0, 10, 7)
-    with col3:
-        bonding  = st.slider("Unión entre capas / partículas", 0, 10, 7)
-        failure  = st.selectbox("Modo de falla observado", ["-", "Fragil", "Dúctil", "Delaminación", "Agarre insuficiente", "Fatiga"])
-        ease_ok  = st.slider("Facilidad de proceso (ejecución)", 0, 10, 8)
+col_feedback, col_reco = st.columns([1.45, 0.85])
 
-    issues = st.text_area("Problemas específicos (bordes, olor, slip, etc.)", "")
-    notes  = st.text_area("Notas libres / setup / parámetros", "")
+with col_feedback:
+    default_state = {
+        "feedback_astronaut": "",
+        "feedback_option_idx": 1,
+        "feedback_overall": 8,
+        "feedback_rigidity": 8,
+        "feedback_porosity": 3,
+        "feedback_surface": 7,
+        "feedback_bonding": 7,
+        "feedback_ease": 8,
+        "feedback_failure": "-",
+        "feedback_issues": "",
+        "feedback_notes": "",
+        "feedback_preset_last_applied": None,
+        "feedback_last_scenario": None,
+    }
+    for key, default in default_state.items():
+        st.session_state.setdefault(key, default)
 
-    submitted = st.form_submit_button("Enviar feedback")
-    if submitted:
-        entry = FeedbackEntry(
-            ts_iso=datetime.utcnow().isoformat(),
-            astronaut=astronaut or "anon",
-            scenario=target.get("scenario","-") if target else "-",
-            target_name=target.get("name","-") if target else "-",
-            option_idx=int(option_idx),
-            rigidity_ok=bool(rigid_ok >= 6),
-            ease_ok=bool(ease_ok >= 6),
-            issues=issues,
-            notes=notes,
-            # campos extendidos en `.extra` (si tu dataclass no los tiene, se guardan como texto)
-            extra={
-                "overall": overall,
-                "porosity": porosity,
-                "surface": surface,
-                "bonding": bonding,
-                "failure": failure,
-            }
+    preset_options = ["Manual", "Residence checklist", "Daring checklist"]
+    preset_key = "feedback_preset_select"
+    if preset_key not in st.session_state:
+        st.session_state[preset_key] = "Manual"
+
+    desired_preset = "Manual"
+    if scenario_key == "residence renovations":
+        desired_preset = "Residence checklist"
+    elif scenario_key == "daring discoveries":
+        desired_preset = "Daring checklist"
+
+    if st.session_state.get("feedback_last_scenario") != scenario_key:
+        st.session_state["feedback_last_scenario"] = scenario_key
+        st.session_state[preset_key] = desired_preset
+        st.session_state["feedback_preset_last_applied"] = None
+
+    selected_preset = st.selectbox(
+        "📋 Checklist sugerida",
+        preset_options,
+        key=preset_key,
+        help="Precarga sliders y notas con recomendaciones según el escenario detectado.",
+    )
+
+    last_applied = st.session_state.get("feedback_preset_last_applied")
+    if selected_preset != "Manual" and selected_preset != last_applied:
+        preset_payload = _build_feedback_preset(selected_preset, regolith_lines=regolith_observations)
+        if preset_payload:
+            for field, value in preset_payload.items():
+                state_key = _FEEDBACK_FIELD_KEYS.get(field)
+                if state_key is not None:
+                    st.session_state[state_key] = value
+        st.session_state["feedback_preset_last_applied"] = selected_preset
+    elif selected_preset == "Manual" and last_applied not in (None, "Manual"):
+        st.session_state["feedback_preset_last_applied"] = "Manual"
+
+    failure_options = ["-", "Fragil", "Dúctil", "Delaminación", "Agarre insuficiente", "Fatiga"]
+    if st.session_state.get("feedback_failure") not in failure_options:
+        st.session_state["feedback_failure"] = failure_options[0]
+
+    with st.form("feedback_form"):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            astronaut = st.text_input("Operador / Astronauta", key="feedback_astronaut")
+            option_idx = st.number_input(
+                "Opción elegida #",
+                min_value=1,
+                step=1,
+                value=int(st.session_state.get("feedback_option_idx", 1)),
+                key="feedback_option_idx",
+            )
+            overall = st.slider(
+                "Satisfacción global",
+                0,
+                10,
+                st.session_state.get("feedback_overall", 8),
+                help="0=Malísimo, 10=Excelente",
+                key="feedback_overall",
+            )
+        with col2:
+            rigidity_score = st.slider(
+                "Rigidez percibida",
+                0,
+                10,
+                st.session_state.get("feedback_rigidity", 8),
+                key="feedback_rigidity",
+            )
+            porosity = st.slider(
+                "Porosidad / compactación",
+                0,
+                10,
+                st.session_state.get("feedback_porosity", 3),
+                help="0=baja porosidad (mejor), 10=muy poroso",
+                key="feedback_porosity",
+            )
+            surface = st.slider(
+                "Calidad de superficie",
+                0,
+                10,
+                st.session_state.get("feedback_surface", 7),
+                key="feedback_surface",
+            )
+        with col3:
+            bonding = st.slider(
+                "Unión entre capas / partículas",
+                0,
+                10,
+                st.session_state.get("feedback_bonding", 7),
+                key="feedback_bonding",
+            )
+            failure = st.selectbox(
+                "Modo de falla observado",
+                failure_options,
+                key="feedback_failure",
+            )
+            ease_score = st.slider(
+                "Facilidad de proceso (ejecución)",
+                0,
+                10,
+                st.session_state.get("feedback_ease", 8),
+                key="feedback_ease",
+            )
+
+        issues = st.text_area(
+            "Problemas específicos (bordes, olor, slip, etc.)",
+            key="feedback_issues",
         )
-        append_feedback(entry)
-        st.success("Feedback guardado. Rex-AI utilizará estas señales para ajustar pesos/penalizaciones y recomendaciones.")
+        notes = st.text_area(
+            "Notas libres / setup / parámetros",
+            key="feedback_notes",
+        )
+
+        submitted = st.form_submit_button("Enviar feedback")
+        if submitted:
+            entry = FeedbackEntry(
+                ts_iso=datetime.utcnow().isoformat(),
+                astronaut=astronaut or "anon",
+                scenario=target.get("scenario","-") if target else "-",
+                target_name=target.get("name","-") if target else "-",
+                option_idx=int(option_idx),
+                rigidity_ok=bool(rigidity_score >= 6),
+                ease_ok=bool(ease_score >= 6),
+                issues=issues,
+                notes=notes,
+                # campos extendidos en `.extra` (si tu dataclass no los tiene, se guardan como texto)
+                extra={
+                    "overall": overall,
+                    "porosity": porosity,
+                    "surface": surface,
+                    "bonding": bonding,
+                    "failure": failure,
+                }
+            )
+            append_feedback(entry)
+            st.success("Feedback guardado. Rex-AI utilizará estas señales para ajustar pesos/penalizaciones y recomendaciones.")
+
+with col_reco:
+    st.markdown("#### Observaciones sugeridas")
+    if scenario_label:
+        st.caption(f"Escenario detectado: {scenario_label}")
+    if regolith_pct > 0:
+        st.caption(f"Mezcla con MGS-1: {regolith_pct * 100:.0f}%")
+
+    scenario_hints = _scenario_side_hints(scenario_key)
+    combined: list[str] = []
+    seen: set[str] = set()
+    for hint in scenario_hints + regolith_observations:
+        if hint and hint not in seen:
+            combined.append(hint)
+            seen.add(hint)
+
+    if combined:
+        st.markdown("\n".join(f"- {hint}" for hint in combined))
+    else:
+        st.info("Seleccioná un target con escenario para ver recomendaciones automáticas.")
 
 st.markdown("---")
 

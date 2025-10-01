@@ -88,6 +88,8 @@ def test_feedback_logging_concatenates_daily(tmp_path, monkeypatch):
     assert len(files) == 2
     df0 = pd.read_parquet(files[0])
     assert "run_id" in df0.columns
+    assert "scenario" in df0.columns
+    assert df0.loc[0, "scenario"] == "moon"
     assert "extra_overall" in df0.columns
 
     loaded = impact.load_feedback_df()
