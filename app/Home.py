@@ -54,6 +54,48 @@ def format_mass(value: float | int | None) -> str:
     return f"{value:.0f} kg"
 
 
+_SCENARIO_CONFIG: dict[str, dict[str, object]] = {
+    "residences": {
+        "label": "Residences",
+        "badge_tone": "residences",
+        "priority": 0,
+    },
+    "daring": {
+        "label": "Daring",
+        "badge_tone": "daring",
+        "priority": 1,
+    },
+}
+
+_CATEGORY_SCENARIO_MAP = {
+    "foam": "residences",
+    "foam packaging": "residences",
+    "packaging": "residences",
+    "food packaging": "residences",
+    "structural elements": "residences",
+    "eva waste": "daring",
+    "fabrics": "daring",
+    "gloves": "daring",
+}
+
+_SCENARIO_KEYWORDS = {
+    "residences": ("foam", "pack", "alumin", "struct"),
+    "daring": ("carbon", "mesh", "eva", "fabric", "glove"),
+}
+
+
+def map_category_to_scenario(category: str) -> str:
+    normalized = (category or "").strip().lower()
+    if not normalized:
+        return "residences"
+    if normalized in _CATEGORY_SCENARIO_MAP:
+        return _CATEGORY_SCENARIO_MAP[normalized]
+    for scenario, keywords in _SCENARIO_KEYWORDS.items():
+        if any(keyword in normalized for keyword in keywords):
+            return scenario
+    return "residences"
+
+
 def _tone_rank(tone: str | None) -> int:
     order = {"positive": 0, "info": 1, "warning": 2, "danger": 3}
     return order.get(tone or "", -1)
@@ -689,22 +731,51 @@ st.markdown(
 
 inventory_df = inventory_reference_df
 
-category_items = []
+category_items: list[CarouselItem] = []
 if inventory_df is not None and not inventory_df.empty:
+    total_mass = float(inventory_df["mass_kg"].sum() or 0)
     category_summary = (
         inventory_df.groupby("category")[["mass_kg", "volume_l"]]
         .sum()
         .sort_values("mass_kg", ascending=False)
         .head(6)
     )
+    category_cards: list[dict[str, object]] = []
     for category, row in category_summary.iterrows():
-        category_items.append(
-            CarouselItem(
-                title=category,
-                value=format_mass(row["mass_kg"]),
-                description=f"Volumen: {row['volume_l']:.0f} L",
-            )
+        scenario_key = map_category_to_scenario(category)
+        scenario_config = _SCENARIO_CONFIG.get(
+            scenario_key, _SCENARIO_CONFIG["residences"]
         )
+        mass_value = float(row["mass_kg"])
+        volume_value = float(row["volume_l"])
+        share = (mass_value / total_mass) if total_mass else 0.0
+        share_pct = share * 100
+        description_parts = [f"Volumen: {volume_value:.0f} L"]
+        if share_pct >= 1:
+            description_parts.append(f"{share_pct:.0f}% de la masa total")
+        elif share_pct > 0:
+            description_parts.append(f"{share_pct:.1f}% de la masa total")
+        category_cards.append(
+            {
+                "priority": int(scenario_config["priority"]),
+                "mass": mass_value,
+                "item": CarouselItem(
+                    title=category,
+                    value=format_mass(mass_value),
+                    description=" • ".join(description_parts),
+                    badge=str(scenario_config["label"]),
+                    badge_tone=str(scenario_config["badge_tone"]),
+                    highlight=share >= 0.2,
+                ),
+            }
+        )
+    category_items = [
+        entry["item"]
+        for entry in sorted(
+            category_cards,
+            key=lambda entry: (entry["priority"], -entry["mass"]),
+        )
+    ]
 
 if category_items:
     CarouselRail(
