@@ -2,22 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Iterable, Sequence
+from typing import Any, Sequence
 
 import streamlit as st
 
-from app.modules.luxe_components import (
-    TimelineHologram,
-    TimelineHologramItem,
-    TimelineHologramMetric,
-)
 from app.modules.safety import check_safety, safety_badge
 from app.modules.ui_blocks import futuristic_button
 
 
 _CSS_KEY = "__candidate_showroom_css__"
 _SUCCESS_KEY = "__candidate_showroom_success__"
+_MODAL_KEY = "showroom_modal"
 
 
 def _normalize_success(payload: object) -> dict[str, Any]:
@@ -25,26 +20,21 @@ def _normalize_success(payload: object) -> dict[str, Any]:
 
     if isinstance(payload, dict):
         message = str(payload.get("message") or "")
-        candidate_idx = payload.get("candidate_idx")
-        try:
-            candidate_idx = int(candidate_idx) if candidate_idx is not None else None
-        except (TypeError, ValueError):
-            candidate_idx = None
-        return {"message": message, "candidate_idx": candidate_idx}
+        candidate_key = payload.get("candidate_key")
+        if candidate_key in (None, ""):
+            candidate_idx = payload.get("candidate_idx")
+            try:
+                candidate_key = str(int(candidate_idx))
+            except (TypeError, ValueError):
+                candidate_key = None
+        else:
+            candidate_key = str(candidate_key)
+        return {"message": message, "candidate_key": candidate_key}
 
     if isinstance(payload, str) and payload.strip():
-        return {"message": payload, "candidate_idx": None}
+        return {"message": payload, "candidate_key": None}
 
-    return {"message": "", "candidate_idx": None}
-
-
-@dataclass
-class _PropSnapshot:
-    label: str
-    value: float
-    target: float | None
-    heuristic: float | None
-    ci: Sequence[float] | None
+    return {"message": "", "candidate_key": None}
 
 
 def render_candidate_showroom(
@@ -60,21 +50,6 @@ def render_candidate_showroom(
     _inject_css()
 
     success_data = _normalize_success(st.session_state.get(_SUCCESS_KEY))
-    if success_data["message"]:
-        st.success(success_data["message"])
-
-    priority = st.slider(
-        "Prioridad: Rigidez ↔ Agua",
-        min_value=0.0,
-        max_value=1.0,
-        value=0.5,
-        step=0.05,
-        help=(
-            "Arrastrá para ponderar rigidez (1.0) frente al consumo de agua (0.0). "
-            "Afecta el orden sugerido en la timeline lateral."
-        ),
-        key="showroom_priority_slider",
-    )
 
     score_values = [float(_safe_number(c.get("score"))) for c in candidates]
     score_min, score_max = min(score_values), max(score_values)
@@ -91,379 +66,246 @@ def render_candidate_showroom(
         key="showroom_score_threshold",
     )
 
-    filtered = [
-        cand for cand in candidates if float(_safe_number(cand.get("score"))) >= score_threshold
-    ]
-    if not filtered:
-        filtered = list(candidates)
-
-    timeline_sorted = _sort_for_timeline(filtered, priority, target)
-
-    col_timeline, col_cards = st.columns([0.32, 0.68], gap="large")
-
-    with col_timeline:
-        st.markdown("#### 🛰️ Timeline comparativa")
-        timeline_hologram = _build_timeline_hologram(
-            timeline_sorted,
-            target,
-            priority=priority,
-        )
-        timeline_hologram.render()
-
-    with col_cards:
-        for idx, cand in enumerate(filtered):
-            _render_candidate_card(cand, idx, target, success_data)
-
-    return filtered
-
-
-def _render_candidate_card(
-    cand: dict,
-    idx: int,
-    target: dict,
-    success_data: dict[str, Any],
-) -> None:
-    props = cand.get("props")
-    heur = cand.get("heuristic_props", props)
-    ci = cand.get("confidence_interval") or {}
-    uncertainty = cand.get("uncertainty") or {}
-    aux = cand.get("auxiliary") or {}
-
-    rigidity = _safe_number(getattr(props, "rigidity", None))
-    tightness = _safe_number(getattr(props, "tightness", None))
-    energy = _safe_number(getattr(props, "energy_kwh", None))
-    water = _safe_number(getattr(props, "water_l", None))
-    crew = _safe_number(getattr(props, "crew_min", None))
-
-    heur_rig = getattr(heur, "rigidity", None)
-    heur_rig = _safe_number(heur_rig) if heur_rig is not None else None
-    heur_tight = getattr(heur, "tightness", None)
-    heur_tight = _safe_number(heur_tight) if heur_tight is not None else None
-
-    score = _safe_number(cand.get("score"), default=0.0)
-    process_label = f"{cand.get('process_id', '—')} · {cand.get('process_name', '—')}"
-
-    badges = _collect_badges(cand, aux)
-
-    st.markdown("<div class='showroom-card'>", unsafe_allow_html=True)
-    st.markdown(
-        _card_header_html(idx, score, process_label, badges, aux),
-        unsafe_allow_html=True,
+    only_safe = st.checkbox(
+        "Sólo candidatos seguros",
+        value=False,
+        key="showroom_only_safe",
+        help="Oculta recetas con bandera de riesgo en seguridad.",
     )
 
-    tab_props, tab_resources, tab_trace = st.tabs([
-        "Propiedades",
-        "Recursos",
-        "Trazabilidad",
-    ])
+    threshold_active = score_threshold > score_min + 1e-6
 
-    with tab_props:
-        snapshots: list[_PropSnapshot] = [
-            _PropSnapshot(
-                label="Rigidez",
-                value=rigidity,
-                target=_safe_number(target.get("rigidity")),
-                heuristic=heur_rig,
-                ci=ci.get("rigidez"),
-            ),
-            _PropSnapshot(
-                label="Estanqueidad",
-                value=tightness,
-                target=_safe_number(target.get("tightness")),
-                heuristic=heur_tight,
-                ci=ci.get("estanqueidad"),
-            ),
-        ]
-        st.markdown(_radial_group_html(snapshots), unsafe_allow_html=True)
+    rows = _prepare_rows(
+        candidates,
+        score_threshold=score_threshold,
+        only_safe=only_safe,
+        threshold_active=threshold_active,
+    )
 
-        if uncertainty:
-            unc_html = "<div class='uncertainty-grid'>" + "".join(
-                f"<span><strong>{k}</strong> ±{_safe_number(v, default=0.0):.3f}</span>"
-                for k, v in uncertainty.items()
-            ) + "</div>"
-            st.markdown(unc_html, unsafe_allow_html=True)
+    if not rows:
+        st.warning("No hay candidatos que cumplan con los filtros seleccionados.")
+        return []
 
-    with tab_resources:
-        max_energy = _safe_number(target.get("max_energy_kwh")) or None
-        max_water = _safe_number(target.get("max_water_l")) or None
-        max_crew = _safe_number(target.get("max_crew_min")) or None
+    _render_candidate_table(
+        rows,
+        success_data,
+        score_threshold,
+        only_safe,
+        threshold_active,
+    )
 
-        st.markdown(
-            _neo_bar_group_html(
-                [
-                    ("Energía (kWh)", energy, max_energy),
-                    ("Agua (L)", water, max_water),
-                    ("Crew (min)", crew, max_crew),
-                ]
-            ),
+    return [row["candidate"] for row in rows]
+
+
+def _prepare_rows(
+    candidates: Sequence[dict],
+    *,
+    score_threshold: float,
+    only_safe: bool,
+    threshold_active: bool,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+
+    for idx, cand in enumerate(candidates):
+        props = cand.get("props")
+        aux = cand.get("auxiliary") or {}
+        materials = cand.get("materials", [])
+
+        rigidity = _safe_number(getattr(props, "rigidity", None))
+        water = _safe_number(getattr(props, "water_l", None))
+        score = _safe_number(cand.get("score"), default=0.0)
+
+        safety_flags = check_safety(materials, cand.get("process_name", ""), cand.get("process_id", ""))
+        badge = safety_badge(safety_flags)
+        level_text = str(badge.get("level", "")).strip().lower()
+        is_safe = level_text in {"ok", "seguro", "safe"}
+
+        if score < score_threshold or (only_safe and not is_safe):
+            continue
+
+        badge_sources: list[str] = []
+        badge_sources.extend(str(b) for b in cand.get("timeline_badges", []))
+        badge_sources.extend(_collect_badges(cand, aux))
+        if only_safe and is_safe:
+            badge_sources.append("🛡️ Filtro: seguros")
+        if threshold_active:
+            badge_sources.append(f"🎯 Score ≥ {score_threshold:.2f}")
+
+        seen: set[str] = set()
+        unique_badges: list[str] = []
+        for badge_text in badge_sources:
+            if badge_text and badge_text not in seen:
+                unique_badges.append(badge_text)
+                seen.add(badge_text)
+
+        rows.append(
+            {
+                "candidate": cand,
+                "score": score,
+                "rigidity": rigidity,
+                "water": water,
+                "safety": badge,
+                "is_safe": is_safe,
+                "badges": unique_badges,
+                "key": str(idx),
+                "process_id": str(cand.get("process_id") or "—"),
+                "process_name": str(cand.get("process_name") or "Proceso"),
+            }
+        )
+
+    rows.sort(key=lambda item: item["score"], reverse=True)
+    return rows
+
+
+def _render_candidate_table(
+    rows: Sequence[dict[str, Any]],
+    success_data: dict[str, Any],
+    score_threshold: float,
+    only_safe: bool,
+    threshold_active: bool,
+) -> None:
+    st.markdown("#### Ranking de candidatos por score")
+
+    active_filters: list[str] = []
+    if only_safe:
+        active_filters.append("Sólo seguros")
+    if threshold_active and rows:
+        active_filters.append(f"Score ≥ {score_threshold:.2f}")
+
+    if active_filters:
+        st.caption("Filtros activos: " + ", ".join(active_filters))
+
+    st.markdown("<div class='candidate-table'>", unsafe_allow_html=True)
+    header_cols = st.columns([0.26, 0.12, 0.12, 0.14, 0.18, 0.18], gap="small")
+    header_cols[0].markdown("**Proceso**")
+    header_cols[1].markdown("**Score**")
+    header_cols[2].markdown("**Rigidez**")
+    header_cols[3].markdown("**Agua (L)**")
+    header_cols[4].markdown("**Seguridad**")
+    header_cols[5].markdown("**Acción**")
+    st.markdown("<hr class='candidate-table__divider' />", unsafe_allow_html=True)
+
+    for rank, row in enumerate(rows, start=1):
+        _render_candidate_row(rank, row, success_data)
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def _render_candidate_row(
+    rank: int,
+    row: dict[str, Any],
+    success_data: dict[str, Any],
+) -> None:
+    process_col, score_col, rigidity_col, water_col, safety_col, action_col = st.columns(
+        [0.26, 0.12, 0.12, 0.14, 0.18, 0.18],
+        gap="small",
+    )
+
+    process_name = row["process_name"]
+    process_id = row["process_id"]
+    badges_html = "".join(
+        f"<span class='showroom-badge'>{badge}</span>" for badge in row.get("badges", [])
+    )
+    process_col.markdown(
+        f"<div class='candidate-proc'><strong>#{rank:02d} · {process_name}</strong><span>ID {process_id}</span></div>",
+        unsafe_allow_html=True,
+    )
+    if badges_html:
+        process_col.markdown(
+            f"<div class='showroom-badges'>{badges_html}</div>",
             unsafe_allow_html=True,
         )
 
-    with tab_trace:
-        st.markdown(_traceability_html(cand), unsafe_allow_html=True)
-
-    # Seguridad y selección
-    materials = cand.get("materials", [])
-    safety_flags = check_safety(materials, cand.get("process_name", ""), cand.get("process_id", ""))
-    badge = safety_badge(safety_flags)
-    st.markdown(
-        f"<div class='safety-line'>🔒 Seguridad: <span>{badge['level']} · {badge['detail']}</span></div>",
+    score_col.markdown(f"<div class='metric-cell'>{row['score']:.3f}</div>", unsafe_allow_html=True)
+    rigidity_col.markdown(
+        f"<div class='metric-cell'>{row['rigidity']:.2f}</div>",
+        unsafe_allow_html=True,
+    )
+    water_col.markdown(
+        f"<div class='metric-cell'>{row['water']:.2f}</div>",
         unsafe_allow_html=True,
     )
 
-    btn_key = f"showroom_select_{idx}"
-    modal_idx = st.session_state.get("showroom_modal")
-    success_idx = success_data.get("candidate_idx")
-    if modal_idx == idx and success_idx != idx:
+    badge = row["safety"]
+    level = str(badge.get("level", "—"))
+    detail = str(badge.get("detail", ""))
+    level_class = "ok" if row["is_safe"] else "risk"
+
+    safety_col.markdown(
+        "<div class='safety-pill safety-pill--"
+        f"{level_class}'><strong>{level}</strong><span>{detail}</span></div>",
+        unsafe_allow_html=True,
+    )
+
+    candidate_key = row["key"]
+    modal_key = st.session_state.get(_MODAL_KEY)
+    success_key = success_data.get("candidate_key")
+
+    if modal_key == candidate_key and success_key != candidate_key:
         btn_state = "loading"
-    elif success_idx == idx:
+    elif success_key == candidate_key:
         btn_state = "success"
     else:
         btn_state = "idle"
 
-    if futuristic_button(
-        "Seleccionar esta receta",
-        key=btn_key,
-        state=btn_state,
-        loading_label="Abriendo holograma…",
-        success_label="Receta seleccionada",
-        help_text="Previsualizá la receta y confirmá desde la ventana holográfica.",
-        mode="cinematic",
-    ):
-        st.session_state["showroom_modal"] = idx
-        current = _normalize_success(st.session_state.get(_SUCCESS_KEY))
-        if current.get("candidate_idx") != idx:
-            st.session_state.pop(_SUCCESS_KEY, None)
+    with action_col:
+        if futuristic_button(
+            "Seleccionar",
+            key=f"showroom_select_{candidate_key}",
+            state=btn_state,
+            width="full",
+            loading_label="Abriendo holograma…",
+            success_label="Receta seleccionada",
+            help_text="Confirmá la receta desde la ventana emergente.",
+            mode="cinematic",
+        ):
+            st.session_state[_MODAL_KEY] = candidate_key
+            current = _normalize_success(st.session_state.get(_SUCCESS_KEY))
+            if current.get("candidate_key") != candidate_key:
+                st.session_state.pop(_SUCCESS_KEY, None)
 
-    if st.session_state.get("showroom_modal") == idx:
-        with st.modal("Confirmación holográfica", key=f"modal_{idx}"):
-            st.markdown(_modal_html(cand, badge), unsafe_allow_html=True)
+    if st.session_state.get(_MODAL_KEY) == candidate_key:
+        with st.modal("Confirmación holográfica", key=f"modal_{candidate_key}"):
+            st.markdown(_modal_html(row["candidate"], badge), unsafe_allow_html=True)
             col_ok, col_cancel = st.columns(2)
             with col_ok:
                 if futuristic_button(
                     "Confirmar selección",
-                    key=f"confirm_{idx}",
+                    key=f"confirm_{candidate_key}",
                     state="idle",
                     width="full",
                     loading_label="Sincronizando…",
                     success_label="Receta confirmada",
                     mode="cinematic",
                 ):
-                    st.session_state["selected"] = {"data": cand, "safety": badge}
+                    st.session_state["selected"] = {
+                        "data": row["candidate"],
+                        "safety": badge,
+                    }
                     st.session_state[_SUCCESS_KEY] = {
                         "message": (
-                            f"Opción {idx + 1} lista. Revisá **4) Resultados**, "
+                            f"{process_name} confirmado. Revisá **4) Resultados**, "
                             "**5) Comparar** o **6) Pareto**."
                         ),
-                        "candidate_idx": idx,
+                        "candidate_key": candidate_key,
                     }
-                    st.session_state.pop("showroom_modal", None)
+                    st.session_state.pop(_MODAL_KEY, None)
             with col_cancel:
                 if futuristic_button(
                     "Cancelar",
-                    key=f"cancel_{idx}",
+                    key=f"cancel_{candidate_key}",
                     state="idle",
                     width="full",
                     sound=False,
                     mode="cinematic",
                 ):
-                    st.session_state.pop("showroom_modal", None)
+                    st.session_state.pop(_MODAL_KEY, None)
 
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
-def _build_timeline_hologram(
-    candidates: Sequence[dict],
-    target: dict,
-    *,
-    priority: float,
-) -> TimelineHologram:
-    items: list[TimelineHologramItem] = []
-    max_water = _safe_number(target.get("max_water_l"), default=1.0) or 1.0
-    target_rigidity = _safe_number(target.get("rigidity"), default=0.0)
-
-    for idx, cand in enumerate(candidates, start=1):
-        props = cand.get("props")
-        aux = cand.get("auxiliary") or {}
-        rigidity = _safe_number(getattr(props, "rigidity", None))
-        water = _safe_number(getattr(props, "water_l", None))
-        water_ratio = min(max(water / max_water if max_water else 0.0, 0.0), 1.2)
-        score = _safe_number(cand.get("score"))
-        process_name = str(cand.get("process_name") or "Proceso")
-        process_id = str(cand.get("process_id") or "—")
-        icon = str(aux.get("icon") or cand.get("icon") or "🛰️")
-
-        badge_sources: list[str] = []
-        badge_sources.extend(str(b) for b in cand.get("timeline_badges", []))
-        badge_sources.extend(_collect_badges(cand, aux))
-        seen_badges: set[str] = set()
-        badges: list[str] = []
-        for badge in badge_sources:
-            if badge and badge not in seen_badges:
-                badges.append(badge)
-                seen_badges.add(badge)
-
-        rigidity_tone = "positive" if rigidity >= target_rigidity else "neutral"
-        water_tone = "info" if water_ratio <= 1.0 else "warning"
-        metrics = [
-            TimelineHologramMetric(
-                label="Rigidez",
-                value=f"{rigidity:.2f}",
-                tone=rigidity_tone,
-                sr_label=(
-                    f"Rigidez {rigidity:.2f} frente al objetivo {target_rigidity:.2f}."
-                ),
-            ),
-            TimelineHologramMetric(
-                label="Agua",
-                value=f"{water:.2f} L · {water_ratio * 100:.0f}% máx",
-                tone=water_tone,
-                sr_label=(
-                    f"Consumo de agua {water:.2f} litros, {water_ratio * 100:.0f} por ciento del máximo permitido."
-                ),
-            ),
-        ]
-
-        aria_label = (
-            f"Opción {idx:02d}: {process_name}, score {score:.3f}. Rigidez {rigidity:.2f}. "
-            f"Agua {water:.2f} litros ({water_ratio * 100:.0f}% del máximo)."
+    if success_key == candidate_key and success_data.get("message"):
+        action_col.markdown(
+            f"<div class='inline-success'>✅ {success_data['message']}</div>",
+            unsafe_allow_html=True,
         )
-
-        items.append(
-            TimelineHologramItem(
-                title=process_name,
-                subtitle=f"ID {process_id}",
-                score=score,
-                icon=icon,
-                rank=idx,
-                badges=tuple(badges),
-                metrics=tuple(metrics),
-                aria_label=aria_label,
-            )
-        )
-
-    return TimelineHologram(
-        items=items,
-        priority_label="Prioridad rigidez ↔ agua",
-        priority_value=priority,
-        priority_detail="Valores altos favorecen rigidez; bajos priorizan agua.",
-        caption=(
-            "Orden sugerido según la ponderación elegida. Cada nodo resume score, rigidez y agua."
-        ),
-    )
-
-
-def _sort_for_timeline(candidates: Iterable[dict], priority: float, target: dict) -> list[dict]:
-    weight_r = priority
-    weight_w = 1.0 - priority
-    max_water = _safe_number(target.get("max_water_l"), default=1.0) or 1.0
-
-    def _score(cand: dict) -> float:
-        props = cand.get("props")
-        rigidity = _safe_number(getattr(props, "rigidity", None))
-        water = _safe_number(getattr(props, "water_l", None))
-        water_ratio = water / max_water if max_water else 0.0
-        return (weight_r * rigidity) - (weight_w * water_ratio)
-
-    return sorted(candidates, key=_score, reverse=True)
-
-
-def _card_header_html(
-    idx: int,
-    score: float,
-    process_label: str,
-    badges: Sequence[str],
-    aux: dict,
-) -> str:
-    seal = "✅" if aux.get("passes_seal", True) else "⚠️"
-    risk = aux.get("process_risk_label", "—")
-    badges_html = "".join(f"<span class='showroom-badge'>{b}</span>" for b in badges)
-    return f"""
-    <div class='showroom-card__head'>
-      <div>
-        <span class='showroom-rank'>Opción {idx + 1:02d}</span>
-        <h3>{process_label}</h3>
-        <div class='showroom-meta'>Score {score:.3f} · Seal {seal} · Riesgo {risk}</div>
-        <div class='showroom-badges'>{badges_html}</div>
-      </div>
-    </div>
-    """
-
-
-def _radial_group_html(snapshots: Sequence[_PropSnapshot]) -> str:
-    blocks: list[str] = []
-    for snap in snapshots:
-        if snap.target in (None, 0):
-            pct = min(max(snap.value, 0.0), 1.0) * 100
-        else:
-            pct = min(max(snap.value / snap.target, 0.0), 1.0) * 100
-        heur_text = (
-            f"<span class='micro'>Heurístico {snap.heuristic:.2f}</span>" if snap.heuristic is not None else ""
-        )
-        ci_text = ""
-        if snap.ci:
-            try:
-                lo, hi = snap.ci
-                ci_text = f"<span class='micro'>CI95% [{float(lo):.2f}, {float(hi):.2f}]</span>"
-            except (TypeError, ValueError):
-                ci_text = ""
-        blocks.append(
-            f"""
-            <div class='radial' style='--percent:{pct:.1f};'>
-              <div class='radial-core'>
-                <div class='value'>{snap.value:.2f}</div>
-                <span>{snap.label}</span>
-                {heur_text}
-                {ci_text}
-              </div>
-            </div>
-            """
-        )
-    return "<div class='radial-wrap'>" + "".join(blocks) + "</div>"
-
-
-def _neo_bar_group_html(rows: Sequence[tuple[str, float, float | None]]) -> str:
-    blocks: list[str] = []
-    for label, value, limit in rows:
-        limit = limit or 0.0
-        pct = 0.0
-        if limit:
-            pct = min(max(value / limit, 0.0), 1.0) * 100
-        blocks.append(
-            f"""
-            <div class='neo-bar' style='--fill:{pct:.1f};'>
-              <span><strong>{label}</strong><em>{value:.2f}{' / ' + str(limit) if limit else ''}</em></span>
-              <div class='meter'></div>
-            </div>
-            """
-        )
-    return "<div class='neo-group'>" + "".join(blocks) + "</div>"
-
-
-def _traceability_html(cand: dict) -> str:
-    source_ids = ", ".join(cand.get("source_ids", [])) or "—"
-    categories = ", ".join(map(str, cand.get("source_categories", []))) or "—"
-    flags = ", ".join(map(str, cand.get("source_flags", []))) or "—"
-    materials = ", ".join(cand.get("materials", [])) or "—"
-    regolith_pct = _safe_number(cand.get("regolith_pct"), default=0.0) * 100
-    feature_imp = cand.get("feature_importance") or []
-    feature_rows = "".join(
-        f"<tr><td>{name}</td><td>{_safe_number(value, default=0.0):.3f}</td></tr>"
-        for name, value in feature_imp[:6]
-    )
-    feature_table = (
-        f"<table class='feat-table'><tbody>{feature_rows}</tbody></table>" if feature_rows else ""
-    )
-    return f"""
-    <div class='trace-grid'>
-      <div><span class='label'>IDs NASA</span><p>{source_ids}</p></div>
-      <div><span class='label'>Categorías</span><p>{categories}</p></div>
-      <div><span class='label'>Flags</span><p>{flags}</p></div>
-      <div><span class='label'>Materiales</span><p>{materials}</p></div>
-      <div><span class='label'>MGS-1</span><p>{regolith_pct:.0f}%</p></div>
-    </div>
-    {feature_table}
-    """
 
 
 def _modal_html(cand: dict, badge: dict) -> str:
@@ -515,50 +357,37 @@ def _inject_css() -> None:
     st.markdown(
         """
         <style>
-        .showroom-card {
+        .candidate-table {
             position: relative;
-            background: linear-gradient(145deg, rgba(15,23,42,0.92), rgba(30,41,59,0.88));
+            background: linear-gradient(155deg, rgba(15,23,42,0.92), rgba(30,41,59,0.88));
             border-radius: 26px;
-            padding: 28px 30px 24px;
-            border: 1px solid rgba(148,163,184,0.22);
-            box-shadow: 12px 18px 40px rgba(2,6,23,0.55), -6px -10px 30px rgba(59,130,246,0.08);
-            margin-bottom: 30px;
-            transition: transform 0.6s ease, box-shadow 0.6s ease;
-            overflow: hidden;
+            padding: 26px 30px;
+            border: 1px solid rgba(148,163,184,0.2);
+            box-shadow: 12px 18px 40px rgba(2,6,23,0.5);
         }
-        .showroom-card::after {
-            content: "";
-            position: absolute;
-            inset: 0;
-            border-radius: 26px;
-            background: radial-gradient(circle at top left, rgba(59,130,246,0.28), transparent 45%);
-            opacity: 0;
-            transition: opacity 0.6s ease;
-            pointer-events: none;
+        .candidate-table__divider {
+            border: none;
+            border-top: 1px solid rgba(148,163,184,0.2);
+            margin: 12px 0 24px;
         }
-        .showroom-card:hover {
-            transform: translateY(-6px) rotateX(1.5deg) rotateY(-1.5deg);
-            box-shadow: 18px 26px 60px rgba(2,6,23,0.65);
+        .candidate-proc {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
         }
-        .showroom-card:hover::after {opacity:1;}
-        .showroom-card__head h3 {
-            margin: 4px 0 6px;
+        .candidate-proc strong {
+            font-size: 1rem;
+            letter-spacing: 0.04em;
         }
-        .showroom-rank {
-            font-size: 0.9rem;
-            letter-spacing: 0.08em;
-            opacity: 0.72;
-            text-transform: uppercase;
-        }
-        .showroom-meta {
-            font-size: 0.85rem;
-            opacity: 0.75;
+        .candidate-proc span {
+            font-size: 0.78rem;
+            opacity: 0.7;
         }
         .showroom-badges {
             display: flex;
             flex-wrap: wrap;
             gap: 8px;
-            margin-top: 12px;
+            margin-top: 10px;
         }
         .showroom-badge {
             border-radius: 999px;
@@ -568,137 +397,49 @@ def _inject_css() -> None:
             border: 1px solid rgba(148,163,184,0.26);
             backdrop-filter: blur(12px);
         }
-        .radial-wrap {
-            display:flex;
-            gap:18px;
-            flex-wrap:wrap;
-            margin: 18px 0 6px;
+        .metric-cell {
+            font-size: 0.95rem;
+            font-variant-numeric: tabular-nums;
+            padding: 8px 0;
         }
-        .radial {
-            width: 150px;
-            aspect-ratio:1;
-            border-radius:32px;
-            background: conic-gradient(#38bdf8 calc(var(--percent) * 3.6deg), rgba(30,41,59,0.55) 0deg);
-            display:flex;
-            align-items:center;
-            justify-content:center;
-            position:relative;
-            transition: background 0.4s ease;
+        .metric-cell {
+            text-align: center;
         }
-        .radial::before {
-            content:"";
-            position:absolute;
-            inset:12px;
-            border-radius:26px;
-            background: rgba(15,23,42,0.95);
-            box-shadow: inset 0 0 30px rgba(15,23,42,0.9);
+        .metric-cell::after {
+            content: "";
         }
-        .radial-core {
-            position:relative;
-            text-align:center;
-            color:#e2e8f0;
+        .safety-pill {
+            border-radius: 16px;
+            padding: 10px 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            font-size: 0.8rem;
+            border: 1px solid rgba(148,163,184,0.22);
         }
-        .radial .value {
-            font-size:1.4rem;
-            font-weight:600;
+        .safety-pill strong {
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            font-size: 0.75rem;
         }
-        .radial span {
-            display:block;
-            font-size:0.82rem;
-            opacity:0.8;
+        .safety-pill span {
+            font-size: 0.74rem;
+            opacity: 0.8;
         }
-        .radial .micro {
-            font-size:0.72rem;
-            opacity:0.7;
+        .safety-pill--ok {
+            background: rgba(45,212,191,0.16);
+            border-color: rgba(16,185,129,0.45);
+            color: #ccfbf1;
         }
-        .neo-group {
-            display:flex;
-            flex-direction:column;
-            gap:14px;
-            margin-top:16px;
+        .safety-pill--risk {
+            background: rgba(248,113,113,0.14);
+            border-color: rgba(248,113,113,0.35);
+            color: #fecaca;
         }
-        .neo-bar {
-            padding:14px 16px;
-            border-radius:18px;
-            background: linear-gradient(145deg, rgba(15,23,42,0.96), rgba(30,41,59,0.88));
-            box-shadow: 10px 10px 22px rgba(2,6,23,0.55), -8px -8px 18px rgba(59,130,246,0.12);
-            position:relative;
-        }
-        .neo-bar span {
-            display:flex;
-            justify-content:space-between;
-            font-size:0.78rem;
-            text-transform:uppercase;
-            letter-spacing:0.06em;
-            opacity:0.75;
-        }
-        .neo-bar strong {
-            color:#bae6fd;
-            font-weight:600;
-        }
-        .neo-bar em {
-            font-style:normal;
-            color:#cbd5f5;
-        }
-        .neo-bar .meter {
-            margin-top:12px;
-            width:100%;
-            height:12px;
-            border-radius:20px;
-            background:rgba(148,163,184,0.18);
-            overflow:hidden;
-            position:relative;
-        }
-        .neo-bar .meter::after {
-            content:"";
-            position:absolute;
-            inset:0;
-            width:calc(var(--fill) * 1%);
-            background:linear-gradient(90deg, rgba(59,130,246,0.9), rgba(45,212,191,0.9));
-            box-shadow:0 0 16px rgba(45,212,191,0.45);
-            transition:width 0.6s ease;
-        }
-        .trace-grid {
-            display:grid;
-            gap:12px;
-            grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
-            margin-top:12px;
-        }
-        .trace-grid .label {
-            font-size:0.72rem;
-            letter-spacing:0.08em;
-            text-transform:uppercase;
-            opacity:0.6;
-        }
-        .trace-grid p {
-            margin:4px 0 0;
-        }
-        .feat-table {
-            width:100%;
-            margin-top:16px;
-            border-collapse:collapse;
-            font-size:0.82rem;
-        }
-        .feat-table td {
-            padding:6px 8px;
-            border-bottom:1px solid rgba(148,163,184,0.16);
-        }
-        .uncertainty-grid {
-            display:flex;
-            flex-wrap:wrap;
-            gap:10px;
-            margin-top:10px;
-            font-size:0.76rem;
-            opacity:0.7;
-        }
-        .safety-line {
-            margin:22px 0 12px;
-            font-size:0.85rem;
-            opacity:0.85;
-        }
-        .safety-line span {
-            font-weight:600;
-            color:#a5f3fc;
+        .inline-success {
+            margin-top: 10px;
+            font-size: 0.78rem;
+            color: #bbf7d0;
         }
         .modal-holo {
             background: radial-gradient(circle at top, rgba(59,130,246,0.3), rgba(15,23,42,0.92));
@@ -716,22 +457,6 @@ def _inject_css() -> None:
             background:rgba(45,212,191,0.16);
             border:1px solid rgba(94,234,212,0.35);
             display:inline-block;
-        }
-        div[data-baseweb="tab-list"] {
-            gap:8px;
-        }
-        div[data-baseweb="tab"] {
-            border-radius:999px !important;
-            background:rgba(30,41,59,0.6);
-            border:1px solid rgba(148,163,184,0.18);
-            padding:10px 20px;
-            transition:all 0.3s ease;
-            color:#e2e8f0;
-        }
-        div[data-baseweb="tab"][aria-selected="true"] {
-            background:rgba(59,130,246,0.28);
-            border-color:rgba(56,189,248,0.55);
-            box-shadow:0 0 18px rgba(59,130,246,0.45);
         }
         </style>
         """,

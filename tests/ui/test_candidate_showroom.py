@@ -90,7 +90,7 @@ def test_candidate_showroom_confirm_updates_success(monkeypatch) -> None:
 
     app = app.button(key="showroom_select_0").click().run()
     fx_states = _session_get(app, "__fx_states__", {})
-    assert _session_get(app, "showroom_modal") == 0
+    assert _session_get(app, "showroom_modal") == "0"
 
     app = app.button(key="confirm_0").click().run()
     app = app.run()
@@ -98,8 +98,8 @@ def test_candidate_showroom_confirm_updates_success(monkeypatch) -> None:
     success_payload = _session_get(app, showroom._SUCCESS_KEY)  # noqa: SLF001
 
     assert isinstance(success_payload, dict)
-    assert success_payload.get("candidate_idx") == 0
-    assert "Opción" in success_payload.get("message", "")
+    assert success_payload.get("candidate_key") == "0"
+    assert "Moldeado orbital" in success_payload.get("message", "")
     assert fx_states.get("showroom_select_0") == "success"
     assert _session_get(app, "showroom_modal") is None
     selected = _session_get(app, "selected", {})
