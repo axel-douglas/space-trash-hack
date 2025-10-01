@@ -466,37 +466,161 @@ with tab1:
 with tab2:
     st.markdown("## 🔀 Flujo de materiales → proceso → producto", unsafe_allow_html=True)
 
-    labels = materials + [process_name, "Producto"]
-    src = list(range(len(materials)))
-    tgt = [len(materials)] * len(materials)
+    scenario_label = str(target.get("scenario") or "").strip()
+    product_label = str(target.get("name") or "").strip() or "Producto"
+    product_node_label = f"{scenario_label} · {product_label}" if scenario_label else product_label
 
-    weights = (cand.get("weights") or [])[: len(materials)]
-    if len(weights) < len(materials):
-        weights = [*weights, *([0.0] * (len(materials) - len(weights)))]
+    material_labels = [str(item) for item in materials]
+    labels = material_labels + [process_name, product_node_label]
+    src = list(range(len(material_labels)))
+    tgt = [len(material_labels)] * len(material_labels)
+
+    weights = (cand.get("weights") or [])[: len(material_labels)]
+    if len(weights) < len(material_labels):
+        weights = [*weights, *([0.0] * (len(material_labels) - len(weights)))]
     if weights:
         total_weight = sum(weights)
         if total_weight > 0:
             weights = [w / total_weight for w in weights]
         else:
-            weights = [1 / len(materials)] * len(materials) if materials else []
-        vals = [round(w * 100, 1) for w in weights]
+            weights = [1 / len(material_labels)] * len(material_labels) if material_labels else []
+        material_vals = [round(w * 100, 1) for w in weights]
     else:
-        vals = [round(100 / len(materials), 1)] * len(materials) if materials else []
+        material_vals = [round(100 / len(material_labels), 1)] * len(material_labels) if material_labels else []
 
-    src.append(len(materials))
-    tgt.append(len(materials) + 1)
+    vals = material_vals.copy()
+
+    src.append(len(material_labels))
+    tgt.append(len(material_labels) + 1)
     vals.append(100.0)
+
+    highlight_styles = {
+        "zotek": {
+            "color": "#f97316",
+            "hover": "♻️ ZOTEK F30 compactada: libera volumen útil y mantiene aislamiento térmico.",
+        },
+        "carbon": {
+            "color": "#6366f1",
+            "hover": "🧪 Carbono recuperado: refuerza juntas y captura compuestos volátiles.",
+        },
+    }
+
+
+    def _material_kind(label: str) -> str | None:
+        text = label.casefold()
+        if "zotek" in text:
+            return "zotek"
+        if "carbon" in text or "carbón" in text or "carbono" in text:
+            return "carbon"
+        return None
+
+
+    def _with_alpha(color: str, alpha: float) -> str:
+        if color.startswith("rgba"):
+            return color
+        value = color.lstrip("#")
+        if len(value) != 6:
+            return color
+        r = int(value[0:2], 16)
+        g = int(value[2:4], 16)
+        b = int(value[4:6], 16)
+        return f"rgba({r},{g},{b},{alpha})"
+
+
+    scenario_key = scenario_label.casefold()
+    scenario_hover_map = {
+        "residence renovations": "🏠 Panel modular: maximizamos volumen habitable con espumas laminadas.",
+        "daring discoveries": "🔬 Junta conductiva: el carbono recuperado asegura sellos para experimentos.",
+        "cosmic celebrations": "🎉 Decor utilitaria: textiles seguros mantienen la moral de la tripulación.",
+    }
+    scenario_value_hover = scenario_hover_map.get(
+        scenario_key,
+        ("Valorizamos los residuos críticos en el producto final" if scenario_label else "Producto final valorizado"),
+    )
+
+    node_colors: list[str] = []
+    node_hovertemplates: list[str] = []
+    link_colors: list[str] = []
+    link_customdata: list[str] = []
+    link_hovertemplates: list[str] = []
+
+    default_material_color = "#94a3b8"
+    for label, value in zip(material_labels, material_vals):
+        kind = _material_kind(label)
+        if kind:
+            style = highlight_styles[kind]
+            color = style["color"]
+            detail = f"{style['hover']}<br>Peso: {value:.1f}% del mix."
+        else:
+            color = default_material_color
+            detail = f"Peso: {value:.1f}% del mix de residuos."
+        node_colors.append(color)
+        node_hovertemplates.append(f"{label}<br>{detail}<extra></extra>")
+        link_colors.append(_with_alpha(color, 0.6))
+        link_message = f"{label} → {process_name}<br>{detail}"
+        link_customdata.append(link_message)
+        link_hovertemplates.append("%{customdata}<extra></extra>")
+
+    process_color = "#2dd4bf"
+    node_colors.append(process_color)
+    node_hovertemplates.append(
+        f"{process_name}<br>Proceso priorizado por score Rex-AI.<extra></extra>"
+    )
+
+    product_color = "#4ade80"
+    node_colors.append(product_color)
+    node_hovertemplates.append(f"{product_node_label}<br>{scenario_value_hover}<extra></extra>")
+
+    link_colors.append(_with_alpha(product_color, 0.55))
+    link_customdata.append(
+        f"{process_name} → {product_node_label}<br>{scenario_value_hover}"
+    )
+    link_hovertemplates.append("%{customdata}<extra></extra>")
+
+    scenario_caption_map = {
+        "residence renovations": (
+            "Escenario Residence Renovations: comprimimos ZOTEK y films para paneles que liberan espacio vital."
+        ),
+        "daring discoveries": (
+            "Escenario Daring Discoveries: el carbono recuperado alimenta juntas conductivas para experimentos."
+        ),
+        "cosmic celebrations": (
+            "Escenario Cosmic Celebrations: textiles y films se transforman en utilería segura para la tripulación."
+        ),
+    }
+    scenario_caption = scenario_caption_map.get(
+        scenario_key,
+        (
+            f"Escenario {scenario_label}: transformamos los residuos en {product_label}."
+            if scenario_label
+            else f"El flujo muestra cómo obtenemos {product_label} a partir de los residuos seleccionados."
+        ),
+    )
 
     fig = go.Figure(
         data=[
             go.Sankey(
-                node=dict(label=labels, pad=20, thickness=18),
-                link=dict(source=src, target=tgt, value=vals),
+                node=dict(
+                    label=labels,
+                    pad=20,
+                    thickness=18,
+                    color=node_colors,
+                    hovertemplate=node_hovertemplates,
+                ),
+                link=dict(
+                    source=src,
+                    target=tgt,
+                    value=vals,
+                    color=link_colors,
+                    customdata=link_customdata,
+                    hovertemplate=link_hovertemplates,
+                ),
             )
         ]
     )
     fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=420)
     st.plotly_chart(fig, use_container_width=True)
+    st.caption(scenario_caption)
 
     pop2 = st.popover("¿Cómo leerlo?")
     with pop2:
