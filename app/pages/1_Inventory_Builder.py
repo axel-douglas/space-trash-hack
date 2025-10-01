@@ -1,5 +1,7 @@
 import _bootstrap  # noqa: F401
 
+from datetime import datetime, timezone
+
 import streamlit as st
 import pandas as pd
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
@@ -46,6 +48,74 @@ def _pick_col(df: pd.DataFrame, names, default=None):
 # --------------------- cargar y normalizar a esquema estándar ---------------------
 raw = load_waste_df().copy()
 
+
+def _build_editable_df(source: pd.DataFrame) -> pd.DataFrame:
+    id_col = _pick_col(source, ["id"])
+    cat_col = _pick_col(source, ["category", "Category"])
+    mat_col = _pick_col(source, ["material_family", "material", "Material"])
+    mass_col = _pick_col(source, ["mass_kg", "kg", "Mass_kg"])
+    vol_col = _pick_col(source, ["volume_l", "Volume_L"])
+    flags_col = _pick_col(source, ["flags", "Flags"])
+
+    editable = pd.DataFrame(
+        {
+            "id": source[id_col] if id_col else source.index.astype(str),
+            "category": source[cat_col] if cat_col else "",
+            "material_family": source[mat_col] if mat_col else "",
+            "mass_kg": (
+                pd.to_numeric(source[mass_col], errors="coerce").fillna(0.0)
+                if mass_col
+                else 0.0
+            ),
+            "volume_l": (
+                pd.to_numeric(source[vol_col], errors="coerce").fillna(0.0)
+                if vol_col
+                else 0.0
+            ),
+            "flags": (source[flags_col].astype(str) if flags_col else ""),
+        }
+    )
+    editable["_problematic"] = editable.apply(_is_problematic_row, axis=1)
+    return editable
+
+
+def _get_baseline_state() -> dict | None:
+    baseline_state = st.session_state.get("_inventory_baseline")
+    if isinstance(baseline_state, dict):
+        df_candidate = baseline_state.get("df")
+        if isinstance(df_candidate, pd.DataFrame):
+            return baseline_state
+    return None
+
+
+def _format_baseline_caption(state: dict | None) -> str:
+    if not state:
+        return "Sin histórico de guardado."
+    saved_at = state.get("saved_at")
+    if isinstance(saved_at, datetime):
+        timestamp = saved_at.astimezone(timezone.utc).strftime("%d %b %Y %H:%M UTC")
+        return f"Baseline desde save_waste_df ({timestamp})."
+    return "Baseline calculado desde el último save_waste_df conocido."
+
+
+def _format_sidebar_delta(current: float, baseline: float | None, unit: str) -> str:
+    if baseline is None:
+        return "Sin histórico"
+    diff = current - baseline
+    tolerance = 1e-6
+    if abs(diff) < tolerance:
+        return "Sin cambios"
+    arrow = "⬆️" if diff > 0 else "⬇️"
+    if abs(baseline) > tolerance:
+        pct = diff / baseline * 100.0
+        return f"{arrow} {pct:+.1f}% vs. histórico"
+    return f"{arrow} {diff:+.1f} {unit} vs. histórico"
+
+
+if "_inventory_baseline" not in st.session_state:
+    st.session_state["_inventory_baseline"] = {"df": raw.copy(deep=True), "saved_at": None}
+
+df = _build_editable_df(raw)
 id_col    = _pick_col(raw, ["id"])
 cat_col   = _pick_col(raw, ["category", "Category"])
 mat_col   = _pick_col(raw, ["material_family", "material", "Material"])
@@ -106,9 +176,35 @@ session_df = st.session_state["inventory_data"].copy()
 session_df["_problematic"] = problematic_mask(session_df)
 st.session_state["inventory_data"] = session_df.copy()
 
-sidebar.metric("Masa total", f"{session_df['mass_kg'].sum():.2f} kg", delta="⬆️ +2.3% vs. último guardado")
-sidebar.metric("Volumen agregado", f"{session_df['volume_l'].sum():.1f} L", delta="⬇️ 0.8% optimizado")
-sidebar.metric("Problemáticos", int(session_df["_problematic"].sum()), delta="⚡ Priorizar reciclado")
+baseline_state = _get_baseline_state()
+baseline_df = _build_editable_df(baseline_state["df"]) if baseline_state else None
+
+baseline_mass = float(baseline_df["mass_kg"].sum()) if baseline_df is not None else None
+baseline_volume = float(baseline_df["volume_l"].sum()) if baseline_df is not None else None
+baseline_problematic = int(baseline_df["_problematic"].sum()) if baseline_df is not None else None
+
+current_mass = float(session_df["mass_kg"].sum())
+current_volume = float(session_df["volume_l"].sum())
+current_problematic = int(session_df["_problematic"].sum())
+
+sidebar.metric(
+    "Masa total",
+    f"{current_mass:.2f} kg",
+    delta=_format_sidebar_delta(current_mass, baseline_mass, "kg"),
+)
+sidebar.metric(
+    "Volumen agregado",
+    f"{current_volume:.1f} L",
+    delta=_format_sidebar_delta(current_volume, baseline_volume, "L"),
+)
+sidebar.metric(
+    "Problemáticos",
+    current_problematic,
+    delta=_format_sidebar_delta(float(current_problematic),
+                               float(baseline_problematic) if baseline_problematic is not None else None,
+                               "ítems"),
+)
+sidebar.caption(_format_baseline_caption(baseline_state))
 
 sidebar.subheader("Recomendaciones IA")
 problematic_tags = session_df.loc[session_df["_problematic"], "flags"].fillna("")
@@ -374,6 +470,10 @@ with colA:
     ):
         out = st.session_state["inventory_data"][["id", "category", "material_family", "mass_kg", "volume_l", "flags"]].copy()
         save_waste_df(out)
+        st.session_state["_inventory_baseline"] = {
+            "df": load_waste_df().copy(deep=True),
+            "saved_at": datetime.now(timezone.utc),
+        }
         st.session_state[_SAVE_SUCCESS_FLAG] = True
         _trigger_rerun()
 

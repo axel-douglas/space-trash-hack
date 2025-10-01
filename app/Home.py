@@ -248,24 +248,34 @@ def classify_inventory_tone(value: float, warn: float, danger: float) -> str:
 def compute_delta_strings(
     key: str,
     current: float,
-    previous: dict[str, float] | None,
+    baseline: dict[str, float] | None,
     unit: str,
     *,
     precision: int = 0,
 ) -> tuple[str | None, str]:
-    if previous is None or key not in previous:
-        return None, "Sin historial previo"
+    if baseline is None or key not in baseline:
+        return None, "Sin histórico"
 
-    diff = current - previous[key]
+    diff = current - baseline[key]
     tolerance = 1.0 if precision == 0 else 0.1
     if abs(diff) < tolerance:
-        return None, "Sin cambios vs última sesión"
+        return None, "Sin cambios vs. baseline"
 
     arrow = "↑" if diff > 0 else "↓"
     formatted = f"{abs(diff):.{precision}f}"
     label = f"{arrow} {formatted}{unit}".rstrip()
-    detail = f"{label} vs última sesión"
+    detail = f"{label} vs. baseline guardado"
     return label, detail
+
+
+def describe_baseline_caption(state: dict | None) -> str:
+    if not state:
+        return "Baseline pendiente: guardá inventario para registrar histórico."
+    saved_at = state.get("saved_at") if isinstance(state, dict) else None
+    if isinstance(saved_at, datetime):
+        timestamp = saved_at.astimezone(timezone.utc).strftime("%d %b %Y %H:%M UTC")
+        return f"Baseline desde último save_waste_df ({timestamp})."
+    return "Baseline según último save_waste_df disponible."
 
 
 def format_water(value: float | None) -> str:
@@ -472,9 +482,15 @@ else:
         "Corregí el generador antes de exportar." if generator_error_msg else "Generá recetas antes de reportar."
     )
 
-previous_totals = st.session_state.get("_inventory_totals")
-if not isinstance(previous_totals, dict):
-    previous_totals = None
+baseline_state = st.session_state.get("_inventory_baseline")
+if not isinstance(baseline_state, dict):
+    baseline_state = None
+
+baseline_totals: dict[str, float] | None = None
+if baseline_state is not None:
+    baseline_df_candidate = baseline_state.get("df")
+    if isinstance(baseline_df_candidate, pd.DataFrame):
+        baseline_totals = compute_inventory_totals(baseline_df_candidate)
 
 inventory_totals = compute_inventory_totals(inventory_reference_df)
 
@@ -541,30 +557,35 @@ mission_metrics.append(
     }
 )
 
+baseline_caption = describe_baseline_caption(baseline_state)
+
 if inventory_totals:
     mass_total = inventory_totals.get("mass_kg", 0.0)
     water_total = inventory_totals.get("water_l", 0.0)
     energy_total = inventory_totals.get("energy_kwh", 0.0)
 
     mass_delta, mass_delta_detail = compute_delta_strings(
-        "mass_kg", mass_total, previous_totals, " kg"
+        "mass_kg", mass_total, baseline_totals, " kg"
     )
     water_delta, water_delta_detail = compute_delta_strings(
-        "water_l", water_total, previous_totals, " L", precision=1
+        "water_l", water_total, baseline_totals, " L", precision=1
     )
     energy_delta, energy_delta_detail = compute_delta_strings(
-        "energy_kwh", energy_total, previous_totals, " kWh"
+        "energy_kwh", energy_total, baseline_totals, " kWh"
     )
 
     mass_details = ["Masa total normalizada"]
     if mass_delta_detail:
         mass_details.insert(0, mass_delta_detail)
+    mass_details.insert(0, baseline_caption)
     water_details = ["Basado en humedad declarada"]
     if water_delta_detail:
         water_details.insert(0, water_delta_detail)
+    water_details.insert(0, baseline_caption)
     energy_details = ["Escalado por factor de dificultad"]
     if energy_delta_detail:
         energy_details.insert(0, energy_delta_detail)
+    energy_details.insert(0, baseline_caption)
 
     mission_metrics.extend(
         [
@@ -601,7 +622,7 @@ if inventory_totals:
         ]
     )
 else:
-    fallback_details = ["Cargá inventario para estimaciones"]
+    fallback_details = [baseline_caption, "Cargá inventario para estimaciones"]
     mission_metrics.extend(
         [
             {
