@@ -51,6 +51,18 @@ regolith_pct = cand.get("regolith_pct", 0.0)
 materials = cand.get("materials", [])
 score = cand.get("score", 0.0)
 safety = selected.get("safety", {"level": "—", "detail": ""})
+process_id = cand.get("process_id", "—")
+process_name = cand.get("process_name", "Proceso")
+
+
+def _get_value(source, attr, default=0.0):
+    if source is None:
+        return default
+    if hasattr(source, attr):
+        return getattr(source, attr)
+    if isinstance(source, dict):
+        return source.get(attr, default)
+    return default
 
 
 @st.cache_data(show_spinner=False)
@@ -72,7 +84,7 @@ if ci:
 
 if header_chips:
     TeslaHero(
-        title=f"📊 {cand['process_id']} · {cand['process_name']}",
+        title=f"📊 {process_id} · {process_name}",
         subtitle=(
             "Predicciones Rex-AI con trazabilidad NASA y contraste frente a la heurística de referencia."
         ),
@@ -85,7 +97,7 @@ if header_chips:
     ).render()
 else:
     st.markdown(
-        f"## 📊 {cand['process_id']} · {cand['process_name']} — Score {score:.3f}"
+        f"## 📊 {process_id} · {process_name} — Score {score:.3f}"
     )
 
 icon_map = {
@@ -104,13 +116,16 @@ metric_items: list[MetricItem] = [
     )
 ]
 labels = [
-    ("Rigidez", props.rigidity, heur.rigidity, ci.get("rigidez")),
-    ("Estanqueidad", props.tightness, heur.tightness, ci.get("estanqueidad")),
-    ("Energía (kWh)", props.energy_kwh, heur.energy_kwh, ci.get("energy_kwh")),
-    ("Agua (L)", props.water_l, heur.water_l, ci.get("water_l")),
-    ("Crew (min)", props.crew_min, heur.crew_min, ci.get("crew_min")),
+    ("Rigidez", "rigidity", "rigidez"),
+    ("Estanqueidad", "tightness", "estanqueidad"),
+    ("Energía (kWh)", "energy_kwh", "energy_kwh"),
+    ("Agua (L)", "water_l", "water_l"),
+    ("Crew (min)", "crew_min", "crew_min"),
 ]
-for label, val_ml, val_h, interval in labels:
+for label, attr, ci_key in labels:
+    val_ml = _get_value(props, attr, 0.0)
+    val_h = _get_value(heur, attr, 0.0)
+    interval = ci.get(ci_key)
     delta_value = val_ml - val_h
     caption_bits = [f"Heurística {val_h:.3f}"]
     if interval:
@@ -148,11 +163,18 @@ with st.container():
 
 with st.container():
     st.markdown("### 🧾 Comparativa heurística vs IA")
+    compare_rows = [
+        ("Rigidez", "rigidity"),
+        ("Estanqueidad", "tightness"),
+        ("Energía", "energy_kwh"),
+        ("Agua", "water_l"),
+        ("Crew", "crew_min"),
+    ]
     df_compare = pd.DataFrame(
         {
-            "Métrica": ["Rigidez", "Estanqueidad", "Energía", "Agua", "Crew"],
-            "Heurística": [heur.rigidity, heur.tightness, heur.energy_kwh, heur.water_l, heur.crew_min],
-            "IA Rex-AI": [props.rigidity, props.tightness, props.energy_kwh, props.water_l, props.crew_min],
+            "Métrica": [label for label, _ in compare_rows],
+            "Heurística": [_get_value(heur, attr, float("nan")) for _, attr in compare_rows],
+            "IA Rex-AI": [_get_value(props, attr, float("nan")) for _, attr in compare_rows],
         }
     )
     st.dataframe(df_compare.style.format({"Heurística": "{:.3f}", "IA Rex-AI": "{:.3f}"}), use_container_width=True)
@@ -351,15 +373,18 @@ with st.expander("📥 Export quick facts"):
         with layout_block("depth-stack layer-shadow", parent=export_grid) as export_panel:
             export_panel.json(
                 {
-                    "process": {"id": cand["process_id"], "name": cand["process_name"]},
-                    "materials": cand["materials"],
+                    "process": {
+                        "id": cand.get("process_id", "—"),
+                        "name": cand.get("process_name", "—"),
+                    },
+                    "materials": materials,
                     "weights": cand.get("weights", []),
                     "predictions": {
-                        "rigidez": props.rigidity,
-                        "estanqueidad": props.tightness,
-                        "energy_kwh": props.energy_kwh,
-                        "water_l": props.water_l,
-                        "crew_min": props.crew_min,
+                        "rigidez": _get_value(props, "rigidity", None),
+                        "estanqueidad": _get_value(props, "tightness", None),
+                        "energy_kwh": _get_value(props, "energy_kwh", None),
+                        "water_l": _get_value(props, "water_l", None),
+                        "crew_min": _get_value(props, "crew_min", None),
                     },
                     "confidence_interval": ci,
                     "uncertainty": uncertainty,
@@ -441,26 +466,36 @@ with tab1:
 with tab2:
     st.markdown("## 🔀 Flujo de materiales → proceso → producto", unsafe_allow_html=True)
 
-    labels = materials + [cand["process_name"], "Producto"]
+    labels = materials + [process_name, "Producto"]
     src = list(range(len(materials)))
     tgt = [len(materials)] * len(materials)
-    # Si vienen pesos con regolito + redondeos, normalizamos para que la suma sea 1
-    weights = cand.get("weights", [])
-    if weights and abs(sum(weights) - 1.0) > 1e-6:
-        s = sum(weights)
-        weights = [w/s for w in weights]
-    vals = [round(w*100, 1) for w in weights] if weights else [100/len(src)]*len(src)
 
-    # proceso -> producto
-    src += [len(materials)]
-    tgt += [len(materials) + 1]
-    vals += [100.0]
+    weights = (cand.get("weights") or [])[: len(materials)]
+    if len(weights) < len(materials):
+        weights = [*weights, *([0.0] * (len(materials) - len(weights)))]
+    if weights:
+        total_weight = sum(weights)
+        if total_weight > 0:
+            weights = [w / total_weight for w in weights]
+        else:
+            weights = [1 / len(materials)] * len(materials) if materials else []
+        vals = [round(w * 100, 1) for w in weights]
+    else:
+        vals = [round(100 / len(materials), 1)] * len(materials) if materials else []
 
-    fig = go.Figure(data=[go.Sankey(
-        node=dict(label=labels, pad=20, thickness=18),
-        link=dict(source=src, target=tgt, value=vals)
-    )])
-    fig.update_layout(margin=dict(l=10,r=10,t=10,b=10), height=420)
+    src.append(len(materials))
+    tgt.append(len(materials) + 1)
+    vals.append(100.0)
+
+    fig = go.Figure(
+        data=[
+            go.Sankey(
+                node=dict(label=labels, pad=20, thickness=18),
+                link=dict(source=src, target=tgt, value=vals),
+            )
+        ]
+    )
+    fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), height=420)
     st.plotly_chart(fig, use_container_width=True)
 
     pop2 = st.popover("¿Cómo leerlo?")
@@ -475,18 +510,21 @@ with tab2:
 # --- TAB 3: Checklist & Próximos pasos ---
 with tab3:
     st.markdown("## 🛠️ Checklist de fabricación")
-    st.markdown(f"""
-1. **Preparar/Triturar**: acondicionar materiales (**{', '.join(materials)}**).
-2. **Ejecutar proceso**: **{cand['process_id']} {cand['process_name']}** con parámetros estándar del hábitat.
+    materials_display = ", ".join(materials) if materials else "—"
+    st.markdown(
+        f"""
+1. **Preparar/Triturar**: acondicionar materiales (**{materials_display}**).
+2. **Ejecutar proceso**: **{process_id} {process_name}** con parámetros estándar del hábitat.
 3. **Enfriar & post-proceso**: verificar bordes, ajuste y *fit*.
 4. **Registrar feedback**: rigidez percibida, facilidad de uso, y problemas (bordes, olor, slip, etc.).
-    """)
+        """
+    )
 
     st.markdown("### ⏱️ Recursos estimados")
     resource_items = [
-        MetricItem(label="Energía", value=f"{props.energy_kwh:.2f} kWh", icon="⚡"),
-        MetricItem(label="Agua", value=f"{props.water_l:.2f} L", icon="🚰"),
-        MetricItem(label="Crew-time", value=f"{props.crew_min:.0f} min", icon="🧑‍🚀"),
+        MetricItem(label="Energía", value=f"{_get_value(props, 'energy_kwh', 0.0):.2f} kWh", icon="⚡"),
+        MetricItem(label="Agua", value=f"{_get_value(props, 'water_l', 0.0):.2f} L", icon="🚰"),
+        MetricItem(label="Crew-time", value=f"{_get_value(props, 'crew_min', 0.0):.0f} min", icon="🧑‍🚀"),
     ]
     MetricGalaxy(metrics=resource_items, density="comfortable").render()
 
