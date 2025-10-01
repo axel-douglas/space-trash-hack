@@ -8,7 +8,7 @@ the model training pipeline as high quality "gold" references.
 
 The builder keeps the transformation logic in Python so it can be unit tested
 and re-executed whenever new raw data drops. The resulting parquet artefacts
-are written to ``datasets/gold`` and validated against the pydantic models
+are written to ``data/gold`` and validated against the pydantic models
 defined in :mod:`app.modules.data_pipeline`.
 """
 
@@ -26,11 +26,10 @@ from app.modules.data_sources import REGOLITH_CHARACTERIZATION
 from app.modules.data_pipeline import GoldFeatureRow, GoldLabelRow
 from app.modules.model_training import FEATURE_COLUMNS
 from app.modules.label_mapper import derive_recipe_id
-from .paths import DATA_ROOT
+from .paths import DATA_ROOT, GOLD_DIR
 
 DATASETS_ROOT = DATA_ROOT.parent / "datasets"
 RAW_DIR = DATASETS_ROOT / "raw"
-GOLD_DIR = DATASETS_ROOT / "gold"
 
 MOXIE_PEAK_O2_G_PER_HOUR = 12.0
 MOXIE_POWER_W = 300.0
@@ -364,7 +363,7 @@ def build_gold_dataset(
     ----------
     output_dir:
         Destination folder for the parquet artefacts. When omitted the default
-        ``datasets/gold`` directory is used.
+        ``data/gold`` directory is used.
     return_frames:
         When ``True`` the in-memory dataframes are returned alongside the
         persistence step. This is particularly handy for tests.

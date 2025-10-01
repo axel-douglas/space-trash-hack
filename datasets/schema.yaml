@@ -10,7 +10,7 @@ label_sources:
     - weak
     - synthetic
 features:
-  path: datasets/gold/features.parquet
+  path: data/gold/features.parquet
   description: "Matriz de entrenamiento con un registro por receta candidata (antes de ensayo físico)."
   columns:
     recipe_id:
@@ -157,7 +157,7 @@ features:
       categories: [mission, simulated, weak, synthetic]
       description: "Indicio de la procedencia de la mejor etiqueta disponible (para priorización)."
 labels:
-  path: datasets/gold/labels.parquet
+  path: data/gold/labels.parquet
   description: "Etiquetas reales, simuladas o weak asociadas a cada receta-proceso."
   columns:
     recipe_id:

@@ -17,14 +17,14 @@ los ensayos físicos/simulador y el reentrenamiento incremental del modelo.
 ## 2. Ingesta al dataset gold
 
 ```bash
-python scripts/ingest_feedback.py --feedback feedback/recipes.parquet --gold-dir datasets/gold
+python scripts/ingest_feedback.py --feedback feedback/recipes.parquet --gold-dir data/gold
 ```
 
 El comando:
 
 * Valida que el feedback contenga todas las columnas definidas para el modelo.
-* Fusiona la información con `datasets/gold/features.parquet` y
-  `datasets/gold/labels.parquet`, preservando la última medición por
+* Fusiona la información con `data/gold/features.parquet` y
+  `data/gold/labels.parquet`, preservando la última medición por
   `(recipe_id, process_id)`.
 * Añade una marca `ingested_at` para auditar cuándo se incorporó cada fila.
 
@@ -33,7 +33,7 @@ Para verificar el impacto sin escribir resultados usar `--dry-run`.
 ## 3. Reentrenamiento incremental
 
 ```bash
-python -m app.modules.retrain_from_feedback --logs feedback/recipes.parquet --gold datasets/gold
+python -m app.modules.retrain_from_feedback --logs feedback/recipes.parquet --gold data/gold
 ```
 
 El módulo reusa el pipeline principal (`train_and_save`) y acepta los mismos

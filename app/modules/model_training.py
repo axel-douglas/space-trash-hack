@@ -94,7 +94,7 @@ except Exception:  # pragma: no cover - environments without torch
     HAS_TORCH = False
 
 from app.modules.label_mapper import derive_recipe_id, load_curated_labels, lookup_labels
-from .paths import DATA_ROOT, MODELS_DIR
+from .paths import DATA_ROOT, GOLD_DIR, MODELS_DIR
 
 LOGGER = logging.getLogger(__name__)
 
@@ -108,7 +108,6 @@ RAW_DIR = DATASETS_ROOT / "raw"
 PROCESSED_DIR = DATASETS_ROOT / "processed"
 PROCESSED_ML = DATA_ROOT / "processed" / "ml"
 MODEL_DIR = MODELS_DIR  # Backwards compatibility alias
-GOLD_DIR = DATASETS_ROOT / "gold"
 GOLD_FEATURES_PATH = GOLD_DIR / "features.parquet"
 GOLD_LABELS_PATH = GOLD_DIR / "labels.parquet"
 

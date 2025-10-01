@@ -11,11 +11,8 @@ import pandas as pd
 
 # Paths -----------------------------------------------------------------------
 
-from .paths import DATA_ROOT
+from .paths import GOLD_DIR
 
-ROOT = DATA_ROOT.parent
-DATASETS_ROOT = ROOT / "datasets"
-GOLD_DIR = DATASETS_ROOT / "gold"
 GOLD_LABELS_PATH = GOLD_DIR / "labels.parquet"
 
 # Targets tracked in curated datasets

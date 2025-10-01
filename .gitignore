@@ -19,14 +19,9 @@ __pycache__/
 !/data/processed/.gitkeep
 !/datasets/processed/.gitkeep
 
-# Curated gold datasets
-!/datasets/gold/
-!/datasets/gold/.gitkeep
-
 # Binary dataset and model artefacts
 *.parquet
 */**/*.parquet
-!/datasets/gold/*.parquet
 !/datasets/processed/*.parquet
 feedback/*.parquet
 !feedback/.gitkeep

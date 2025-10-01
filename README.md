@@ -66,8 +66,9 @@ optimizador) se mantengan iguales entre ejecuciones.
    (o los tests asociados) para verificar que los CSV/Parquet crudos cumplen los modelos de
    datos. Cada incidencia se registra en `data/logs/ingestion.errors.jsonl`; inspecciona ese
    archivo antes de continuar para corregir filas inválidas o faltantes.
-2. **Generar artefactos mínimos**. Una vez limpia la ingesta, corre
-   `python -m app.modules.model_training --gold datasets/gold --append-logs "data/logs/feedback_*.parquet"`
+2. **Generar artefactos mínimos**. Ejecutá
+   `python scripts/build_gold_dataset.py --output-dir data/gold` para refrescar el
+   dataset curado y, luego, `python -m app.modules.model_training --gold data/gold --append-logs "data/logs/feedback_*.parquet"`
    para producir el pipeline base y los metadatos indispensables en `data/models/`
    (por ejemplo `data/models/rexai_regressor.joblib` y `data/models/metadata.json`). El
    plan detallado de entrenamiento y variantes está descrito en
@@ -115,7 +116,7 @@ Para regenerar todos los artefactos (mezclando datasets simulados con el
 corpus dorado y feedback humano cuando está disponible):
 
 ```bash
-python -m app.modules.model_training --gold datasets/gold --append-logs "data/logs/feedback_*.parquet"
+python -m app.modules.model_training --gold data/gold --append-logs "data/logs/feedback_*.parquet"
 ```
 
 ### Reentrenar desde feedback humano
@@ -135,8 +136,8 @@ Opcionalmente podés especificar rutas alternativas:
 
 ```bash
 python -m app.modules.retrain_from_feedback \
-  --gold datasets/gold \
-  --features datasets/gold/features.parquet \
+  --gold data/gold \
+  --features data/gold/features.parquet \
   --logs "data/logs/custom_feedback_*.parquet"
 ```
 
@@ -213,7 +214,7 @@ ensemble entrenado desde el inicio.
 
 ### Actualizar el bundle publicado
 
-1. **Entrenar**: `python -m app.modules.model_training --gold datasets/gold --append-logs "data/logs/feedback_*.parquet"`
+1. **Entrenar**: `python -m app.modules.model_training --gold data/gold --append-logs "data/logs/feedback_*.parquet"`
    genera los `.joblib` y `metadata*.json` bajo `data/models/`.
 2. **Verificar**: ejecutá `python -m scripts.verify_model_ready` y conservá el
    JSON resultante como bitácora del reentrenamiento.
@@ -260,7 +261,7 @@ publicada sin ejecutar el bootstrap sintético.
 1. Reentrena con los datasets más recientes:
 
    ```bash
-   python -m app.modules.model_training --gold datasets/gold --append-logs "data/logs/feedback_*.parquet"
+   python -m app.modules.model_training --gold data/gold --append-logs "data/logs/feedback_*.parquet"
    ```
 
    El pipeline actualizará `data/models/rexai_regressor.joblib`, clasificadores

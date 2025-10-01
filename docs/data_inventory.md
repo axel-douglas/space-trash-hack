@@ -8,7 +8,7 @@ Este documento mapea los datos existentes en el repositorio a los *features*, *t
 | --- | --- | --- |
 | `datasets/raw/` | Archivos CSV provenientes de NASA, UCF y catálogos internos. | Fuente primaria para enriquecer features físicos (composición, oxidos) y perfiles de residuo. |
 | `datasets/processed/` | Espacio reservado para datasets intermedios (`rexai_training_dataset.parquet`). | Entrada legacy del modelo actual; servirá como referencia para validaciones de consistencia. |
-| `datasets/gold/` | Directorio destino para `features.parquet` y `labels.parquet`. | Dataset "gold" armonizado que alimentará el entrenamiento/re-entrenamiento. |
+| `data/gold/` | Directorio destino para `features.parquet` y `labels.parquet`. | Dataset "gold" armonizado que alimentará el entrenamiento/re-entrenamiento. |
 | `data/` | Configuración operativa (catálogo de procesos, logs, presets de objetivos) y modelos empaquetados. | Cruce de parámetros de proceso, restricciones operacionales y mediciones previas. |
 | `data/models/` | Modelos actuales (`rexai_regressor.joblib`, `metadata.json`, clasificadores). | Sirven para validar compatibilidad de features/targets y para bootstrap mientras se migra al nuevo pipeline. |
 
