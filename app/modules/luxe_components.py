@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import math
+import re
 import unicodedata
 from dataclasses import dataclass, field
 from html import escape
@@ -982,7 +983,14 @@ _LUXE_COMPONENT_CSS = """
 
 .mission-board__content {
   display: grid;
-  gap: 4px;
+  gap: 6px;
+}
+
+.mission-board__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
 }
 
 .mission-board__content strong {
@@ -991,8 +999,83 @@ _LUXE_COMPONENT_CSS = """
 
 .mission-board__content p {
   margin: 0;
-  color: var(--muted, rgba(226, 232, 240, 0.78));
-  font-size: 0.9rem;
+}
+
+.mission-board__status {
+  padding: 0.18rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: color-mix(in srgb, var(--accent) 85%, var(--ink) 15%);
+  white-space: nowrap;
+}
+
+.mission-board__status--ok {
+  background: color-mix(in srgb, var(--tone-ok-bg) 65%, transparent);
+  border-color: color-mix(in srgb, var(--tone-ok-border) 70%, transparent);
+  color: var(--tone-ok-fg);
+}
+
+.mission-board__status--pendiente {
+  background: color-mix(in srgb, var(--tone-warn-bg) 55%, transparent);
+  border-color: color-mix(in srgb, var(--tone-warn-border) 68%, transparent);
+  color: var(--tone-warn-fg);
+}
+
+.mission-board__status--alerta {
+  background: color-mix(in srgb, var(--tone-risk-bg) 55%, transparent);
+  border-color: color-mix(in srgb, var(--tone-risk-border) 68%, transparent);
+  color: var(--tone-risk-fg);
+}
+
+.mission-board__subtitle {
+  color: color-mix(in srgb, var(--muted) 92%, transparent);
+  font-size: 0.86rem;
+}
+
+.mission-board__description {
+  color: color-mix(in srgb, var(--muted) 82%, transparent);
+  font-size: 0.83rem;
+}
+
+.mission-board__item[data-status='ok'] .mission-board__link {
+  border-color: color-mix(in srgb, var(--tone-ok-border) 55%, transparent);
+  background: color-mix(in srgb, var(--tone-ok-bg) 32%, var(--surface-panel) 68%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone-ok-border) 28%, transparent);
+}
+
+.mission-board__item[data-status='pendiente'] .mission-board__link {
+  border-color: color-mix(in srgb, var(--tone-warn-border) 55%, transparent);
+  background: color-mix(in srgb, var(--tone-warn-bg) 28%, var(--surface-panel) 72%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone-warn-border) 24%, transparent);
+}
+
+.mission-board__item[data-status='alerta'] .mission-board__link {
+  border-color: color-mix(in srgb, var(--tone-risk-border) 55%, transparent);
+  background: color-mix(in srgb, var(--tone-risk-bg) 30%, var(--surface-panel) 70%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone-risk-border) 26%, transparent);
+}
+
+.mission-board__item[data-status='ok'] .mission-board__badge {
+  background: color-mix(in srgb, var(--tone-ok-bg) 55%, transparent);
+  color: var(--tone-ok-fg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone-ok-border) 48%, transparent);
+}
+
+.mission-board__item[data-status='pendiente'] .mission-board__badge {
+  background: color-mix(in srgb, var(--tone-warn-bg) 48%, transparent);
+  color: var(--tone-warn-fg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone-warn-border) 45%, transparent);
+}
+
+.mission-board__item[data-status='alerta'] .mission-board__badge {
+  background: color-mix(in srgb, var(--tone-risk-bg) 50%, transparent);
+  color: var(--tone-risk-fg);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone-risk-border) 46%, transparent);
 }
 
 .luxe-mission-metric h5 {
@@ -4013,6 +4096,8 @@ class MissionBoardStep:
     description: str
     href: str
     icon: str | None = None
+    status: str | None = None
+    subtitle: str | None = None
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any]) -> "MissionBoardStep":
@@ -4022,6 +4107,10 @@ class MissionBoardStep:
             description=str(payload.get("description", "")),
             href=str(payload.get("href", "")),
             icon=payload.get("icon"),
+            status=(str(payload["status"]) if payload.get("status") is not None else None),
+            subtitle=(
+                str(payload["subtitle"]) if payload.get("subtitle") is not None else None
+            ),
         )
 
     def badge_label(self, index: int) -> str:
@@ -4047,6 +4136,16 @@ class MissionBoard:
         steps = [MissionBoardStep.from_mapping(item) for item in payload]
         return cls(steps=steps, title=title, reveal=reveal, density=density)
 
+    @staticmethod
+    def _status_slug(value: str) -> str:
+        normalized = unicodedata.normalize("NFKD", value)
+        without_marks = "".join(
+            ch for ch in normalized if unicodedata.category(ch)[0] != "M"
+        )
+        lowered = without_marks.lower()
+        sanitized = re.sub(r"[^a-z0-9]+", "-", lowered)
+        return sanitized.strip("-")
+
     def _badge_style(self) -> str:
         padding_map = {"compact": "12px 14px", "cozy": "14px 16px", "roomy": "16px 18px"}
         gap_map = {"compact": "0.7rem", "cozy": "0.85rem", "roomy": "1rem"}
@@ -4068,6 +4167,29 @@ class MissionBoard:
             item_classes = ["mission-board__item"]
             if highlight_key and step.key == highlight_key:
                 item_classes.append("is-active")
+            status_label = step.status or ""
+            status_code = self._status_slug(status_label) if status_label else ""
+            status_html = ""
+            if status_label:
+                status_html = (
+                    "<span class='mission-board__status mission-board__status--"
+                    f"{status_code}'>"
+                    f"{escape(status_label)}"
+                    "</span>"
+                )
+            subtitle_html = (
+                f"<p class='mission-board__subtitle'>{escape(step.subtitle)}</p>"
+                if step.subtitle
+                else ""
+            )
+            description_html = (
+                f"<p class='mission-board__description'>{escape(step.description)}</p>"
+                if step.description
+                else ""
+            )
+            if status_code:
+                item_classes.append(f"mission-board__item--{status_code}")
+            data_attr = f" data-status='{status_code}'" if status_code else ""
             icon_html = (
                 f"<span class='mission-board__icon'>{escape(str(step.icon))}</span>"
                 if step.icon is not None
@@ -4075,13 +4197,17 @@ class MissionBoard:
             )
             list_items.append(
                 (
-                    f"<li class='{_class_names(item_classes)}' data-key='{step.key}'>"
+                    f"<li class='{_class_names(item_classes)}' data-key='{step.key}'{data_attr}>"
                     f"<a class='mission-board__link' href='{escape(step.href)}' target='_self'>"
                     f"<span class='mission-board__badge'>{escape(step.badge_label(idx))}</span>"
                     f"{icon_html}"
                     "<div class='mission-board__content'>"
+                    "<div class='mission-board__header'>"
                     f"<strong>{escape(step.title)}</strong>"
-                    f"<p>{escape(step.description)}</p>"
+                    f"{status_html}"
+                    "</div>"
+                    f"{subtitle_html}"
+                    f"{description_html}"
                     "</div>"
                     "</a>"
                     "</li>"

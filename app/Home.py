@@ -2,6 +2,7 @@
 import _bootstrap  # noqa: F401
 from datetime import datetime
 from pathlib import Path
+import textwrap
 
 import pandas as pd
 import streamlit as st
@@ -195,6 +196,85 @@ mission_metrics = [
     },
 ]
 
+hero_chips = [
+    {"label": "Hook: 8 astronautas → 12.6 t", "tone": "warning"},
+    {"label": "Playbook • Residence Renovations", "tone": "accent"},
+    {"label": "Playbook • Daring Discoveries", "tone": "accent"},
+    {"label": "RandomForest multisalida", "tone": "info"},
+]
+
+target_state = st.session_state.get("target")
+if isinstance(target_state, dict):
+    scenario_label = target_state.get("scenario")
+    if scenario_label:
+        hero_chips.append({"label": f"Escenario • {scenario_label}", "tone": "positive"})
+
+inventory_session_df = st.session_state.get("inventory_data")
+inventory_count = 0
+if isinstance(inventory_session_df, pd.DataFrame):
+    inventory_count = int(inventory_session_df.shape[0])
+inventory_loaded = inventory_count > 0
+
+inventory_status = "OK" if inventory_loaded else "Pendiente"
+if inventory_loaded:
+    item_label = "ítem" if inventory_count == 1 else "ítems"
+    normalized_label = "normalizado" if inventory_count == 1 else "normalizados"
+    inventory_subtitle = f"{inventory_count} {item_label} {normalized_label}"
+else:
+    inventory_subtitle = "Cargá y normalizá tu inventario base."
+
+target_ready = isinstance(target_state, dict) and bool(target_state)
+target_name = ""
+if target_ready:
+    target_name = str(target_state.get("name") or target_state.get("product") or "Objetivo listo")
+target_status = "OK" if target_ready else ("Pendiente" if inventory_loaded else "Alerta")
+target_subtitle = (
+    f"Objetivo {target_name} calibrado" if target_ready else "Definí objetivo y límites energéticos."
+)
+if not inventory_loaded and not target_ready:
+    target_subtitle = "Cargá inventario antes de definir el target."
+
+candidates_state = st.session_state.get("candidates")
+try:
+    candidates_count = len(candidates_state) if candidates_state is not None else 0
+except TypeError:
+    candidates_count = 0
+has_candidates = candidates_count > 0
+
+generator_error_msg = st.session_state.get("generator_button_error")
+if not generator_error_msg and st.session_state.get("generator_button_state") == "error":
+    generator_error_msg = "Revisá los parámetros del generador."
+
+generator_status: str
+if generator_error_msg:
+    generator_status = "Alerta"
+    generator_subtitle = textwrap.shorten(str(generator_error_msg), width=72, placeholder="…")
+elif has_candidates:
+    generator_status = "OK"
+    label = "candidato" if candidates_count == 1 else "candidatos"
+    listo_label = "listo" if candidates_count == 1 else "listos"
+    generator_subtitle = f"{candidates_count} {label} {listo_label}"
+else:
+    generator_status = "Pendiente" if target_ready else "Alerta"
+    generator_subtitle = (
+        "Ejecutá el generador IA." if target_ready else "Configura el target antes de generar."
+    )
+
+selected_candidate = st.session_state.get("selected")
+results_ready = bool(selected_candidate)
+
+if results_ready:
+    results_status = "OK"
+    results_subtitle = "Candidata lista para reportar y exportar."
+elif has_candidates:
+    results_status = "Pendiente"
+    results_subtitle = "Seleccioná una candidata para comparar y exportar."
+else:
+    results_status = "Alerta"
+    results_subtitle = (
+        "Corregí el generador antes de exportar." if generator_error_msg else "Generá recetas antes de reportar."
+    )
+
 hero_col, metrics_col = st.columns([2.8, 1.2], gap="large")
 with hero_col:
     TeslaHero(
@@ -204,12 +284,7 @@ with hero_col:
             "equipamiento listo. Automatiza mezclas con regolito MGS-1 del cráter Jezero, "
             "polímeros EVA y residuos de carga útil para entregar piezas auditables y trazables."
         ),
-        chips=[
-            {"label": "Hook: 8 astronautas → 12.6 t", "tone": "warning"},
-            {"label": "Playbook • Residence Renovations", "tone": "accent"},
-            {"label": "Playbook • Daring Discoveries", "tone": "accent"},
-            {"label": "RandomForest multisalida", "tone": "info"},
-        ],
+        chips=hero_chips,
         icon="🛰️",
         gradient="linear-gradient(135deg, rgba(59,130,246,0.28), rgba(14,165,233,0.08))",
         glow="rgba(96,165,250,0.45)",
@@ -240,6 +315,8 @@ mission_board_payload = [
         "description": "Normalizá residuos NASA y marcá flags EVA o multilayer.",
         "href": "./?page=1_Inventory_Builder",
         "icon": "🧱",
+        "status": inventory_status,
+        "subtitle": inventory_subtitle,
     },
     {
         "key": "target",
@@ -247,6 +324,8 @@ mission_board_payload = [
         "description": "Definí objetivo, límites de agua y energía y presets marcianos.",
         "href": "./?page=2_Target_Designer",
         "icon": "🎯",
+        "status": target_status,
+        "subtitle": target_subtitle,
     },
     {
         "key": "generator",
@@ -254,6 +333,8 @@ mission_board_payload = [
         "description": "Compará recetas IA y heurística y validá contribuciones.",
         "href": "./?page=3_Generator",
         "icon": "🤖",
+        "status": generator_status,
+        "subtitle": generator_subtitle,
     },
     {
         "key": "results",
@@ -261,12 +342,14 @@ mission_board_payload = [
         "description": "Exportá trade-offs, bandas 95% y Sankey para ingeniería.",
         "href": "./?page=4_Results_and_Tradeoffs",
         "icon": "📊",
+        "status": results_status,
+        "subtitle": results_subtitle,
     },
 ]
 mission_board_component = MissionBoard.from_payload(
     mission_board_payload,
     title="Próxima acción",
-    reveal=False,
+    reveal=True,
 )
 timeline_milestones = [
     TimelineMilestone(
