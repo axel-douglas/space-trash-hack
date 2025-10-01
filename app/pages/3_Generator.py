@@ -35,6 +35,8 @@ load_theme()
 
 render_breadcrumbs("generator")
 
+st.header("Generador asistido por IA")
+
 # ----------------------------- Helpers -----------------------------
 TARGET_DISPLAY = {
     "rigidez": "Rigidez",

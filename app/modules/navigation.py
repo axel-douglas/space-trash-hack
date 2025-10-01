@@ -53,19 +53,42 @@ def _step_from_key(step_key: str | None) -> MissionStep | None:
 
 
 @lru_cache(maxsize=1)
-def _model_metadata() -> dict[str, str]:
+def _model_metadata() -> dict[str, str | dict[str, str]]:
     """Read lightweight metadata from the model registry once per run."""
 
     registry = get_model_registry()
     ready = "✅ Listo" if registry.ready else "⚠️ Requiere entrenamiento"
     trained_label = registry.metadata.get("trained_label") or registry.metadata.get("trained_on") or "—"
     trained_at = registry.metadata.get("trained_at") or "sin metadata"
+
+    status_badge = {
+        "label": "Modelo listo" if registry.ready else "Entrenamiento pendiente",
+        "tone": "success" if registry.ready else "danger",
+    }
+
+    uncertainty_raw = registry.uncertainty_label()
+    uncertainty_tone: str
+    lowered = uncertainty_raw.lower()
+    if lowered in {"reportada", "reported"}:
+        uncertainty_tone = "success"
+    elif lowered in {"alta", "high"}:
+        uncertainty_tone = "danger"
+    else:
+        uncertainty_tone = "warning"
+
+    uncertainty_badge = {
+        "label": f"Incertidumbre {uncertainty_raw}",
+        "tone": uncertainty_tone,
+    }
+
     return {
         "status": ready,
         "model_name": registry.metadata.get("model_name", "rexai-rf-ensemble"),
         "trained_label": str(trained_label),
         "trained_at": str(trained_at),
-        "uncertainty": registry.uncertainty_label(),
+        "uncertainty": uncertainty_raw,
+        "status_badge": status_badge,
+        "uncertainty_badge": uncertainty_badge,
     }
 
 
@@ -81,14 +104,28 @@ def _hud_css() -> str:
         border-radius: var(--mission-hud-radius, 18px); padding: 12px 18px; display: grid; grid-template-columns: auto 1fr auto; gap: var(--mission-hud-gap, 16px); align-items: center;
         box-shadow: var(--mission-hud-shadow, 0 18px 38px rgba(8,18,36,0.32));}
       .mission-hud__logo {display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: .02em; color: var(--ink, #e2e8f0); font-size: 1.05rem;}
-      .mission-hud__actions {display: flex; gap: 10px; align-items: center;}
+      .mission-hud__actions {display: flex; gap: 10px; align-items: center; flex-wrap: wrap;}
       .mission-hud__action {display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 14px; border: 1px solid rgba(148,163,184,0.22);
         background: rgba(15,23,42,0.35); color: rgba(226,232,240,0.78); font-size: 0.82rem; text-decoration: none; transition: all .3s ease; white-space: nowrap;}
       .mission-hud__action:hover {border-color: rgba(96,165,250,0.45); color: #f8fafc;}
       .mission-hud__action.is-current {border-color: rgba(96,165,250,0.78); background: linear-gradient(135deg, rgba(59,130,246,0.38), rgba(14,165,233,0.22)); color: #f8fafc;}
-      .mission-hud__meta {display: flex; align-items: center; gap: 12px;}
+      .mission-hud__action--back {border-style: dashed; border-color: rgba(148,163,184,0.35); background: rgba(15,23,42,0.2); font-size: 0.78rem; opacity: 0.85;}
+      .mission-hud__action--back:hover {opacity: 1; border-color: rgba(96,165,250,0.5);}
+      .mission-hud__meta {display: flex; align-items: center; gap: 12px; flex-wrap: wrap;}
+      .mission-hud__status {display: inline-flex; gap: 8px; flex-wrap: wrap; align-items: center;}
+      .mission-hud__badge {display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px; font-size: 0.74rem; font-weight: 600; letter-spacing: 0.01em;
+        text-transform: uppercase; border: 1px solid transparent; background: rgba(148,163,184,0.18); color: rgba(226,232,240,0.88);}
+      .mission-hud__badge--success {background: rgba(34,197,94,0.18); border-color: rgba(34,197,94,0.35); color: rgba(187,247,208,0.95);}
+      .mission-hud__badge--warning {background: rgba(250,204,21,0.16); border-color: rgba(250,204,21,0.32); color: rgba(254,240,138,0.95);}
+      .mission-hud__badge--danger {background: rgba(248,113,113,0.16); border-color: rgba(248,113,113,0.36); color: rgba(254,202,202,0.95);}
+      .mission-hud__target {display: grid; gap: 4px; font-size: 0.78rem; color: rgba(226,232,240,0.82);}
+      .mission-hud__target-label {font-weight: 600; letter-spacing: 0.01em;}
+      .mission-hud__target-limits {display: inline-flex; gap: 6px; flex-wrap: wrap;}
+      .mission-hud__target-pill {display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 999px; border: 1px solid rgba(148,163,184,0.28); background: rgba(15,23,42,0.42);
+        font-size: 0.72rem; color: rgba(226,232,240,0.8);}
+      .mission-hud__target-pill.is-empty {opacity: 0.6; font-style: italic;}
       .mission-hud__settings {padding: 7px 12px; border-radius: 12px; border: 1px solid rgba(96,165,250,0.32); background: rgba(15,23,42,0.55);
-        color: #e2e8f0; font-size: 0.78rem; text-decoration: none; transition: all .3s ease; display: inline-flex; align-items: center; gap: 6px;}
+        color: #e2e8f0; font-size: 0.78rem; text-decoration: none; transition: all .3s ease; display: inline-flex; align-items:center; gap: 6px;}
       .mission-hud__settings:hover {background: rgba(59,130,246,0.18);}
       .mission-hud__details {margin: 0; position: relative;}
       .mission-hud__details summary {list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 12px;
@@ -137,24 +174,99 @@ def render_mission_hud() -> None:
         current_index = 0
         active_step = MISSION_STEPS[0]
 
-    visible_steps: list[tuple[MissionStep, bool]] = []
-    for offset in range(3):
-        idx = current_index + offset
-        if idx >= len(MISSION_STEPS):
-            break
-        step = MISSION_STEPS[idx]
-        visible_steps.append((step, offset == 0))
+    core_keys = ("inventory", "target", "generator", "results")
+    core_steps = [step for step in MISSION_STEPS if step.key in core_keys]
+
+    active_core_key: str | None
+    if active_step.key in core_keys:
+        active_core_key = active_step.key
+    else:
+        inventory_index = next((i for i, step in enumerate(MISSION_STEPS) if step.key == "inventory"), 0)
+        results_index = next((i for i, step in enumerate(MISSION_STEPS) if step.key == "results"), len(MISSION_STEPS) - 1)
+        if current_index <= inventory_index:
+            active_core_key = "inventory"
+        elif current_index >= results_index:
+            active_core_key = "results"
+        else:
+            active_core_key = None
+
+    visible_steps: list[tuple[MissionStep, bool]] = [
+        (step, step.key == active_core_key)
+        for step in core_steps
+    ]
+
+    if active_core_key is None and core_steps:
+        closest = min(
+            core_steps,
+            key=lambda step: abs(MISSION_STEPS.index(step) - current_index),
+        )
+        visible_steps = [
+            (step, step is closest)
+            for step in core_steps
+        ]
+
+    quick_back_steps: list[MissionStep] = []
+    if current_index > 0:
+        quick_back_steps.append(MISSION_STEPS[current_index - 1])
+    if current_index > 1:
+        quick_back_steps.append(MISSION_STEPS[current_index - 2])
 
     actions_markup = []
+    for step in reversed(quick_back_steps):
+        actions_markup.append(
+            """
+            <a class="mission-hud__action mission-hud__action--back" href="{url}" title="Volver a {title}">
+              ‹ {label}
+            </a>
+            """.format(
+                url=_page_url(step.page),
+                title=step.description,
+                label=step.label,
+            ).strip()
+        )
+
     for step, is_current in visible_steps:
         step_idx = MISSION_STEPS.index(step) + 1
         label = f"<span>{step.icon}</span><strong>{step_idx} · {step.label}</strong>"
         class_attr = "is-current" if is_current else ""
         actions_markup.append(
-            f"<a class='mission-hud__action {class_attr}' href='{_page_url(step.page)}' title='{step.description}'>"
+            f"<a class=\"mission-hud__action {class_attr}\" href=\"{_page_url(step.page)}\" title=\"{step.description}\">"
             f"{label}"
             "</a>"
         )
+
+    target_state = st.session_state.get("target", {})
+
+    def _format_limit(value: object) -> str:
+        if isinstance(value, (int, float)):
+            if isinstance(value, float) and value.is_integer():
+                value = int(value)
+            return f"{value:,}".replace(",", "·")
+        return str(value)
+
+    scenario_label = target_state.get("scenario") or "Sin escenario asignado"
+    limit_fields = (
+        ("max_water_l", "Agua", "L"),
+        ("max_energy_kwh", "Energía", "kWh"),
+        ("max_crew_min", "Crew", "min"),
+    )
+    limit_pills = []
+    for field, label, unit in limit_fields:
+        value = target_state.get(field)
+        if value is None:
+            continue
+        limit_pills.append(
+            f"<span class='mission-hud__target-pill'>{label} ≤ {_format_limit(value)} {unit}</span>"
+        )
+    if target_state.get("crew_time_low"):
+        limit_pills.append("<span class='mission-hud__target-pill'>Crew-time low</span>")
+    if not limit_pills:
+        limit_pills.append("<span class='mission-hud__target-pill is-empty'>Sin límites definidos</span>")
+
+    def _badge_markup(data: dict[str, str]) -> str:
+        tone = data.get("tone", "warning")
+        label = data.get("label", "Estado")
+        return f"<span class='mission-hud__badge mission-hud__badge--{tone}'>{label}</span>"
 
     details_rows = """
         <dl>
@@ -175,10 +287,18 @@ def render_mission_hud() -> None:
     st.markdown(
         f"""
         <div class="mission-hud mission-hud--compact">
-          <div class="mission-hud__wrap">
+            <div class="mission-hud__wrap">
             <div class="mission-hud__logo">🛰️ Mission HUD <span style="opacity:0.6;font-weight:500;">Rex-AI</span></div>
             <div class="mission-hud__actions">{''.join(actions_markup)}</div>
             <div class="mission-hud__meta">
+              <div class="mission-hud__status">
+                {_badge_markup(metadata["status_badge"])}
+                {_badge_markup(metadata["uncertainty_badge"])}
+              </div>
+              <div class="mission-hud__target">
+                <span class="mission-hud__target-label">Escenario · {scenario_label}</span>
+                <div class="mission-hud__target-limits">{''.join(limit_pills)}</div>
+              </div>
               <details class="mission-hud__details">
                 <summary>Detalles del modelo</summary>
                 <div class="mission-hud__details-content">
