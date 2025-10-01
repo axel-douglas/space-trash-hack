@@ -68,10 +68,10 @@ optimizador) se mantengan iguales entre ejecuciones.
    archivo antes de continuar para corregir filas inválidas o faltantes.
 2. **Generar artefactos mínimos**. Una vez limpia la ingesta, corre
    `python -m app.modules.model_training --gold datasets/gold --append-logs "data/logs/feedback_*.parquet"`
-   para producir el pipeline base y los metadatos indispensables en `data/models/`
-   (por ejemplo `data/models/rexai_regressor.joblib` y `data/models/metadata.json`). El
-   plan detallado de entrenamiento y variantes está descrito en
-   [README_ML_GAMEPLAN.md](README_ML_GAMEPLAN.md).
+  para producir el pipeline base y los metadatos indispensables en `data/models/`
+  (por ejemplo `data/models/rexai_regressor.joblib` y `data/models/metadata.json`). El
+  plan detallado de entrenamiento y variantes se encuentra ahora documentado en la
+  wiki histórica del proyecto (sección «ML Gameplan»), fuera de este repositorio.
 3. **Confirmar el modo activo**. Si `data/models/rexai_regressor.joblib` no existe cuando se
    levanta la aplicación, `ModelRegistry` lanza un bootstrap automático que entrena un RandomForest
    sintético ligero y lo guarda en `data/models/`. Esto evita tener que versionar binarios para
