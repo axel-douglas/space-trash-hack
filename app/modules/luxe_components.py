@@ -6,7 +6,6 @@ import base64
 import json
 import math
 import re
-import time
 import unicodedata
 from dataclasses import dataclass, field
 from html import escape
@@ -3078,10 +3077,6 @@ def target_configurator(
         with feedback_area.container():
             st.markdown("#### Feedback de ajuste")
             progress_bar = st.progress(0)
-            step = max(1, intensity_percent // 6)
-            for progress in range(0, intensity_percent + step, step):
-                progress_bar.progress(min(progress, 100))
-                time.sleep(0.03)
             progress_bar.progress(intensity_percent)
 
             if st.session_state.get("_target_audio"):
