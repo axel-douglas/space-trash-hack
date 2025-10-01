@@ -60,6 +60,7 @@ def test_candidate_table_filters_and_feedback() -> None:
     filtered_html = "".join(_collect_markup(app))
     assert "Proceso Riesgoso" not in filtered_html
     assert "🛡️ Filtro: seguros" in filtered_html
+    assert "💧 Dentro de límite de agua" in filtered_html
 
     from app.modules import candidate_showroom as showroom
 
