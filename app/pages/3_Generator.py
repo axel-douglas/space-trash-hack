@@ -31,6 +31,12 @@ from app.modules.luxe_components import (
     RankingCockpit,
 )
 from app.modules.visualizations import ConvergenceScene
+from app.modules.schema import (
+    ALUMINIUM_LABEL_COLUMNS,
+    ALUMINIUM_NUMERIC_COLUMNS,
+    POLYMER_LABEL_COLUMNS,
+    POLYMER_METRIC_COLUMNS,
+)
 
 st.set_page_config(page_title="Rex-AI • Generador", page_icon="🤖", layout="wide")
 
@@ -61,33 +67,6 @@ TARGET_DISPLAY = {
     "water_l": "Agua (L)",
     "crew_min": "Crew (min)",
 }
-
-POLYMER_NUMERIC_COLUMNS = (
-    "pc_density_density_g_per_cm3",
-    "pc_mechanics_tensile_strength_mpa",
-    "pc_mechanics_modulus_gpa",
-    "pc_thermal_glass_transition_c",
-    "pc_ignition_ignition_temperature_c",
-    "pc_ignition_burn_time_min",
-)
-
-POLYMER_LABEL_COLUMNS = (
-    "pc_density_sample_label",
-    "pc_mechanics_sample_label",
-    "pc_thermal_sample_label",
-    "pc_ignition_sample_label",
-)
-
-ALUMINIUM_NUMERIC_COLUMNS = (
-    "aluminium_tensile_strength_mpa",
-    "aluminium_yield_strength_mpa",
-    "aluminium_elongation_pct",
-)
-
-ALUMINIUM_LABEL_COLUMNS = (
-    "aluminium_processing_route",
-    "aluminium_class_id",
-)
 
 POLYMER_LABEL_MAP = {
     "density_g_cm3": "ρ ref (g/cm³)",
@@ -260,7 +239,7 @@ def _collect_external_profiles(candidate: Mapping[str, Any], inventory: pd.DataF
         unique_labels = sorted(dict.fromkeys(labels))
         return {"metrics": metrics, "labels": unique_labels}
 
-    polymer_section = _build_section(POLYMER_NUMERIC_COLUMNS, POLYMER_LABEL_COLUMNS)
+    polymer_section = _build_section(POLYMER_METRIC_COLUMNS, POLYMER_LABEL_COLUMNS)
     if polymer_section:
         payload["polymer"] = polymer_section
 
