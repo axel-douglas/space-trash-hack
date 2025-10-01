@@ -1,6 +1,6 @@
 # app/Home.py
 import _bootstrap  # noqa: F401
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 import textwrap
 
@@ -106,27 +106,55 @@ def _tone_max(current: str, candidate: str) -> str:
 
 
 def training_health_summary(
-    trained_dt: datetime | None, n_samples: int | None
+    trained_dt: datetime | str | None, n_samples: int | None
 ) -> tuple[str, list[str]]:
     """Return tone and bullet points describing training freshness."""
 
     tone = "positive"
     notes: list[str] = []
 
+    normalized_dt: datetime | None = None
+
     if not trained_dt:
         notes.append("Sin fecha de entrenamiento registrada")
         tone = "danger"
     else:
-        age_days = max((datetime.utcnow() - trained_dt).days, 0)
-        notes.append(f"Edad del modelo: {age_days} días")
-        if age_days > 180:
-            tone = "danger"
-            notes.append("⚠️ Reentrená: supera 6 meses")
-        elif age_days > 90:
+        parsed_note: str | None = None
+        if isinstance(trained_dt, datetime):
+            normalized_dt = trained_dt
+        elif isinstance(trained_dt, str):
+            iso_str = trained_dt.strip()
+            if iso_str.endswith("Z"):
+                iso_str = iso_str[:-1] + "+00:00"
+            try:
+                normalized_dt = datetime.fromisoformat(iso_str)
+            except ValueError:
+                parsed_note = "Formato de fecha no reconocido"
+        else:
+            parsed_note = f"Tipo de fecha inesperado: {type(trained_dt).__name__}"
+
+        if normalized_dt is None:
             tone = _tone_max(tone, "warning")
-            notes.append("Sugerido reentrenar en <90 días")
-        elif age_days <= 30:
-            notes.append("Entrenamiento reciente (<30 días)")
+            notes.append(parsed_note or "Fecha de entrenamiento no interpretable")
+        else:
+            try:
+                if normalized_dt.tzinfo is None:
+                    normalized_dt = normalized_dt.replace(tzinfo=timezone.utc)
+                else:
+                    normalized_dt = normalized_dt.astimezone(timezone.utc)
+                age_days = max((datetime.now(timezone.utc) - normalized_dt).days, 0)
+                notes.append(f"Edad del modelo: {age_days} días")
+                if age_days > 180:
+                    tone = "danger"
+                    notes.append("⚠️ Reentrená: supera 6 meses")
+                elif age_days > 90:
+                    tone = _tone_max(tone, "warning")
+                    notes.append("Sugerido reentrenar en <90 días")
+                elif age_days <= 30:
+                    notes.append("Entrenamiento reciente (<30 días)")
+            except Exception as exc:  # pragma: no cover - defensive
+                tone = _tone_max(tone, "warning")
+                notes.append(f"No se pudo normalizar fecha: {exc}")
 
     sample_count = int(n_samples or 0)
     if sample_count <= 0:
