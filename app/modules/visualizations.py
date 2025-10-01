@@ -3,32 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Iterable, Sequence
+from typing import Sequence
 
 import altair as alt
 import pandas as pd
 import streamlit as st
-
-
-_BADGE_CSS = """
-.convergence-badges{display:flex;flex-wrap:wrap;gap:12px;margin:0.4rem 0 0.8rem;}
-.convergence-badge{position:relative;padding:0.65rem 0.95rem;border-radius:14px;backdrop-filter:blur(18px);color:#e2e8f0;min-width:180px;box-shadow:0 18px 36px rgba(15,23,42,0.25);background:linear-gradient(135deg,rgba(59,130,246,0.52),rgba(30,64,175,0.32));overflow:hidden;}
-.convergence-badge[data-tone="iris"]{background:linear-gradient(135deg,rgba(168,85,247,0.55),rgba(67,56,202,0.32));}
-.convergence-badge strong{display:block;font-size:1.4rem;font-weight:700;letter-spacing:0.01em;}
-.convergence-badge span{display:block;font-size:0.78rem;letter-spacing:0.08em;text-transform:uppercase;color:rgba(226,232,240,0.82);margin-bottom:0.2rem;}
-.convergence-badge::after{content:"";position:absolute;inset:-60%;background:radial-gradient(circle at center,rgba(255,255,255,0.18) 0,rgba(255,255,255,0) 65%);opacity:0;animation:badgePulse 6s ease-in-out infinite;}
-.convergence-badge[data-tone="iris"]::after{animation-delay:1.2s;}
-@keyframes badgePulse{0%,100%{opacity:0;transform:scale(0.65);}45%{opacity:0.8;transform:scale(1.05);}60%{opacity:0;transform:scale(1.2);}}
-.convergence-copy{font-size:0.85rem;color:rgba(226,232,240,0.76);margin-bottom:0.4rem;}
-"""
-
-
-def _ensure_badge_css() -> None:
-    key = "__convergence_badge_css__"
-    if st.session_state.get(key):
-        return
-    st.markdown(f"<style>{_BADGE_CSS}</style>", unsafe_allow_html=True)
-    st.session_state[key] = True
 
 
 def _format_value(value: float | int | None, fmt: str, *, suffix: str = "") -> str:
@@ -39,7 +18,7 @@ def _format_value(value: float | int | None, fmt: str, *, suffix: str = "") -> s
 
 @dataclass
 class ConvergenceScene:
-    """Render a convergence chart with animated badges and microcopy."""
+    """Render a convergence chart with KPI metrics and microcopy."""
 
     history_df: pd.DataFrame
     title: str = "Convergencia del optimizador"
@@ -88,28 +67,26 @@ class ConvergenceScene:
             return alt.Chart(pd.DataFrame({"iteration": [], "value": []}))
 
         data = self._prepared
-        base = alt.Chart(data).encode(x=alt.X("iteration:Q", title="Iteración"))
+        base = alt.Chart(data).encode(
+            x=alt.X(
+                "iteration:Q",
+                title="Iteración",
+                axis=alt.Axis(labelColor="#94a3b8", titleColor="#94a3b8"),
+            )
+        )
 
-        hypervolume_line = base.mark_line(color="#38bdf8", strokeWidth=3).encode(
+        hypervolume_line = base.mark_line(color="#38bdf8", strokeWidth=2.4).encode(
             y=alt.Y(
                 "hypervolume:Q",
                 title="Hipervolumen (↑ mejor)",
-                axis=alt.Axis(titleColor="#38bdf8"),
+                axis=alt.Axis(titleColor="#38bdf8", labelColor="#cbd5f5"),
             ),
             tooltip=[
                 alt.Tooltip("iteration:Q", title="Iteración", format="d"),
                 alt.Tooltip("hypervolume:Q", title="Hipervolumen", format=".3f"),
             ],
         )
-        hypervolume_points = base.mark_circle(color="#93c5fd", size=85, opacity=0.95).encode(
-            y="hypervolume:Q",
-            tooltip=[
-                alt.Tooltip("iteration:Q", title="Iteración", format="d"),
-                alt.Tooltip("hypervolume:Q", title="Hipervolumen", format=".3f"),
-            ],
-        )
-
-        dominance_line = base.mark_line(color="#c084fc", strokeDash=[6, 3], strokeWidth=2.6).encode(
+        dominance_line = base.mark_line(color="#c084fc", strokeWidth=2.2).encode(
             y=alt.Y(
                 "dominance_pct:Q",
                 title="Dominancia Pareto (%)",
@@ -117,27 +94,17 @@ class ConvergenceScene:
             ),
             tooltip=[
                 alt.Tooltip("iteration:Q", title="Iteración", format="d"),
-                alt.Tooltip("dominance_ratio:Q", title="Dominancia", format=".2%"),
-                alt.Tooltip("dominance_pct:Q", title="Dominancia (%)", format=".1f"),
+                alt.Tooltip("dominance_ratio:Q", title="Dominancia", format=".1%"),
             ],
         )
-        dominance_points = base.mark_square(color="#f0abfc", size=80, opacity=0.9).encode(
-            y="dominance_pct:Q",
-            tooltip=[
-                alt.Tooltip("iteration:Q", title="Iteración", format="d"),
-                alt.Tooltip("dominance_ratio:Q", title="Dominancia", format=".2%"),
-                alt.Tooltip("dominance_pct:Q", title="Dominancia (%)", format=".1f"),
-            ],
-        )
-
-        layered = alt.layer(hypervolume_line, hypervolume_points, dominance_line, dominance_points)
+        layered = alt.layer(hypervolume_line, dominance_line)
         layered = layered.resolve_scale(y="independent").properties(height=self.height)
         layered = layered.configure_axis(
-            grid=True,
-            gridOpacity=0.15,
+            grid=False,
             labelColor="#cbd5f5",
             titleFontWeight="bold",
             titleFontSize=12,
+            ticks=False,
         ).configure_view(strokeOpacity=0)
 
         return layered.interactive()
@@ -148,34 +115,22 @@ class ConvergenceScene:
             target.info("Sin datos de convergencia todavía. Ejecutá el optimizador para graficar su progreso.")
             return
 
-        _ensure_badge_css()
-
         target.subheader(self.title)
         if self.subtitle:
             target.caption(self.subtitle)
 
         last = self._prepared.dropna(subset=["hypervolume", "dominance_ratio"], how="all").iloc[-1]
         hv = last.get("hypervolume")
-        dom_pct = last.get("dominance_pct")
+        dom_ratio = last.get("dominance_ratio")
         pareto_size = last.get("pareto_size")
 
-        badges = """
-        <div class=\"convergence-badges\">
-          <div class=\"convergence-badge\" data-tone=\"aqua\">
-            <span>Hipervolumen</span>
-            <strong>{_format_value(hv, '.3f')}</strong>
-          </div>
-          <div class=\"convergence-badge\" data-tone=\"iris\">
-            <span>Dominancia Pareto</span>
-            <strong>{_format_value(dom_pct, '.1f', suffix='%')}</strong>
-          </div>
-        </div>
-        """
-        target.markdown(badges, unsafe_allow_html=True)
+        col_hv, col_dom = target.columns(2)
+        col_hv.metric("Hipervolumen", _format_value(hv, ".3f"))
+        col_dom.metric("Dominancia Pareto", _format_value(dom_ratio, ".1%"))
 
-        copy_lines: Iterable[str]
+        copy_lines: Sequence[str]
         if self.microcopy is not None:
-            copy_lines = self.microcopy
+            copy_lines = list(self.microcopy)[:2]
         else:
             default_lines: list[str] = []
             iteration = int(last.get("iteration", 0))
@@ -193,14 +148,14 @@ class ConvergenceScene:
                 default_lines.append(
                     f"Último score evaluado: **{float(score):.3f}** (penalización {penalty_text})."
                 )
-            default_lines.append(
-                "El hipervolumen refleja cuánto se expande el frente multiobjetivo; la dominancia indica qué porcentaje del "
-                "pool queda superado."
-            )
-            copy_lines = default_lines
+            else:
+                default_lines.append(
+                    "El hipervolumen resume la expansión del frente multiobjetivo y la dominancia el porcentaje superado."
+                )
+            copy_lines = default_lines[:2]
 
         for line in copy_lines:
-            target.markdown(f"<div class='convergence-copy'>• {line}</div>", unsafe_allow_html=True)
+            target.markdown(f"- {line}")
 
         chart = self.build_chart()
         target.altair_chart(chart, use_container_width=True)
