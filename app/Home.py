@@ -54,6 +54,166 @@ def format_mass(value: float | int | None) -> str:
     return f"{value:.0f} kg"
 
 
+def _tone_rank(tone: str | None) -> int:
+    order = {"positive": 0, "info": 1, "warning": 2, "danger": 3}
+    return order.get(tone or "", -1)
+
+
+def _tone_max(current: str, candidate: str) -> str:
+    return candidate if _tone_rank(candidate) > _tone_rank(current) else current
+
+
+def training_health_summary(
+    trained_dt: datetime | None, n_samples: int | None
+) -> tuple[str, list[str]]:
+    """Return tone and bullet points describing training freshness."""
+
+    tone = "positive"
+    notes: list[str] = []
+
+    if not trained_dt:
+        notes.append("Sin fecha de entrenamiento registrada")
+        tone = "danger"
+    else:
+        age_days = max((datetime.utcnow() - trained_dt).days, 0)
+        notes.append(f"Edad del modelo: {age_days} días")
+        if age_days > 180:
+            tone = "danger"
+            notes.append("⚠️ Reentrená: supera 6 meses")
+        elif age_days > 90:
+            tone = _tone_max(tone, "warning")
+            notes.append("Sugerido reentrenar en <90 días")
+        elif age_days <= 30:
+            notes.append("Entrenamiento reciente (<30 días)")
+
+    sample_count = int(n_samples or 0)
+    if sample_count <= 0:
+        tone = "danger"
+        notes.append("Sin muestras declaradas")
+    else:
+        notes.append(f"Muestras: {sample_count:,}")
+        if sample_count < 400:
+            tone = _tone_max(tone, "warning")
+            notes.append("Amplía dataset: <400 muestras")
+        elif sample_count >= 1000:
+            notes.append("Cobertura sólida (≥1k)")
+
+    return tone, notes
+
+
+def uncertainty_health_summary(metadata: dict[str, object]) -> tuple[str, list[str]]:
+    """Compute tone and highlights from residual_std metadata."""
+
+    residual_std = metadata.get("residual_std")
+    if not isinstance(residual_std, dict) or not residual_std:
+        return "danger", ["Sin residuales reportados"]
+
+    def _get_float(key: str, default: float = 0.0) -> float:
+        try:
+            return float(residual_std.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    energy_std = _get_float("energy_kwh")
+    water_std = _get_float("water_l")
+    crew_std = _get_float("crew_min")
+    rigidity_std = _get_float("rigidez")
+    tightness_std = _get_float("estanqueidad")
+
+    tone = "positive"
+    if any(value == 0 for value in (energy_std, water_std, crew_std)):
+        tone = _tone_max(tone, "warning")
+
+    if energy_std > 22000 or crew_std > 6000 or water_std > 220:
+        tone = "danger"
+    elif energy_std > 16000 or crew_std > 4500 or water_std > 160:
+        tone = _tone_max(tone, "warning")
+
+    if rigidity_std > 0.45 or tightness_std > 0.12:
+        tone = _tone_max(tone, "warning")
+
+    notes = [
+        f"σ energía: {energy_std:.0f} kWh",
+        f"σ agua: {water_std:.0f} L",
+        f"σ crew: {crew_std:.0f} min",
+        f"σ rigidez: {rigidity_std:.3f}",
+        f"σ estanqueidad: {tightness_std:.3f}",
+    ]
+
+    return tone, notes
+
+
+def compute_inventory_totals(df: pd.DataFrame | None) -> dict[str, float]:
+    if df is None or df.empty:
+        return {}
+
+    mass = pd.to_numeric(df.get("mass_kg"), errors="coerce").fillna(0.0)
+    moisture = pd.to_numeric(df.get("moisture_pct"), errors="coerce").fillna(0.0) / 100.0
+    difficulty = (
+        pd.to_numeric(df.get("difficulty_factor"), errors="coerce")
+        .fillna(1.0)
+        .clip(lower=1.0, upper=3.0)
+    )
+
+    base_energy = 0.12  # kWh/kg para operaciones base (shredder)
+    max_energy = 0.70   # kWh/kg para operaciones complejas (sinterizado)
+    energy_per_kg = base_energy + (difficulty - 1.0) / 2.0 * (max_energy - base_energy)
+
+    totals = {
+        "mass_kg": float(mass.sum()),
+        "water_l": float((mass * moisture).sum()),
+        "energy_kwh": float((mass * energy_per_kg).sum()),
+    }
+    return totals
+
+
+def classify_inventory_tone(value: float, warn: float, danger: float) -> str:
+    if value >= danger:
+        return "danger"
+    if value >= warn:
+        return "warning"
+    return "positive"
+
+
+def compute_delta_strings(
+    key: str,
+    current: float,
+    previous: dict[str, float] | None,
+    unit: str,
+    *,
+    precision: int = 0,
+) -> tuple[str | None, str]:
+    if previous is None or key not in previous:
+        return None, "Sin historial previo"
+
+    diff = current - previous[key]
+    tolerance = 1.0 if precision == 0 else 0.1
+    if abs(diff) < tolerance:
+        return None, "Sin cambios vs última sesión"
+
+    arrow = "↑" if diff > 0 else "↓"
+    formatted = f"{abs(diff):.{precision}f}"
+    label = f"{arrow} {formatted}{unit}".rstrip()
+    detail = f"{label} vs última sesión"
+    return label, detail
+
+
+def format_water(value: float | None) -> str:
+    if value is None:
+        return "—"
+    if value >= 1000:
+        return f"{value/1000:.2f} m³"
+    return f"{value:.0f} L"
+
+
+def format_energy(value: float | None) -> str:
+    if value is None:
+        return "—"
+    if value >= 1000:
+        return f"{value/1000:.2f} MWh"
+    return f"{value:.0f} kWh"
+
+
 # ──────────── Lectura segura de metadata del modelo ────────────
 trained_at_raw = model_registry.metadata.get("trained_at")
 trained_label_value = (
@@ -152,50 +312,6 @@ mission_stages = [
     ),
 ]
 
-mission_metrics = [
-    {
-        "key": "status",
-        "label": "Estado",
-        "value": ready,
-        "details": [f"Modelo <code>{model_name}</code>"],
-        "caption": f"Nombre: {model_name}",
-        "icon": "🛰️",
-        "stage_key": "inventory",
-        "tone": "accent",
-    },
-    {
-        "key": "training",
-        "label": "Entrenamiento",
-        "value": trained_at_display,
-        "details": [
-            f"Origen: {trained_label_value}",
-            f"Muestras: {n_samples or '—'}",
-        ],
-        "caption": f"Procedencia: {trained_label_value} · Muestras: {n_samples or '—'}",
-        "icon": "🧪",
-        "stage_key": "target",
-        "tone": "info",
-    },
-    {
-        "key": "feature_space",
-        "label": "Feature space",
-        "value": str(feature_count),
-        "details": ["Fisicoquímica + proceso"],
-        "caption": "Ingeniería fisicoquímica + proceso",
-        "icon": "🧬",
-        "stage_key": "generator",
-    },
-    {
-        "key": "uncertainty",
-        "label": "Incertidumbre",
-        "value": model_registry.uncertainty_label(),
-        "details": ["CI 95% visible en UI"],
-        "caption": "CI 95% expuesta en UI",
-        "icon": "📈",
-        "stage_key": "results",
-    },
-]
-
 hero_chips = [
     {"label": "Hook: 8 astronautas → 12.6 t", "tone": "warning"},
     {"label": "Playbook • Residence Renovations", "tone": "accent"},
@@ -214,6 +330,11 @@ inventory_count = 0
 if isinstance(inventory_session_df, pd.DataFrame):
     inventory_count = int(inventory_session_df.shape[0])
 inventory_loaded = inventory_count > 0
+
+if inventory_loaded:
+    inventory_reference_df: pd.DataFrame | None = inventory_session_df
+else:
+    inventory_reference_df = load_inventory_sample()
 
 inventory_status = "OK" if inventory_loaded else "Pendiente"
 if inventory_loaded:
@@ -275,6 +396,170 @@ else:
         "Corregí el generador antes de exportar." if generator_error_msg else "Generá recetas antes de reportar."
     )
 
+previous_totals = st.session_state.get("_inventory_totals")
+if not isinstance(previous_totals, dict):
+    previous_totals = None
+
+inventory_totals = compute_inventory_totals(inventory_reference_df)
+
+try:
+    n_samples_int = int(n_samples) if n_samples is not None else None
+except (TypeError, ValueError):
+    n_samples_int = None
+
+training_tone, training_notes = training_health_summary(trained_dt, n_samples_int)
+uncertainty_tone, uncertainty_notes = uncertainty_health_summary(model_registry.metadata)
+
+mission_metrics: list[dict[str, object]] = []
+
+status_tone = "positive" if model_registry.ready else "danger"
+mission_metrics.append(
+    {
+        "key": "status",
+        "label": "Estado",
+        "value": ready,
+        "details": [f"Modelo <code>{model_name}</code>"],
+        "caption": f"Nombre: {model_name}",
+        "icon": "🛰️",
+        "stage_key": "inventory",
+        "tone": status_tone,
+    }
+)
+
+mission_metrics.append(
+    {
+        "key": "training",
+        "label": "Entrenamiento",
+        "value": trained_at_display,
+        "details": [f"Origen: {trained_label_value}", *training_notes],
+        "caption": "Control de frescura y cobertura",
+        "icon": "🧪",
+        "stage_key": "target",
+        "tone": training_tone,
+    }
+)
+
+mission_metrics.append(
+    {
+        "key": "feature_space",
+        "label": "Feature space",
+        "value": str(feature_count),
+        "details": ["Fisicoquímica + proceso"],
+        "caption": "Ingeniería fisicoquímica + proceso",
+        "icon": "🧬",
+        "stage_key": "generator",
+        "tone": "info",
+    }
+)
+
+mission_metrics.append(
+    {
+        "key": "uncertainty",
+        "label": "Incertidumbre",
+        "value": model_registry.uncertainty_label(),
+        "details": uncertainty_notes,
+        "caption": "CI 95% expuesta en UI",
+        "icon": "📈",
+        "stage_key": "results",
+        "tone": uncertainty_tone,
+    }
+)
+
+if inventory_totals:
+    mass_total = inventory_totals.get("mass_kg", 0.0)
+    water_total = inventory_totals.get("water_l", 0.0)
+    energy_total = inventory_totals.get("energy_kwh", 0.0)
+
+    mass_delta, mass_delta_detail = compute_delta_strings(
+        "mass_kg", mass_total, previous_totals, " kg"
+    )
+    water_delta, water_delta_detail = compute_delta_strings(
+        "water_l", water_total, previous_totals, " L", precision=1
+    )
+    energy_delta, energy_delta_detail = compute_delta_strings(
+        "energy_kwh", energy_total, previous_totals, " kWh"
+    )
+
+    mass_details = ["Masa total normalizada"]
+    if mass_delta_detail:
+        mass_details.insert(0, mass_delta_detail)
+    water_details = ["Basado en humedad declarada"]
+    if water_delta_detail:
+        water_details.insert(0, water_delta_detail)
+    energy_details = ["Escalado por factor de dificultad"]
+    if energy_delta_detail:
+        energy_details.insert(0, energy_delta_detail)
+
+    mission_metrics.extend(
+        [
+            {
+                "key": "inventory_mass",
+                "label": "Masa total",
+                "value": format_mass(mass_total),
+                "details": mass_details,
+                "icon": "🧱",
+                "stage_key": "inventory",
+                "tone": classify_inventory_tone(mass_total, 5000, 8000),
+                "delta": mass_delta,
+            },
+            {
+                "key": "inventory_water",
+                "label": "Agua estimada",
+                "value": format_water(water_total),
+                "details": water_details,
+                "icon": "💧",
+                "stage_key": "target",
+                "tone": classify_inventory_tone(water_total, 600, 1200),
+                "delta": water_delta,
+            },
+            {
+                "key": "inventory_energy",
+                "label": "Energía estimada",
+                "value": format_energy(energy_total),
+                "details": energy_details,
+                "icon": "⚡",
+                "stage_key": "generator",
+                "tone": classify_inventory_tone(energy_total, 2500, 4000),
+                "delta": energy_delta,
+            },
+        ]
+    )
+else:
+    fallback_details = ["Cargá inventario para estimaciones"]
+    mission_metrics.extend(
+        [
+            {
+                "key": "inventory_mass",
+                "label": "Masa total",
+                "value": "—",
+                "details": fallback_details,
+                "icon": "🧱",
+                "stage_key": "inventory",
+                "tone": "warning",
+            },
+            {
+                "key": "inventory_water",
+                "label": "Agua estimada",
+                "value": "—",
+                "details": fallback_details,
+                "icon": "💧",
+                "stage_key": "target",
+                "tone": "warning",
+            },
+            {
+                "key": "inventory_energy",
+                "label": "Energía estimada",
+                "value": "—",
+                "details": fallback_details,
+                "icon": "⚡",
+                "stage_key": "generator",
+                "tone": "warning",
+            },
+        ]
+    )
+
+st.session_state["_inventory_totals"] = inventory_totals
+
 hero_col, metrics_col = st.columns([2.8, 1.2], gap="large")
 with hero_col:
     TeslaHero(
@@ -302,6 +587,8 @@ for metric in mission_metrics:
         normalized["label"] = str(normalized["label"])
     if "value" in normalized:
         normalized["value"] = str(normalized["value"])
+    if normalized.get("delta") is not None:
+        normalized["delta"] = str(normalized["delta"])
     mission_metric_payload.append(normalized)
 mission_metrics_component = MissionMetrics.from_payload(
     mission_metric_payload,
@@ -394,7 +681,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-inventory_df = load_inventory_sample()
+inventory_df = inventory_reference_df
 
 category_items = []
 if inventory_df is not None and not inventory_df.empty:
