@@ -62,6 +62,48 @@ TARGET_DISPLAY = {
     "crew_min": "Crew (min)",
 }
 
+POLYMER_NUMERIC_COLUMNS = (
+    "pc_density_density_g_per_cm3",
+    "pc_mechanics_tensile_strength_mpa",
+    "pc_mechanics_modulus_gpa",
+    "pc_thermal_glass_transition_c",
+    "pc_ignition_ignition_temperature_c",
+    "pc_ignition_burn_time_min",
+)
+
+POLYMER_LABEL_COLUMNS = (
+    "pc_density_sample_label",
+    "pc_mechanics_sample_label",
+    "pc_thermal_sample_label",
+    "pc_ignition_sample_label",
+)
+
+ALUMINIUM_NUMERIC_COLUMNS = (
+    "aluminium_tensile_strength_mpa",
+    "aluminium_yield_strength_mpa",
+    "aluminium_elongation_pct",
+)
+
+ALUMINIUM_LABEL_COLUMNS = (
+    "aluminium_processing_route",
+    "aluminium_class_id",
+)
+
+POLYMER_LABEL_MAP = {
+    "density_g_cm3": "ρ ref (g/cm³)",
+    "tensile_mpa": "σₜ ref (MPa)",
+    "modulus_gpa": "E ref (GPa)",
+    "glass_c": "Tg (°C)",
+    "ignition_c": "Ignición (°C)",
+    "burn_min": "Burn (min)",
+}
+
+ALUMINIUM_LABEL_MAP = {
+    "tensile_mpa": "σₜ ref (MPa)",
+    "yield_mpa": "σᵧ ref (MPa)",
+    "elongation_pct": "ε ref (%)",
+}
+
 
 def _apply_generator_prefilters(
     filters: Mapping[str, object],
@@ -143,6 +185,98 @@ def _format_label_summary(summary: dict[str, dict[str, float]] | None) -> str:
         parts.append(fragment)
 
     return " · ".join(parts)
+
+
+def _collect_external_profiles(candidate: Mapping[str, Any], inventory: pd.DataFrame) -> dict[str, Any]:
+    if not isinstance(candidate, Mapping) or not isinstance(inventory, pd.DataFrame) or inventory.empty:
+        return {}
+
+    raw_ids = candidate.get("source_ids") or []
+    ids = {str(value).strip() for value in raw_ids if str(value).strip()}
+    if not ids:
+        return {}
+
+    mask = pd.Series(False, index=inventory.index)
+    if "id" in inventory.columns:
+        mask |= inventory["id"].astype(str).isin(ids)
+    if "_source_id" in inventory.columns:
+        mask |= inventory["_source_id"].astype(str).isin(ids)
+
+    subset = inventory.loc[mask].copy()
+    if subset.empty:
+        return {}
+
+    payload: dict[str, Any] = {}
+
+    def _build_section(
+        numeric_columns: tuple[str, ...],
+        label_columns: tuple[str, ...],
+    ) -> dict[str, Any] | None:
+        relevant_numeric = [column for column in numeric_columns if column in subset.columns]
+        if not relevant_numeric:
+            return None
+
+        numeric_df = subset[relevant_numeric].apply(pd.to_numeric, errors="coerce")
+        mask_numeric = numeric_df.notna().any(axis=1)
+        if not mask_numeric.any():
+            return None
+
+        rows = subset.loc[mask_numeric]
+        metrics: dict[str, float] = {}
+
+        for column in relevant_numeric:
+            series = pd.to_numeric(rows[column], errors="coerce")
+            if not series.notna().any():
+                continue
+            if column == "pc_density_density_g_per_cm3":
+                metrics.setdefault("density_g_cm3", float(series.mean()))
+            elif column == "pc_mechanics_tensile_strength_mpa":
+                metrics.setdefault("tensile_mpa", float(series.mean()))
+            elif column == "pc_mechanics_modulus_gpa":
+                metrics.setdefault("modulus_gpa", float(series.mean()))
+            elif column == "pc_thermal_glass_transition_c":
+                metrics.setdefault("glass_c", float(series.mean()))
+            elif column == "pc_ignition_ignition_temperature_c":
+                metrics.setdefault("ignition_c", float(series.mean()))
+            elif column == "pc_ignition_burn_time_min":
+                metrics.setdefault("burn_min", float(series.mean()))
+            elif column == "aluminium_tensile_strength_mpa":
+                metrics.setdefault("tensile_mpa", float(series.mean()))
+            elif column == "aluminium_yield_strength_mpa":
+                metrics.setdefault("yield_mpa", float(series.mean()))
+            elif column == "aluminium_elongation_pct":
+                metrics.setdefault("elongation_pct", float(series.mean()))
+
+        if not metrics:
+            return None
+
+        labels: list[str] = []
+        for column in label_columns:
+            if column not in rows.columns:
+                continue
+            label_series = rows[column].dropna().astype(str).str.strip().replace("", pd.NA).dropna()
+            labels.extend(label_series.tolist())
+
+        unique_labels = sorted(dict.fromkeys(labels))
+        return {"metrics": metrics, "labels": unique_labels}
+
+    polymer_section = _build_section(POLYMER_NUMERIC_COLUMNS, POLYMER_LABEL_COLUMNS)
+    if polymer_section:
+        payload["polymer"] = polymer_section
+
+    aluminium_section = _build_section(ALUMINIUM_NUMERIC_COLUMNS, ALUMINIUM_LABEL_COLUMNS)
+    if aluminium_section:
+        payload["aluminium"] = aluminium_section
+
+    return payload
+
+
+def _format_reference_value(key: str, value: float) -> str:
+    if key in {"density_g_cm3", "modulus_gpa"}:
+        return f"{value:.2f}"
+    if key == "burn_min":
+        return f"{value:.1f}"
+    return f"{value:.0f}"
 
 
 def _collect_target_badges(target: dict[str, Any] | None) -> list[tuple[str, str]]:
@@ -570,6 +704,115 @@ def render_candidate_card(
                     glow=False,
                     min_width="11rem",
                 ).render()
+
+        external_profiles = _collect_external_profiles(candidate, waste_df)
+        if external_profiles:
+            st.markdown("**Propiedades externas (NASA/industria)**")
+
+            polymer_section = external_profiles.get("polymer")
+            if polymer_section:
+                polymer_labels = polymer_section.get("labels") or []
+                if polymer_labels:
+                    label_columns = st.columns(len(polymer_labels))
+                    for column, label in zip(label_columns, polymer_labels, strict=False):
+                        with column:
+                            pill(f"Polímero · {label}", kind="info")
+
+                polymer_metrics = polymer_section.get("metrics", {})
+                if polymer_metrics:
+                    metric_columns = st.columns(len(polymer_metrics))
+                    for column, (metric_key, metric_value) in zip(
+                        metric_columns, polymer_metrics.items(), strict=False
+                    ):
+                        label = POLYMER_LABEL_MAP.get(metric_key, metric_key)
+                        column.metric(label, _format_reference_value(metric_key, float(metric_value)))
+
+                    density_value = polymer_metrics.get("density_g_cm3")
+                    tensile_value = polymer_metrics.get("tensile_mpa")
+                    if density_value and not polymer_density_distribution.empty:
+                        base = alt.Chart(
+                            pd.DataFrame({"density": polymer_density_distribution})
+                        ).mark_bar(color="#22d3ee", opacity=0.55).encode(
+                            x=alt.X("density:Q", bin=alt.Bin(maxbins=18), title="Densidad inventario (g/cm³)"),
+                            y=alt.Y("count()", title="Ítems"),
+                            tooltip=["count()"],
+                        )
+                        reference = (
+                            alt.Chart(pd.DataFrame({"density": [density_value]}))
+                            .mark_rule(color="#f97316", size=3)
+                            .encode(x="density:Q")
+                        )
+                        st.altair_chart(base + reference, use_container_width=True)
+
+                    if tensile_value and not polymer_tensile_distribution.empty:
+                        tensile_base = alt.Chart(
+                            pd.DataFrame({"tensile": polymer_tensile_distribution})
+                        ).mark_bar(color="#f472b6", opacity=0.55).encode(
+                            x=alt.X("tensile:Q", bin=alt.Bin(maxbins=18), title="σₜ inventario (MPa)"),
+                            y=alt.Y("count()", title="Ítems"),
+                            tooltip=["count()"],
+                        )
+                        tensile_rule = (
+                            alt.Chart(pd.DataFrame({"tensile": [tensile_value]}))
+                            .mark_rule(color="#f97316", size=3)
+                            .encode(x="tensile:Q")
+                        )
+                        st.altair_chart(tensile_base + tensile_rule, use_container_width=True)
+
+            aluminium_section = external_profiles.get("aluminium")
+            if aluminium_section:
+                aluminium_labels = aluminium_section.get("labels") or []
+                if aluminium_labels:
+                    label_columns = st.columns(len(aluminium_labels))
+                    for column, label in zip(label_columns, aluminium_labels, strict=False):
+                        with column:
+                            pill(f"Aluminio · {label}", kind="accent")
+
+                aluminium_metrics = aluminium_section.get("metrics", {})
+                if aluminium_metrics:
+                    metric_columns = st.columns(len(aluminium_metrics))
+                    for column, (metric_key, metric_value) in zip(
+                        metric_columns, aluminium_metrics.items(), strict=False
+                    ):
+                        label = ALUMINIUM_LABEL_MAP.get(metric_key, metric_key)
+                        column.metric(label, _format_reference_value(metric_key, float(metric_value)))
+
+                    tensile_value = aluminium_metrics.get("tensile_mpa")
+                    yield_value = aluminium_metrics.get("yield_mpa")
+                    if tensile_value and not aluminium_tensile_distribution.empty:
+                        alu_hist = alt.Chart(
+                            pd.DataFrame({"tensile": aluminium_tensile_distribution})
+                        ).mark_bar(color="#f97316", opacity=0.55).encode(
+                            x=alt.X("tensile:Q", bin=alt.Bin(maxbins=18), title="σₜ inventario (MPa)"),
+                            y=alt.Y("count()", title="Ítems"),
+                            tooltip=["count()"],
+                        )
+                        alu_rule = (
+                            alt.Chart(pd.DataFrame({"tensile": [tensile_value]}))
+                            .mark_rule(color="#22d3ee", size=3)
+                            .encode(x="tensile:Q")
+                        )
+                        st.altair_chart(alu_hist + alu_rule, use_container_width=True)
+
+                    if yield_value and not aluminium_yield_distribution.empty:
+                        yield_hist = alt.Chart(
+                            pd.DataFrame({"yield_strength": aluminium_yield_distribution})
+                        ).mark_bar(color="#fb923c", opacity=0.55).encode(
+                            x=alt.X("yield_strength:Q", bin=alt.Bin(maxbins=18), title="σᵧ inventario (MPa)"),
+                            y=alt.Y("count()", title="Ítems"),
+                            tooltip=["count()"],
+                        )
+                        yield_rule = (
+                            alt.Chart(pd.DataFrame({"yield_strength": [yield_value]}))
+                            .mark_rule(color="#22d3ee", size=3)
+                            .encode(x="yield_strength:Q")
+                        )
+                        st.altair_chart(yield_hist + yield_rule, use_container_width=True)
+
+            st.caption(
+                "Comparativa contra distribuciones del inventario (`polymer_composite_*`, `aluminium_alloys.csv`)."
+            )
+
             scenario_label = str((target_data or {}).get("scenario") or "").strip()
             scenario_casefold = scenario_label.casefold()
             if scenario_casefold == "daring discoveries":
@@ -650,6 +893,18 @@ if not target:
 # ----------------------------- Datos base -----------------------------
 waste_df = load_waste_df()
 proc_df = load_process_df()
+polymer_density_distribution = pd.to_numeric(
+    waste_df.get("pc_density_density_g_per_cm3"), errors="coerce"
+).dropna()
+polymer_tensile_distribution = pd.to_numeric(
+    waste_df.get("pc_mechanics_tensile_strength_mpa"), errors="coerce"
+).dropna()
+aluminium_tensile_distribution = pd.to_numeric(
+    waste_df.get("aluminium_tensile_strength_mpa"), errors="coerce"
+).dropna()
+aluminium_yield_distribution = pd.to_numeric(
+    waste_df.get("aluminium_yield_strength_mpa"), errors="coerce"
+).dropna()
 proc_filtered = choose_process(
     target["name"], proc_df,
     scenario=target.get("scenario"),

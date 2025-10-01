@@ -23,6 +23,7 @@ from app.modules.data_sources import (
     load_regolith_thermal_profiles,
 )
 from app.modules.explain import score_breakdown
+from app.modules.io import load_waste_df
 
 st.set_page_config(page_title="Rex-AI • Resultados", page_icon="📊", layout="wide")
 
@@ -53,6 +54,19 @@ score = cand.get("score", 0.0)
 safety = selected.get("safety", {"level": "—", "detail": ""})
 process_id = cand.get("process_id", "—")
 process_name = cand.get("process_name", "Proceso")
+inventory_df = load_waste_df()
+polymer_density_distribution = pd.to_numeric(
+    inventory_df.get("pc_density_density_g_per_cm3"), errors="coerce"
+).dropna()
+polymer_tensile_distribution = pd.to_numeric(
+    inventory_df.get("pc_mechanics_tensile_strength_mpa"), errors="coerce"
+).dropna()
+aluminium_tensile_distribution = pd.to_numeric(
+    inventory_df.get("aluminium_tensile_strength_mpa"), errors="coerce"
+).dropna()
+aluminium_yield_distribution = pd.to_numeric(
+    inventory_df.get("aluminium_yield_strength_mpa"), errors="coerce"
+).dropna()
 
 
 def _get_value(source, attr, default=0.0):
@@ -63,6 +77,133 @@ def _get_value(source, attr, default=0.0):
     if isinstance(source, dict):
         return source.get(attr, default)
     return default
+
+
+POLYMER_NUMERIC_COLUMNS = (
+    "pc_density_density_g_per_cm3",
+    "pc_mechanics_tensile_strength_mpa",
+    "pc_mechanics_modulus_gpa",
+    "pc_thermal_glass_transition_c",
+    "pc_ignition_ignition_temperature_c",
+    "pc_ignition_burn_time_min",
+)
+
+POLYMER_LABEL_COLUMNS = (
+    "pc_density_sample_label",
+    "pc_mechanics_sample_label",
+    "pc_thermal_sample_label",
+    "pc_ignition_sample_label",
+)
+
+ALUMINIUM_NUMERIC_COLUMNS = (
+    "aluminium_tensile_strength_mpa",
+    "aluminium_yield_strength_mpa",
+    "aluminium_elongation_pct",
+)
+
+ALUMINIUM_LABEL_COLUMNS = (
+    "aluminium_processing_route",
+    "aluminium_class_id",
+)
+
+POLYMER_LABEL_MAP = {
+    "density_g_cm3": "ρ ref (g/cm³)",
+    "tensile_mpa": "σₜ ref (MPa)",
+    "modulus_gpa": "E ref (GPa)",
+    "glass_c": "Tg (°C)",
+    "ignition_c": "Ignición (°C)",
+    "burn_min": "Burn (min)",
+}
+
+ALUMINIUM_LABEL_MAP = {
+    "tensile_mpa": "σₜ ref (MPa)",
+    "yield_mpa": "σᵧ ref (MPa)",
+    "elongation_pct": "ε ref (%)",
+}
+
+
+def _collect_external_profiles(candidate: dict, inventory: pd.DataFrame) -> dict[str, dict[str, object]]:
+    if not isinstance(candidate, dict) or inventory.empty:
+        return {}
+
+    ids = {str(value).strip() for value in candidate.get("source_ids", []) if str(value).strip()}
+    if not ids:
+        return {}
+
+    mask = pd.Series(False, index=inventory.index)
+    if "id" in inventory.columns:
+        mask |= inventory["id"].astype(str).isin(ids)
+    if "_source_id" in inventory.columns:
+        mask |= inventory["_source_id"].astype(str).isin(ids)
+
+    subset = inventory.loc[mask]
+    if subset.empty:
+        return {}
+
+    payload: dict[str, dict[str, object]] = {}
+
+    def _section(numeric_columns: tuple[str, ...], label_columns: tuple[str, ...]) -> dict[str, object] | None:
+        relevant = [column for column in numeric_columns if column in subset.columns]
+        if not relevant:
+            return None
+        numeric_df = subset[relevant].apply(pd.to_numeric, errors="coerce")
+        mask_numeric = numeric_df.notna().any(axis=1)
+        if not mask_numeric.any():
+            return None
+        rows = subset.loc[mask_numeric]
+        metrics: dict[str, float] = {}
+        for column in relevant:
+            series = pd.to_numeric(rows[column], errors="coerce")
+            if not series.notna().any():
+                continue
+            if column == "pc_density_density_g_per_cm3":
+                metrics.setdefault("density_g_cm3", float(series.mean()))
+            elif column == "pc_mechanics_tensile_strength_mpa":
+                metrics.setdefault("tensile_mpa", float(series.mean()))
+            elif column == "pc_mechanics_modulus_gpa":
+                metrics.setdefault("modulus_gpa", float(series.mean()))
+            elif column == "pc_thermal_glass_transition_c":
+                metrics.setdefault("glass_c", float(series.mean()))
+            elif column == "pc_ignition_ignition_temperature_c":
+                metrics.setdefault("ignition_c", float(series.mean()))
+            elif column == "pc_ignition_burn_time_min":
+                metrics.setdefault("burn_min", float(series.mean()))
+            elif column == "aluminium_tensile_strength_mpa":
+                metrics.setdefault("tensile_mpa", float(series.mean()))
+            elif column == "aluminium_yield_strength_mpa":
+                metrics.setdefault("yield_mpa", float(series.mean()))
+            elif column == "aluminium_elongation_pct":
+                metrics.setdefault("elongation_pct", float(series.mean()))
+
+        if not metrics:
+            return None
+
+        labels: list[str] = []
+        for column in label_columns:
+            if column not in rows.columns:
+                continue
+            series = rows[column].dropna().astype(str).str.strip().replace("", pd.NA).dropna()
+            labels.extend(series.tolist())
+
+        return {"metrics": metrics, "labels": sorted(dict.fromkeys(labels))}
+
+    polymer = _section(POLYMER_NUMERIC_COLUMNS, POLYMER_LABEL_COLUMNS)
+    if polymer:
+        payload["polymer"] = polymer
+
+    aluminium = _section(ALUMINIUM_NUMERIC_COLUMNS, ALUMINIUM_LABEL_COLUMNS)
+    if aluminium:
+        payload["aluminium"] = aluminium
+
+    return payload
+
+
+def _format_reference_value(key: str, value: float) -> str:
+    if key in {"density_g_cm3", "modulus_gpa"}:
+        return f"{value:.2f}"
+    if key == "burn_min":
+        return f"{value:.1f}"
+    return f"{value:.0f}"
 
 
 @st.cache_data(show_spinner=False)
@@ -147,6 +288,96 @@ for label, attr, ci_key in labels:
 MetricGalaxy(metrics=metric_items, density="compact").render()
 if uncertainty:
     st.caption("Desviaciones modelo: " + ", ".join(f"{k} {v:.3f}" for k, v in uncertainty.items()))
+
+external_profiles = _collect_external_profiles(cand, inventory_df)
+if external_profiles:
+    st.markdown("### 🧪 Propiedades externas de referencia")
+
+    polymer_section = external_profiles.get("polymer")
+    if polymer_section:
+        polymer_labels = polymer_section.get("labels") or []
+        if polymer_labels:
+            st.caption("Polímeros fuente: " + ", ".join(polymer_labels))
+
+        polymer_metrics = polymer_section.get("metrics", {})
+        if polymer_metrics:
+            metric_columns = st.columns(len(polymer_metrics))
+            for column, (metric_key, metric_value) in zip(
+                metric_columns, polymer_metrics.items(), strict=False
+            ):
+                label = POLYMER_LABEL_MAP.get(metric_key, metric_key)
+                column.metric(label, _format_reference_value(metric_key, float(metric_value)))
+
+            density_value = polymer_metrics.get("density_g_cm3")
+            tensile_value = polymer_metrics.get("tensile_mpa")
+            chart_cols = st.columns(2)
+            if density_value and not polymer_density_distribution.empty:
+                base = alt.Chart(
+                    pd.DataFrame({"density": polymer_density_distribution})
+                ).mark_bar(color="#22d3ee", opacity=0.55).encode(
+                    x=alt.X("density:Q", bin=alt.Bin(maxbins=18), title="Densidad inventario (g/cm³)"),
+                    y=alt.Y("count()", title="Ítems"),
+                )
+                rule = alt.Chart(pd.DataFrame({"density": [density_value]})).mark_rule(
+                    color="#f97316", size=3
+                ).encode(x="density:Q")
+                chart_cols[0].altair_chart(base + rule, use_container_width=True)
+            if tensile_value and not polymer_tensile_distribution.empty:
+                base = alt.Chart(
+                    pd.DataFrame({"tensile": polymer_tensile_distribution})
+                ).mark_bar(color="#f472b6", opacity=0.55).encode(
+                    x=alt.X("tensile:Q", bin=alt.Bin(maxbins=18), title="σₜ inventario (MPa)"),
+                    y=alt.Y("count()", title="Ítems"),
+                )
+                rule = alt.Chart(pd.DataFrame({"tensile": [tensile_value]})).mark_rule(
+                    color="#f97316", size=3
+                ).encode(x="tensile:Q")
+                chart_cols[1].altair_chart(base + rule, use_container_width=True)
+
+    aluminium_section = external_profiles.get("aluminium")
+    if aluminium_section:
+        aluminium_labels = aluminium_section.get("labels") or []
+        if aluminium_labels:
+            st.caption("Aleaciones/Procesos: " + ", ".join(aluminium_labels))
+
+        aluminium_metrics = aluminium_section.get("metrics", {})
+        if aluminium_metrics:
+            metric_columns = st.columns(len(aluminium_metrics))
+            for column, (metric_key, metric_value) in zip(
+                metric_columns, aluminium_metrics.items(), strict=False
+            ):
+                label = ALUMINIUM_LABEL_MAP.get(metric_key, metric_key)
+                column.metric(label, _format_reference_value(metric_key, float(metric_value)))
+
+            tensile_value = aluminium_metrics.get("tensile_mpa")
+            yield_value = aluminium_metrics.get("yield_mpa")
+            chart_cols = st.columns(2)
+            if tensile_value and not aluminium_tensile_distribution.empty:
+                base = alt.Chart(
+                    pd.DataFrame({"tensile": aluminium_tensile_distribution})
+                ).mark_bar(color="#f97316", opacity=0.55).encode(
+                    x=alt.X("tensile:Q", bin=alt.Bin(maxbins=18), title="σₜ inventario (MPa)"),
+                    y=alt.Y("count()", title="Ítems"),
+                )
+                rule = alt.Chart(pd.DataFrame({"tensile": [tensile_value]})).mark_rule(
+                    color="#22d3ee", size=3
+                ).encode(x="tensile:Q")
+                chart_cols[0].altair_chart(base + rule, use_container_width=True)
+            if yield_value and not aluminium_yield_distribution.empty:
+                base = alt.Chart(
+                    pd.DataFrame({"yield_strength": aluminium_yield_distribution})
+                ).mark_bar(color="#fb923c", opacity=0.55).encode(
+                    x=alt.X("yield_strength:Q", bin=alt.Bin(maxbins=18), title="σᵧ inventario (MPa)"),
+                    y=alt.Y("count()", title="Ítems"),
+                )
+                rule = alt.Chart(pd.DataFrame({"yield_strength": [yield_value]})).mark_rule(
+                    color="#22d3ee", size=3
+                ).encode(x="yield_strength:Q")
+                chart_cols[1].altair_chart(base + rule, use_container_width=True)
+
+    st.caption(
+        "Comparativa con laboratorios/industria (`polymer_composite_*`, `aluminium_alloys.csv`)."
+    )
 
 with st.container():
     st.markdown("### 🧬 Contribuciones de features (RandomForest)")

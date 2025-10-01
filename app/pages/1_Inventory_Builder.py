@@ -2,6 +2,8 @@ import _bootstrap  # noqa: F401
 
 from datetime import datetime, timezone
 
+import altair as alt
+import math
 import streamlit as st
 import pandas as pd
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
@@ -39,6 +41,45 @@ st.caption(
 )
 
 # --------------------- helpers robustos de columnas ---------------------
+POLYMER_SAMPLE_COLUMNS = (
+    "pc_density_sample_label",
+    "pc_mechanics_sample_label",
+    "pc_thermal_sample_label",
+    "pc_ignition_sample_label",
+)
+
+POLYMER_NUMERIC_COLUMNS = (
+    "pc_density_density_g_per_cm3",
+    "pc_density_density_kg_m3",
+    "pc_mechanics_tensile_strength_mpa",
+    "pc_mechanics_stress_mpa",
+    "pc_mechanics_yield_strength_mpa",
+    "pc_mechanics_modulus_gpa",
+    "pc_mechanics_strain_pct",
+    "pc_thermal_glass_transition_c",
+    "pc_thermal_onset_temperature_c",
+    "pc_thermal_heat_capacity_j_per_g_k",
+    "pc_thermal_heat_flow_w_per_g",
+    "pc_ignition_ignition_temperature_c",
+    "pc_ignition_burn_time_min",
+)
+
+ALUMINIUM_SAMPLE_COLUMNS = (
+    "aluminium_processing_route",
+    "aluminium_class_id",
+)
+
+ALUMINIUM_NUMERIC_COLUMNS = (
+    "aluminium_tensile_strength_mpa",
+    "aluminium_yield_strength_mpa",
+    "aluminium_elongation_pct",
+)
+
+EXTERNAL_STRING_COLUMNS = POLYMER_SAMPLE_COLUMNS + ALUMINIUM_SAMPLE_COLUMNS
+EXTERNAL_NUMERIC_COLUMNS = POLYMER_NUMERIC_COLUMNS + ALUMINIUM_NUMERIC_COLUMNS
+EXTERNAL_COLUMNS = EXTERNAL_STRING_COLUMNS + EXTERNAL_NUMERIC_COLUMNS
+
+
 def _resolve_column(df: pd.DataFrame, names: tuple[str, ...], *, numeric: bool = False) -> pd.Series:
     for name in names:
         if name in df.columns:
@@ -51,6 +92,16 @@ def _resolve_column(df: pd.DataFrame, names: tuple[str, ...], *, numeric: bool =
     if numeric:
         return pd.Series(0.0, index=df.index, dtype=float)
     return pd.Series("", index=df.index, dtype=str)
+
+
+def _safe_float(value: object) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(number):
+        return None
+    return number
 
 
 @st.cache_data
@@ -81,7 +132,18 @@ def _build_editable_df(source: pd.DataFrame) -> pd.DataFrame:
         "notes": ("_source_notes", "notes"),
     }
 
-    numeric_fields = {"mass_kg", "volume_l", "moisture_pct", "pct_mass", "pct_volume", "difficulty_factor"}
+    for column in EXTERNAL_COLUMNS:
+        columns_map[column] = (column,)
+
+    numeric_fields = {
+        "mass_kg",
+        "volume_l",
+        "moisture_pct",
+        "pct_mass",
+        "pct_volume",
+        "difficulty_factor",
+        *EXTERNAL_NUMERIC_COLUMNS,
+    }
 
     editable_data: dict[str, pd.Series] = {}
     for target, candidates in columns_map.items():
@@ -178,6 +240,10 @@ for column in raw.columns:
     if column in {"kg", "density_kg_m3", "category_total_mass_kg", "category_total_volume_m3", "material_display"}:
         derived_columns[column] = raw[column]
 
+for column in EXTERNAL_COLUMNS:
+    if column in raw.columns and column not in df.columns:
+        derived_columns[column] = raw[column]
+
 if derived_columns:
     df = pd.concat([df, pd.DataFrame(derived_columns)], axis=1)
 
@@ -201,6 +267,72 @@ if composition_cols:
     df["composition_summary"] = df[composition_cols].apply(_format_composition, axis=1)
 else:
     df["composition_summary"] = ""
+
+df["polymer_profile"] = df.apply(_format_polymer_profile, axis=1)
+df["aluminium_profile"] = df.apply(_format_aluminium_profile, axis=1)
+
+
+def _format_polymer_profile(row: pd.Series) -> str:
+    parts: list[str] = []
+
+    for column in POLYMER_SAMPLE_COLUMNS:
+        label = str(row.get(column) or "").strip()
+        if label:
+            parts.append(f"Ref {label}")
+            break
+
+    density = _safe_float(row.get("pc_density_density_g_per_cm3"))
+    if density:
+        parts.append(f"ρ {density:.2f} g/cm³")
+
+    tensile = _safe_float(row.get("pc_mechanics_tensile_strength_mpa"))
+    if tensile:
+        parts.append(f"σₜ {tensile:.0f} MPa")
+
+    modulus = _safe_float(row.get("pc_mechanics_modulus_gpa"))
+    if modulus:
+        parts.append(f"E {modulus:.1f} GPa")
+
+    glass_transition = _safe_float(row.get("pc_thermal_glass_transition_c"))
+    if glass_transition:
+        parts.append(f"Tg {glass_transition:.0f} °C")
+
+    ignition = _safe_float(row.get("pc_ignition_ignition_temperature_c"))
+    if ignition:
+        parts.append(f"Ign. {ignition:.0f} °C")
+
+    burn_time = _safe_float(row.get("pc_ignition_burn_time_min"))
+    if burn_time:
+        parts.append(f"Burn {burn_time:.1f} min")
+
+    return "||".join(parts)
+
+
+def _format_aluminium_profile(row: pd.Series) -> str:
+    parts: list[str] = []
+
+    route = str(row.get("aluminium_processing_route") or "").strip()
+    class_id = str(row.get("aluminium_class_id") or "").strip()
+    if route and class_id:
+        parts.append(f"{route} · Clase {class_id}")
+    elif route:
+        parts.append(route)
+    elif class_id:
+        parts.append(f"Clase {class_id}")
+
+    tensile = _safe_float(row.get("aluminium_tensile_strength_mpa"))
+    if tensile:
+        parts.append(f"σₜ {tensile:.0f} MPa")
+
+    yield_strength = _safe_float(row.get("aluminium_yield_strength_mpa"))
+    if yield_strength:
+        parts.append(f"σᵧ {yield_strength:.0f} MPa")
+
+    elongation = _safe_float(row.get("aluminium_elongation_pct"))
+    if elongation:
+        parts.append(f"ε {elongation:.0f}%")
+
+    return "||".join(parts)
 
 mission_columns = [column for column in df.columns if column.startswith("summary_")]
 mission_labels = {
@@ -257,6 +389,172 @@ if mission_totals:
     for column, (label, value) in zip(mission_cols, ordered_totals):
         column.metric(f"NASA · {label}", f"{value:.1f} kg")
     st.caption("Referencias NASA: masas estimadas por misión usando `nasa_waste_summary.csv`.")
+
+polymer_density_series = pd.to_numeric(df.get("pc_density_density_g_per_cm3"), errors="coerce")
+polymer_tensile_series = pd.to_numeric(df.get("pc_mechanics_tensile_strength_mpa"), errors="coerce")
+aluminium_tensile_series = pd.to_numeric(df.get("aluminium_tensile_strength_mpa"), errors="coerce")
+aluminium_yield_series = pd.to_numeric(df.get("aluminium_yield_strength_mpa"), errors="coerce")
+aluminium_elong_series = pd.to_numeric(df.get("aluminium_elongation_pct"), errors="coerce")
+
+polymer_density_clean = polymer_density_series.dropna()
+polymer_tensile_clean = polymer_tensile_series.dropna()
+aluminium_tensile_clean = aluminium_tensile_series.dropna()
+aluminium_yield_clean = aluminium_yield_series.dropna()
+aluminium_elong_clean = aluminium_elong_series.dropna()
+
+if (
+    not polymer_density_clean.empty
+    or not polymer_tensile_clean.empty
+    or not aluminium_tensile_clean.empty
+    or not aluminium_yield_clean.empty
+    or not aluminium_elong_clean.empty
+):
+    st.subheader("Propiedades externas (NASA + industria)")
+
+    metric_stats: list[tuple[str, float, str]] = []
+    if not polymer_density_clean.empty:
+        metric_stats.append(("ρ media (g/cm³)", float(polymer_density_clean.mean()), ".2f"))
+    if not polymer_tensile_clean.empty:
+        metric_stats.append(("σₜ polímero (MPa)", float(polymer_tensile_clean.median()), ".0f"))
+    if not aluminium_tensile_clean.empty:
+        metric_stats.append(("σₜ aluminio (MPa)", float(aluminium_tensile_clean.median()), ".0f"))
+    if not aluminium_elong_clean.empty:
+        metric_stats.append(("ε aluminio (%)", float(aluminium_elong_clean.median()), ".0f"))
+
+    if metric_stats:
+        metric_columns = st.columns(len(metric_stats))
+        for column, (label, value, fmt) in zip(metric_columns, metric_stats, strict=False):
+            column.metric(label, f"{value:{fmt}}")
+
+    tabs = st.tabs(["Polímeros", "Aluminio"])
+
+    polymer_chart_data = df[[
+        "category",
+        "material",
+        "pc_density_density_g_per_cm3",
+        "pc_mechanics_tensile_strength_mpa",
+        "pc_density_sample_label",
+    ]].copy()
+
+    with tabs[0]:
+        density_data = polymer_chart_data.dropna(subset=["pc_density_density_g_per_cm3"])
+        if not density_data.empty:
+            density_chart = (
+                alt.Chart(density_data)
+                .transform_aggregate(
+                    mean_density="mean(pc_density_density_g_per_cm3)",
+                    groupby=["category"],
+                )
+                .mark_bar(color="#22d3ee")
+                .encode(
+                    x=alt.X("mean_density:Q", title="Densidad promedio (g/cm³)"),
+                    y=alt.Y("category:N", sort="-x", title="Categoría NASA"),
+                    tooltip=[
+                        alt.Tooltip("mean_density:Q", format=".2f", title="Densidad promedio"),
+                        alt.Tooltip("category:N", title="Categoría"),
+                    ],
+                )
+                .properties(height=220)
+            )
+            st.altair_chart(density_chart, use_container_width=True)
+        else:
+            st.info("Sin densidades de polímeros disponibles en el inventario.")
+
+        tensile_scatter = polymer_chart_data.dropna(
+            subset=["pc_mechanics_tensile_strength_mpa", "pc_density_density_g_per_cm3"]
+        )
+        if not tensile_scatter.empty:
+            scatter_chart = (
+                alt.Chart(tensile_scatter)
+                .mark_circle(opacity=0.75, size=70)
+                .encode(
+                    x=alt.X("pc_mechanics_tensile_strength_mpa:Q", title="σₜ (MPa)"),
+                    y=alt.Y("pc_density_density_g_per_cm3:Q", title="ρ (g/cm³)"),
+                    color=alt.Color("category:N", title="Categoría", legend=None),
+                    tooltip=[
+                        alt.Tooltip("category:N", title="Categoría"),
+                        alt.Tooltip("material:N", title="Subitem"),
+                        alt.Tooltip("pc_mechanics_tensile_strength_mpa:Q", format=".0f", title="σₜ (MPa)"),
+                        alt.Tooltip("pc_density_density_g_per_cm3:Q", format=".2f", title="ρ (g/cm³)"),
+                    ],
+                )
+                .properties(height=220, title="Relación densidad vs. resistencia (polímeros)")
+            )
+            st.altair_chart(scatter_chart, use_container_width=True)
+
+        label_counts = (
+            polymer_chart_data["pc_density_sample_label"].dropna().astype(str).str.strip().replace("", pd.NA)
+        )
+        if not label_counts.empty:
+            top_refs = label_counts.value_counts().head(5).reset_index()
+            top_refs.columns = ["Referencia", "Ítems"]
+            st.caption("Principales referencias de laboratorio/industria")
+            st.dataframe(top_refs, hide_index=True, use_container_width=True)
+
+    aluminium_chart_data = df[[
+        "category",
+        "material",
+        "aluminium_tensile_strength_mpa",
+        "aluminium_yield_strength_mpa",
+        "aluminium_processing_route",
+    ]].copy()
+
+    with tabs[1]:
+        aluminium_stats = aluminium_chart_data.dropna(subset=["aluminium_tensile_strength_mpa"])
+        if not aluminium_stats.empty:
+            alu_chart = (
+                alt.Chart(aluminium_stats)
+                .transform_aggregate(
+                    mean_sigma="mean(aluminium_tensile_strength_mpa)",
+                    groupby=["category"],
+                )
+                .mark_bar(color="#f97316")
+                .encode(
+                    x=alt.X("mean_sigma:Q", title="σₜ promedio (MPa)"),
+                    y=alt.Y("category:N", sort="-x", title="Categoría NASA"),
+                    tooltip=[
+                        alt.Tooltip("mean_sigma:Q", format=".0f", title="σₜ promedio"),
+                        alt.Tooltip("category:N", title="Categoría"),
+                    ],
+                )
+                .properties(height=220)
+            )
+            st.altair_chart(alu_chart, use_container_width=True)
+        else:
+            st.info("Sin ensayos de aluminio asociados a este inventario.")
+
+        yield_data = aluminium_chart_data.dropna(subset=["aluminium_yield_strength_mpa"])
+        if not yield_data.empty:
+            yield_chart = (
+                alt.Chart(yield_data)
+                .mark_circle(opacity=0.75, size=70, color="#fb923c")
+                .encode(
+                    x=alt.X("aluminium_yield_strength_mpa:Q", title="σᵧ (MPa)"),
+                    y=alt.Y("aluminium_tensile_strength_mpa:Q", title="σₜ (MPa)"),
+                    tooltip=[
+                        alt.Tooltip("category:N", title="Categoría"),
+                        alt.Tooltip("material:N", title="Subitem"),
+                        alt.Tooltip("aluminium_processing_route:N", title="Ruta"),
+                        alt.Tooltip("aluminium_yield_strength_mpa:Q", format=".0f", title="σᵧ"),
+                        alt.Tooltip("aluminium_tensile_strength_mpa:Q", format=".0f", title="σₜ"),
+                    ],
+                )
+                .properties(height=220, title="Resistencias aluminio (fluencia vs. tracción)")
+            )
+            st.altair_chart(yield_chart, use_container_width=True)
+
+        route_counts = (
+            aluminium_chart_data["aluminium_processing_route"].dropna().astype(str).str.strip().replace("", pd.NA)
+        )
+        if not route_counts.empty:
+            top_routes = route_counts.value_counts().head(5).reset_index()
+            top_routes.columns = ["Proceso", "Ítems"]
+            st.caption("Rutas metalúrgicas más frecuentes")
+            st.dataframe(top_routes, hide_index=True, use_container_width=True)
+
+    st.caption(
+        "Datos externos integrados desde `polymer_composite_*` y `aluminium_alloys.csv`."
+    )
 
 with st.expander("¿Por qué estos ítems? (resumen rápido)", expanded=False):
     st.markdown(
@@ -374,6 +672,30 @@ if selected_filters:
 # Configuración de AG Grid
 filtered_df = filtered_df.reset_index(drop=True)
 
+st.markdown(
+    """
+    <style>
+    .property-badge {
+        display: inline-flex;
+        align-items: center;
+        background: rgba(14,165,233,0.16);
+        color: #e0f2fe;
+        border-radius: 999px;
+        padding: 0.12rem 0.55rem;
+        margin: 0.05rem;
+        font-size: 0.75rem;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+    }
+    .property-badge:nth-child(2n) {
+        background: rgba(16,185,129,0.18);
+        color: #d1fae5;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 flag_chip_renderer = JsCode(
     """
     function(params) {
@@ -384,6 +706,19 @@ flag_chip_renderer = JsCode(
             .filter(Boolean)
             .map(flag => `<span class="flag-chip">${flag}</span>`);
         return chips.join(' ');
+    }
+    """
+)
+
+property_badge_renderer = JsCode(
+    """
+    function(params){
+        if (!params.value) { return ''; }
+        const parts = String(params.value)
+            .split('||')
+            .map(v => v.trim())
+            .filter(Boolean);
+        return parts.map(part => `<span class="property-badge">${part}</span>`).join(' ');
     }
     """
 )
@@ -436,6 +771,8 @@ grid_column_order = [
     "difficulty_factor",
     "flags",
     "key_materials",
+    "polymer_profile",
+    "aluminium_profile",
     "notes",
     "composition_summary",
     "nasa_mission_bundle",
@@ -448,6 +785,10 @@ for column in mission_columns:
         grid_column_order.append(column)
 
 for column in composition_cols:
+    if column not in grid_column_order:
+        grid_column_order.append(column)
+
+for column in EXTERNAL_COLUMNS:
     if column not in grid_column_order:
         grid_column_order.append(column)
 
@@ -479,6 +820,22 @@ gb.configure_column("moisture_pct", header_name="Humedad (%)", type=["numericCol
 gb.configure_column("difficulty_factor", header_name="Dificultad", type=["numericColumn"], cellStyle=tesla_gradient_style)
 gb.configure_column("flags", header_name="Flags", cellRenderer=flag_chip_renderer, editable=True)
 gb.configure_column("key_materials", header_name="Key materials", wrapText=True, autoHeight=True)
+gb.configure_column(
+    "polymer_profile",
+    header_name="Polímeros ref",
+    editable=False,
+    cellRenderer=property_badge_renderer,
+    autoHeight=True,
+    wrapText=True,
+)
+gb.configure_column(
+    "aluminium_profile",
+    header_name="Aluminio ref",
+    editable=False,
+    cellRenderer=property_badge_renderer,
+    autoHeight=True,
+    wrapText=True,
+)
 gb.configure_column("notes", header_name="Notas", wrapText=True, autoHeight=True)
 gb.configure_column("composition_summary", header_name="Composición NASA", editable=False, wrapText=True, autoHeight=True)
 gb.configure_column("nasa_mission_bundle", header_name="Masas por misión", editable=False, wrapText=True, autoHeight=True)
@@ -494,6 +851,10 @@ for column in composition_cols:
     if column in grid_df.columns:
         header = column.replace("_pct", " (%)").replace("_", " ")
         gb.configure_column(column, header_name=header, editable=False, hide=True)
+
+for column in EXTERNAL_COLUMNS:
+    if column in grid_df.columns:
+        gb.configure_column(column, header_name=column, editable=False, hide=True)
 
 for column in source_columns:
     if column in grid_df.columns:
