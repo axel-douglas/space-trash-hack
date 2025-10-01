@@ -10,6 +10,7 @@ from streamlit_sortables import sort_items
 from app.modules.explain import compare_table, score_breakdown
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.ui_blocks import load_theme
+from app.modules.io import load_waste_df
 
 
 def _generate_storytelling(
@@ -63,6 +64,115 @@ def _generate_storytelling(
 
     return insights
 
+POLYMER_NUMERIC_COLUMNS = (
+    "pc_density_density_g_per_cm3",
+    "pc_mechanics_tensile_strength_mpa",
+    "pc_mechanics_modulus_gpa",
+    "pc_thermal_glass_transition_c",
+    "pc_ignition_ignition_temperature_c",
+    "pc_ignition_burn_time_min",
+)
+
+POLYMER_LABEL_COLUMNS = (
+    "pc_density_sample_label",
+    "pc_mechanics_sample_label",
+    "pc_thermal_sample_label",
+    "pc_ignition_sample_label",
+)
+
+ALUMINIUM_NUMERIC_COLUMNS = (
+    "aluminium_tensile_strength_mpa",
+    "aluminium_yield_strength_mpa",
+    "aluminium_elongation_pct",
+)
+
+ALUMINIUM_LABEL_COLUMNS = (
+    "aluminium_processing_route",
+    "aluminium_class_id",
+)
+
+POLYMER_LABEL_MAP = {
+    "density_g_cm3": "ρ ref (g/cm³)",
+    "tensile_mpa": "σₜ ref (MPa)",
+    "modulus_gpa": "E ref (GPa)",
+    "glass_c": "Tg (°C)",
+    "ignition_c": "Ignición (°C)",
+    "burn_min": "Burn (min)",
+}
+
+ALUMINIUM_LABEL_MAP = {
+    "tensile_mpa": "σₜ Al (MPa)",
+    "yield_mpa": "σᵧ Al (MPa)",
+    "elongation_pct": "ε Al (%)",
+}
+
+
+def _collect_external_profiles(candidate: dict, inventory: pd.DataFrame) -> dict[str, dict[str, float]]:
+    if not isinstance(candidate, dict) or inventory.empty:
+        return {}
+
+    ids = {str(value).strip() for value in candidate.get("source_ids", []) if str(value).strip()}
+    if not ids:
+        return {}
+
+    mask = pd.Series(False, index=inventory.index)
+    if "id" in inventory.columns:
+        mask |= inventory["id"].astype(str).isin(ids)
+    if "_source_id" in inventory.columns:
+        mask |= inventory["_source_id"].astype(str).isin(ids)
+
+    subset = inventory.loc[mask]
+    if subset.empty:
+        return {}
+
+    payload: dict[str, dict[str, float]] = {}
+
+    def _section(numeric_columns: tuple[str, ...]) -> dict[str, float]:
+        relevant = [column for column in numeric_columns if column in subset.columns]
+        metrics: dict[str, float] = {}
+        for column in relevant:
+            series = pd.to_numeric(subset[column], errors="coerce")
+            if not series.notna().any():
+                continue
+            if column == "pc_density_density_g_per_cm3":
+                metrics.setdefault("density_g_cm3", float(series.mean()))
+            elif column == "pc_mechanics_tensile_strength_mpa":
+                metrics.setdefault("tensile_mpa", float(series.mean()))
+            elif column == "pc_mechanics_modulus_gpa":
+                metrics.setdefault("modulus_gpa", float(series.mean()))
+            elif column == "pc_thermal_glass_transition_c":
+                metrics.setdefault("glass_c", float(series.mean()))
+            elif column == "pc_ignition_ignition_temperature_c":
+                metrics.setdefault("ignition_c", float(series.mean()))
+            elif column == "pc_ignition_burn_time_min":
+                metrics.setdefault("burn_min", float(series.mean()))
+            elif column == "aluminium_tensile_strength_mpa":
+                metrics.setdefault("tensile_mpa", float(series.mean()))
+            elif column == "aluminium_yield_strength_mpa":
+                metrics.setdefault("yield_mpa", float(series.mean()))
+            elif column == "aluminium_elongation_pct":
+                metrics.setdefault("elongation_pct", float(series.mean()))
+        return metrics
+
+    polymer_metrics = _section(POLYMER_NUMERIC_COLUMNS)
+    if polymer_metrics:
+        payload["polymer"] = polymer_metrics
+
+    aluminium_metrics = _section(ALUMINIUM_NUMERIC_COLUMNS)
+    if aluminium_metrics:
+        payload["aluminium"] = aluminium_metrics
+
+    return payload
+
+
+def _format_reference_value(key: str, value: float) -> str:
+    if key in {"density_g_cm3", "modulus_gpa"}:
+        return f"{value:.2f}"
+    if key == "burn_min":
+        return f"{value:.1f}"
+    return f"{value:.0f}"
+
+
 # ⚠️ Debe ser la PRIMERA llamada de Streamlit en la página
 st.set_page_config(page_title="Comparar & Explicar", page_icon="🧪", layout="wide")
 set_active_step("compare")
@@ -76,6 +186,8 @@ target = st.session_state.get("target", None)
 if not cands or not target:
     st.warning("Generá opciones en **3) Generador** primero.")
     st.stop()
+
+inventory_df = load_waste_df()
 
 # ======== estilo visual ========
 st.markdown(
@@ -102,6 +214,65 @@ for col in expected_cols:
     if col not in df_base.columns:
         # intentamos mapear por nombres aproximados si hiciera falta
         pass
+
+df_base["ρ ref (g/cm³)"] = np.nan
+df_base["σₜ ref (MPa)"] = np.nan
+df_base["σₜ Al (MPa)"] = np.nan
+df_base["σᵧ Al (MPa)"] = np.nan
+
+reference_rows: list[dict[str, float]] = []
+for idx, candidate in enumerate(cands, start=1):
+    metrics = _collect_external_profiles(candidate, inventory_df)
+    polymer_metrics = metrics.get("polymer", {})
+    aluminium_metrics = metrics.get("aluminium", {})
+    mask = df_base["Opción"] == idx
+    if polymer_metrics:
+        if "density_g_cm3" in polymer_metrics:
+            df_base.loc[mask, "ρ ref (g/cm³)"] = polymer_metrics["density_g_cm3"]
+        if "tensile_mpa" in polymer_metrics:
+            df_base.loc[mask, "σₜ ref (MPa)"] = polymer_metrics["tensile_mpa"]
+    if aluminium_metrics:
+        if "tensile_mpa" in aluminium_metrics:
+            df_base.loc[mask, "σₜ Al (MPa)"] = aluminium_metrics["tensile_mpa"]
+        if "yield_mpa" in aluminium_metrics:
+            df_base.loc[mask, "σᵧ Al (MPa)"] = aluminium_metrics["yield_mpa"]
+    if polymer_metrics or aluminium_metrics:
+        reference_rows.append({
+            "Opción": idx,
+            **{POLYMER_LABEL_MAP.get(key, key): value for key, value in polymer_metrics.items()},
+            **{ALUMINIUM_LABEL_MAP.get(key, key): value for key, value in aluminium_metrics.items()},
+        })
+
+# Sección de métricas externas
+if reference_rows:
+    st.markdown("### 🔬 Métricas externas por candidato")
+    reference_df = pd.DataFrame(reference_rows).set_index("Opción")
+    st.dataframe(reference_df, use_container_width=True)
+
+    scatter_poly = df_base.dropna(subset=["σₜ ref (MPa)", "Score"])
+    if not scatter_poly.empty:
+        fig_poly = px.scatter(
+            scatter_poly,
+            x="σₜ ref (MPa)",
+            y="Score",
+            size="ρ ref (g/cm³)",
+            color="Proceso",
+            hover_data=["Materiales"],
+            title="Score vs. resistencia de polímeros",
+        )
+        st.plotly_chart(fig_poly, use_container_width=True)
+
+    scatter_alu = df_base.dropna(subset=["σₜ Al (MPa)", "Score"])
+    if not scatter_alu.empty:
+        fig_alu = px.scatter(
+            scatter_alu,
+            x="σₜ Al (MPa)",
+            y="Score",
+            color="Proceso",
+            hover_data=["Materiales"],
+            title="Score vs. resistencia aluminio",
+        )
+        st.plotly_chart(fig_alu, use_container_width=True)
 
 # KPIs generales
 colA, colB, colC, colD = st.columns(4)

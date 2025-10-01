@@ -10,6 +10,7 @@ import pandas as pd
 import polars as pl
 
 from .generator import prepare_waste_frame
+from .data_sources import official_features_bundle
 from .paths import DATA_ROOT
 
 DATA_DIR = DATA_ROOT
@@ -87,6 +88,42 @@ def _load_waste_df_cached() -> pd.DataFrame:
 
     prepared = prepare_waste_frame(base_df)
     result = prepared.copy(deep=True)
+
+    try:
+        bundle = official_features_bundle()
+    except Exception:  # pragma: no cover - defensive guard in case datasets are missing
+        bundle = None
+
+    if bundle and getattr(bundle, "direct_map", None):
+        direct_map = bundle.direct_map
+        polymer_columns: set[str] = set()
+        for payload in direct_map.values():
+            if not isinstance(payload, dict):
+                continue
+            for column in payload.keys():
+                if column.startswith("pc_") or column.startswith("aluminium_"):
+                    polymer_columns.add(column)
+
+        if polymer_columns:
+            profile_df = pd.DataFrame.from_dict(direct_map, orient="index")
+            profile_df.index.name = "_official_match_key"
+            available = [column for column in polymer_columns if column in profile_df.columns]
+
+            if available:
+                profile_df = profile_df.reset_index()[["_official_match_key", *available]]
+                merged = result.merge(profile_df, on="_official_match_key", how="left", suffixes=("", "__bundle"))
+
+                for column in available:
+                    bundle_column = f"{column}__bundle"
+                    if bundle_column not in merged.columns:
+                        continue
+                    if column in merged.columns:
+                        merged[column] = merged[column].fillna(merged[bundle_column])
+                    else:
+                        merged[column] = merged[bundle_column]
+                    merged = merged.drop(columns=[bundle_column])
+
+                result = merged
 
     for column, values in source_snapshot.items():
         source_column = f"_source_{column}"

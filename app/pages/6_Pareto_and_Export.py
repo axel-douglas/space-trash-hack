@@ -19,6 +19,7 @@ from app.modules.luxe_components import MetricGalaxy, MetricItem, TeslaHero
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.safety import check_safety, safety_badge  # recalcular badge al seleccionar
 from app.modules.ui_blocks import futuristic_button, load_theme
+from app.modules.io import load_waste_df
 
 # ⚠️ PRIMERA llamada
 st.set_page_config(page_title="Pareto & Export", page_icon="📤", layout="wide")
@@ -28,6 +29,114 @@ set_active_step("export")
 load_theme()
 
 render_breadcrumbs("export")
+
+# Columnas externas (polímeros / aluminio)
+POLYMER_NUMERIC_COLUMNS = (
+    "pc_density_density_g_per_cm3",
+    "pc_mechanics_tensile_strength_mpa",
+    "pc_mechanics_modulus_gpa",
+    "pc_thermal_glass_transition_c",
+    "pc_ignition_ignition_temperature_c",
+    "pc_ignition_burn_time_min",
+)
+
+ALUMINIUM_NUMERIC_COLUMNS = (
+    "aluminium_tensile_strength_mpa",
+    "aluminium_yield_strength_mpa",
+    "aluminium_elongation_pct",
+)
+
+POLYMER_LABEL_MAP = {
+    "density_g_cm3": "ρ ref (g/cm³)",
+    "tensile_mpa": "σₜ ref (MPa)",
+    "modulus_gpa": "E ref (GPa)",
+    "glass_c": "Tg (°C)",
+    "ignition_c": "Ignición (°C)",
+    "burn_min": "Burn (min)",
+}
+
+ALUMINIUM_LABEL_MAP = {
+    "tensile_mpa": "σₜ Al (MPa)",
+    "yield_mpa": "σᵧ Al (MPa)",
+    "elongation_pct": "ε Al (%)",
+}
+
+
+def _collect_external_profiles(candidate: dict, inventory: pd.DataFrame) -> dict[str, dict[str, float]]:
+    if not isinstance(candidate, dict) or inventory.empty:
+        return {}
+
+    ids = {str(value).strip() for value in candidate.get("source_ids", []) if str(value).strip()}
+    if not ids:
+        return {}
+
+    mask = pd.Series(False, index=inventory.index)
+    if "id" in inventory.columns:
+        mask |= inventory["id"].astype(str).isin(ids)
+    if "_source_id" in inventory.columns:
+        mask |= inventory["_source_id"].astype(str).isin(ids)
+
+    subset = inventory.loc[mask]
+    if subset.empty:
+        return {}
+
+    payload: dict[str, dict[str, float]] = {}
+
+    def _aggregate(section_columns: tuple[str, ...], mapping: dict[str, str]) -> dict[str, float] | None:
+        relevant = [column for column in section_columns if column in subset.columns]
+        if not relevant:
+            return None
+
+        rows = subset[relevant].apply(pd.to_numeric, errors="coerce")
+        if not rows.notna().any().any():
+            return None
+
+        section_metrics: dict[str, float] = {}
+        for column in relevant:
+            series = pd.to_numeric(subset[column], errors="coerce")
+            if not series.notna().any():
+                continue
+            value = float(series.mean())
+            if column == "pc_density_density_g_per_cm3":
+                section_metrics.setdefault("density_g_cm3", value)
+            elif column == "pc_mechanics_tensile_strength_mpa":
+                section_metrics.setdefault("tensile_mpa", value)
+            elif column == "pc_mechanics_modulus_gpa":
+                section_metrics.setdefault("modulus_gpa", value)
+            elif column == "pc_thermal_glass_transition_c":
+                section_metrics.setdefault("glass_c", value)
+            elif column == "pc_ignition_ignition_temperature_c":
+                section_metrics.setdefault("ignition_c", value)
+            elif column == "pc_ignition_burn_time_min":
+                section_metrics.setdefault("burn_min", value)
+            elif column == "aluminium_tensile_strength_mpa":
+                section_metrics.setdefault("tensile_mpa", value)
+            elif column == "aluminium_yield_strength_mpa":
+                section_metrics.setdefault("yield_mpa", value)
+            elif column == "aluminium_elongation_pct":
+                section_metrics.setdefault("elongation_pct", value)
+
+        if not section_metrics:
+            return None
+
+        ordered_metrics: dict[str, float] = {}
+        for key in mapping.keys():
+            if key in section_metrics:
+                ordered_metrics[key] = section_metrics[key]
+        for key, value in section_metrics.items():
+            ordered_metrics.setdefault(key, value)
+        return ordered_metrics
+
+    polymer_metrics = _aggregate(POLYMER_NUMERIC_COLUMNS, POLYMER_LABEL_MAP)
+    if polymer_metrics:
+        payload["polymer"] = polymer_metrics
+
+    aluminium_metrics = _aggregate(ALUMINIUM_NUMERIC_COLUMNS, ALUMINIUM_LABEL_MAP)
+    if aluminium_metrics:
+        payload["aluminium"] = aluminium_metrics
+
+    return payload
+
 
 # ======== estado requerido ========
 cands  = st.session_state.get("candidates", [])
@@ -56,6 +165,8 @@ safety_summary = safety_badge(safety_flags) if safety_flags else {"level": "Sin 
 if not cands or not target:
     st.warning("Generá opciones en **3) Generador** primero.")
     st.stop()
+
+inventory_df = load_waste_df()
 
 # ======== estilos (NASA/SpaceX-like) ========
 st.markdown(
@@ -152,6 +263,46 @@ TeslaHero(
 # ======== tabla base (derivada de candidates reales) ========
 df_raw = compare_table(cands, target, crew_time_low=target.get("crew_time_low", False)).copy()
 
+# Enlazar métricas externas por Opción
+external_profiles_by_option: dict[int, dict[str, dict[str, float]]] = {}
+for idx, candidate in enumerate(cands, start=1):
+    profiles = _collect_external_profiles(candidate, inventory_df)
+    if profiles:
+        external_profiles_by_option[idx] = profiles
+
+
+def _metric_for(option_value: object, section: str, key: str) -> float:
+    try:
+        option_number = int(option_value)
+    except (TypeError, ValueError):
+        return float("nan")
+
+    section_payload = external_profiles_by_option.get(option_number, {}).get(section, {})
+    value = section_payload.get(key)
+    if value is None:
+        return float("nan")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float("nan")
+
+
+external_columns = [
+    ("polymer", "density_g_cm3", "ρ ref (g/cm³)", 3),
+    ("polymer", "tensile_mpa", "σₜ ref (MPa)", 1),
+    ("polymer", "modulus_gpa", "E ref (GPa)", 2),
+    ("polymer", "glass_c", "Tg (°C)", 1),
+    ("polymer", "ignition_c", "Ignición (°C)", 0),
+    ("polymer", "burn_min", "Burn (min)", 1),
+    ("aluminium", "tensile_mpa", "σₜ Al (MPa)", 1),
+    ("aluminium", "yield_mpa", "σᵧ Al (MPa)", 1),
+    ("aluminium", "elongation_pct", "ε Al (%)", 1),
+]
+
+option_series = pd.to_numeric(df_raw.get("Opción"), errors="coerce") if "Opción" in df_raw else pd.Series(dtype=float)
+for section, key, label, _precision in external_columns:
+    df_raw[label] = option_series.map(lambda opt: _metric_for(opt, section, key))
+
 # Normalización robusta de nombres
 rename_map = {}
 for col in df_raw.columns:
@@ -185,6 +336,33 @@ if not df_plot.empty:
         MetricItem(label="Mín. Agua", value=f"{df_plot['Agua (L)'].min():.2f} L", icon="💧"),
         MetricItem(label="Mín. Energía", value=f"{df_plot['Energía (kWh)'].min():.2f} kWh", icon="⚡"),
     ]
+    polymer_density_values = pd.to_numeric(df_plot.get("ρ ref (g/cm³)"), errors="coerce").dropna()
+    polymer_tensile_values = pd.to_numeric(df_plot.get("σₜ ref (MPa)"), errors="coerce").dropna()
+    aluminium_tensile_values = pd.to_numeric(df_plot.get("σₜ Al (MPa)"), errors="coerce").dropna()
+    if not polymer_density_values.empty:
+        kpi_items.append(
+            MetricItem(
+                label="ρ ref promedio",
+                value=f"{polymer_density_values.mean():.3f} g/cm³",
+                icon="🧪",
+            )
+        )
+    if not polymer_tensile_values.empty:
+        kpi_items.append(
+            MetricItem(
+                label="σₜ ref promedio",
+                value=f"{polymer_tensile_values.mean():.1f} MPa",
+                icon="🛰️",
+            )
+        )
+    if not aluminium_tensile_values.empty:
+        kpi_items.append(
+            MetricItem(
+                label="σₜ Al promedio",
+                value=f"{aluminium_tensile_values.mean():.1f} MPa",
+                icon="🛡️",
+            )
+        )
 else:
     kpi_items = [
         MetricItem(label="Opciones válidas", value="0", icon="🪐"),
@@ -352,12 +530,23 @@ else:
         water = row.get("Agua (L)", 0.0)
         crew = row.get("Crew (min)", 0.0)
         score_val = row.get("Score", 0.0)
+        rho_val = row.get("ρ ref (g/cm³)")
+        tensile_val = row.get("σₜ ref (MPa)")
+        tensile_al_val = row.get("σₜ Al (MPa)")
+
+        def _fmt(value: object, precision: int, suffix: str) -> str:
+            try:
+                return f"{float(value):.{precision}f}{suffix}"
+            except (TypeError, ValueError):
+                return "—"
+
         active_cls = " active" if selected_option_number and option_number == int(selected_option_number) else ""
         sidebar.markdown(
             f"<div class='flight-card{active_cls}'>"
             f"<strong>Plan #{option_number}</strong>"
             f"<span>Score: {score_val:.2f}</span>"
             f"<span>Energía: {energy:.2f} kWh · Agua: {water:.2f} L · Crew: {crew:.1f} min</span>"
+            f"<span>ρ ref {_fmt(rho_val, 3, ' g/cm³')} · σₜ {_fmt(tensile_val, 1, ' MPa')} · σₜ Al {_fmt(tensile_al_val, 1, ' MPa')}</span>"
             "</div>",
             unsafe_allow_html=True,
         )
@@ -367,6 +556,49 @@ if selected_candidate:
     materials = ", ".join(selected_candidate.get("materials", [])[:3])
     if selected_candidate.get("materials") and len(selected_candidate["materials"]) > 3:
         materials += "…"
+    profile_payload: dict[str, dict[str, float]] = {}
+    try:
+        if selected_option_number:
+            profile_payload = external_profiles_by_option.get(int(selected_option_number), {}) or {}
+    except (TypeError, ValueError):
+        profile_payload = {}
+
+    def _format_profile_section(metrics: dict[str, float]) -> str:
+        if not metrics:
+            return "—"
+        formatted: list[str] = []
+        for key, label in (
+            ("density_g_cm3", "ρ ref"),
+            ("tensile_mpa", "σₜ"),
+            ("modulus_gpa", "E"),
+            ("glass_c", "Tg"),
+            ("ignition_c", "Ign"),
+            ("burn_min", "Burn"),
+            ("yield_mpa", "σᵧ"),
+            ("elongation_pct", "ε"),
+        ):
+            value = metrics.get(key)
+            if value is None:
+                continue
+            suffix = ""
+            if key == "density_g_cm3":
+                suffix = " g/cm³"
+            elif key in {"tensile_mpa", "yield_mpa"}:
+                suffix = " MPa"
+            elif key in {"glass_c", "ignition_c"}:
+                suffix = " °C"
+            elif key == "burn_min":
+                suffix = " min"
+            elif key == "elongation_pct":
+                suffix = " %"
+            try:
+                formatted.append(f"{label} {float(value):.2f}{suffix}")
+            except (TypeError, ValueError):
+                continue
+        return " · ".join(formatted) if formatted else "—"
+
+    polymer_preview = _format_profile_section(profile_payload.get("polymer", {}))
+    aluminium_preview = _format_profile_section(profile_payload.get("aluminium", {}))
     sidebar.markdown(
         "<h3 style='margin-top:14px;'>Nebula preview</h3>",
         unsafe_allow_html=True,
@@ -383,6 +615,7 @@ if selected_candidate:
               Proceso: {proc}<br/>
               Materiales: {mats}<br/>
               Score: {score:.2f} · Energía: {energy:.2f} kWh · Agua: {water:.2f} L · Crew: {crew:.1f} min
+              <br/>Polímero: {poly}<br/>Aluminio: {alum}
             </div>
             """.format(
                 label=f"Plan #{selected_option_number or '—'}",
@@ -392,6 +625,8 @@ if selected_candidate:
                 energy=getattr(props, "energy_kwh", 0.0),
                 water=getattr(props, "water_l", 0.0),
                 crew=getattr(props, "crew_min", 0.0),
+                poly=polymer_preview,
+                alum=aluminium_preview,
             ),
             unsafe_allow_html=True,
         )
@@ -484,6 +719,35 @@ with tab_pareto:
                 return df[key]
             return pd.Series(np.nan, index=df.index)
 
+        def _hover_matrix(df: pd.DataFrame) -> np.ndarray:
+            if df.empty:
+                return np.empty((0, 5), dtype=object)
+            option_series = pd.to_numeric(_safe_series(df, "Opción"), errors="coerce")
+            score_series = pd.to_numeric(_safe_series(df, "Score"), errors="coerce")
+            rho_series = pd.to_numeric(_safe_series(df, "ρ ref (g/cm³)"), errors="coerce")
+            tensile_series = pd.to_numeric(_safe_series(df, "σₜ ref (MPa)"), errors="coerce")
+            tensile_al_series = pd.to_numeric(_safe_series(df, "σₜ Al (MPa)"), errors="coerce")
+
+            def _fmt(values: pd.Series, precision: int, suffix: str = "") -> np.ndarray:
+                formatted: list[str] = []
+                for value in values:
+                    if pd.isna(value):
+                        formatted.append("—")
+                    else:
+                        formatted.append(f"{value:.{precision}f}{suffix}")
+                return np.array(formatted, dtype=object)
+
+            option_text = np.where(option_series.notna(), option_series.fillna(0).astype(int).astype(str), "—")
+            return np.column_stack(
+                [
+                    option_text,
+                    _fmt(score_series, 2),
+                    _fmt(rho_series, 3, " g/cm³"),
+                    _fmt(tensile_series, 1, " MPa"),
+                    _fmt(tensile_al_series, 1, " MPa"),
+                ]
+            )
+
         fig3d = go.Figure()
 
         if not other_points.empty:
@@ -501,11 +765,11 @@ with tab_pareto:
                         line=dict(width=1.2, color="rgba(148,163,184,0.4)"),
                         symbol="circle",
                     ),
-                    hovertemplate="<b>Opción %{customdata[0]}</b><br>Score %{customdata[1]:.2f}<extra></extra>",
-                    customdata=np.stack([
-                        _safe_series(other_points, "Opción").fillna(0.0),
-                        other_points["Score"].fillna(0.0),
-                    ], axis=-1),
+                    hovertemplate=(
+                        "<b>Opción %{customdata[0]}</b><br>Score %{customdata[1]}<br>"
+                        "ρ ref %{customdata[2]}<br>σₜ %{customdata[3]}<br>σₜ Al %{customdata[4]}<extra></extra>"
+                    ),
+                    customdata=_hover_matrix(other_points),
                 )
             )
 
@@ -528,13 +792,11 @@ with tab_pareto:
                         lightposition=dict(x=200, y=120, z=140),
                     ),
                     hovertemplate=(
-                        "<b>Plan %{customdata[0]}</b><br>Score %{customdata[1]:.2f}<br>"
+                        "<b>Plan %{customdata[0]}</b><br>Score %{customdata[1]}<br>"
+                        "ρ ref %{customdata[2]} · σₜ %{customdata[3]} · σₜ Al %{customdata[4]}<br>"
                         "Energía %{x:.2f} kWh<br>Agua %{y:.2f} L<br>Crew %{z:.1f} min<extra></extra>"
                     ),
-                    customdata=np.stack([
-                        _safe_series(pareto_points, "Opción").fillna(0.0),
-                        pareto_points["Score"].fillna(0.0),
-                    ], axis=-1),
+                    customdata=_hover_matrix(pareto_points),
                 )
             )
 
@@ -604,10 +866,12 @@ with tab_pareto:
                             opacity=1.0,
                             symbol="circle",
                         ),
-                        hovertemplate="Plan seleccionado %{customdata[0]}<extra></extra>",
-                        customdata=np.stack([
-                            _safe_series(selected_trace, "Opción").fillna(0.0)
-                        ], axis=-1),
+                        hovertemplate=(
+                            "<b>Seleccionado %{customdata[0]}</b><br>"
+                            "Score %{customdata[1]}<br>ρ ref %{customdata[2]} · σₜ %{customdata[3]} · σₜ Al %{customdata[4]}"
+                            "<extra></extra>"
+                        ),
+                        customdata=_hover_matrix(selected_trace),
                     )
                 )
 
@@ -702,10 +966,63 @@ La capa “Pareto” marca los que no pueden mejorarse en un eje sin empeorar ot
 </div>
 """, unsafe_allow_html=True)
 
+    density_series = pd.to_numeric(df_view.get("ρ ref (g/cm³)"), errors="coerce").dropna()
+    polymer_tensile_series = pd.to_numeric(df_view.get("σₜ ref (MPa)"), errors="coerce").dropna()
+    aluminium_tensile_series = pd.to_numeric(df_view.get("σₜ Al (MPa)"), errors="coerce").dropna()
+    if not density_series.empty or not polymer_tensile_series.empty or not aluminium_tensile_series.empty:
+        st.markdown('<h4 class="section-title">Propiedades externas (NASA)</h4>', unsafe_allow_html=True)
+        metric_cols = st.columns(3)
+        if not density_series.empty:
+            with metric_cols[0]:
+                density_fig = px.histogram(
+                    pd.DataFrame({"ρ ref (g/cm³)": density_series}),
+                    x="ρ ref (g/cm³)",
+                    nbins=14,
+                    title="Densidad",
+                )
+                density_fig.update_layout(height=280, margin=dict(l=10, r=10, t=40, b=10))
+                st.plotly_chart(density_fig, use_container_width=True)
+        if not polymer_tensile_series.empty:
+            with metric_cols[1]:
+                tensile_fig = px.histogram(
+                    pd.DataFrame({"σₜ ref (MPa)": polymer_tensile_series}),
+                    x="σₜ ref (MPa)",
+                    nbins=14,
+                    title="σₜ polímero",
+                )
+                tensile_fig.update_layout(height=280, margin=dict(l=10, r=10, t=40, b=10))
+                st.plotly_chart(tensile_fig, use_container_width=True)
+        if not aluminium_tensile_series.empty:
+            with metric_cols[2]:
+                tensile_al_fig = px.histogram(
+                    pd.DataFrame({"σₜ Al (MPa)": aluminium_tensile_series}),
+                    x="σₜ Al (MPa)",
+                    nbins=14,
+                    title="σₜ aluminio",
+                )
+                tensile_al_fig.update_layout(height=280, margin=dict(l=10, r=10, t=40, b=10))
+                st.plotly_chart(tensile_al_fig, use_container_width=True)
+        st.caption(
+            "Distribuciones calculadas sobre candidatos filtrados. Úsalas para balancear densidad vs. resistencia en la selección."
+        )
+
     st.markdown('<h4 class="section-title">Tabla — Frontera de Pareto</h4>', unsafe_allow_html=True)
     if not table_pareto.empty:
+        columns_to_show = [
+            "Opción",
+            "Score",
+            "Proceso",
+            "Materiales",
+            "Energía (kWh)",
+            "Agua (L)",
+            "Crew (min)",
+            "ρ ref (g/cm³)",
+            "σₜ ref (MPa)",
+            "σₜ Al (MPa)",
+        ]
+        available_columns = [column for column in columns_to_show if column in table_pareto.columns]
         st.dataframe(
-            table_pareto[["Opción","Score","Proceso","Materiales","Energía (kWh)","Agua (L)","Crew (min)"]],
+            table_pareto[available_columns],
             use_container_width=True, hide_index=True
         )
     else:
@@ -808,6 +1125,28 @@ with tab_trials:
         st.info("No hay candidatos suficientes para graficar.")
     else:
         yerr = (df_trials["Score"].abs() * (ci_pct/100.0)).clip(lower=0.05)
+        density_vals = pd.to_numeric(df_trials.get("ρ ref (g/cm³)"), errors="coerce")
+        tensile_vals = pd.to_numeric(df_trials.get("σₜ ref (MPa)"), errors="coerce")
+        tensile_al_vals = pd.to_numeric(df_trials.get("σₜ Al (MPa)"), errors="coerce")
+
+        def _format_hover(values: pd.Series, precision: int, suffix: str = "") -> np.ndarray:
+            formatted: list[str] = []
+            for value in values:
+                if pd.isna(value):
+                    formatted.append("—")
+                else:
+                    formatted.append(f"{value:.{precision}f}{suffix}")
+            return np.array(formatted, dtype=object)
+
+        customdata = np.column_stack(
+            [
+                df_trials["Opción"].astype(str).to_numpy(),
+                _format_hover(density_vals, 3, " g/cm³"),
+                _format_hover(tensile_vals, 1, " MPa"),
+                _format_hover(tensile_al_vals, 1, " MPa"),
+            ]
+        )
+
         fig = go.Figure()
         fig.add_trace(go.Scatter(
             x=df_trials["Opción"].astype(str),
@@ -815,7 +1154,12 @@ with tab_trials:
             error_y=dict(type='data', array=yerr, thickness=1.2, width=4),
             mode="markers",
             marker=dict(size=10),
-            name="Predicted trial score"
+            name="Predicted trial score",
+            customdata=customdata,
+            hovertemplate=(
+                "<b>Opción %{customdata[0]}</b><br>Score %{y:.2f}<br>"
+                "ρ ref %{customdata[1]}<br>σₜ %{customdata[2]}<br>σₜ Al %{customdata[3]}<extra></extra>"
+            ),
         ))
         fig.update_layout(yaxis_title="Score ± CI", xaxis_title="Opción", height=420, margin=dict(l=10,r=10,t=10,b=10))
         st.plotly_chart(fig, use_container_width=True)
