@@ -8,6 +8,7 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, JsCode
 from app.modules.io import load_waste_df, save_waste_df
 from app.modules.navigation import set_active_step
 from app.modules.ui_blocks import load_theme, minimal_button
+from app.modules.problematic import problematic_mask
 
 _SAVE_SUCCESS_FLAG = "_inventory_save_success"
 
@@ -43,19 +44,6 @@ def _pick_col(df: pd.DataFrame, names, default=None):
         if n in df.columns:
             return n
     return default
-
-def _is_problematic_row(row: pd.Series) -> bool:
-    cat = str(row.get("category", "")).lower()
-    fam = str(row.get("material_family", "")).lower()
-    flg = str(row.get("flags", "")).lower()
-    rules = [
-        ("pouches" in cat) or ("multilayer" in flg) or ("pe-pet-al" in fam),
-        ("foam" in cat) or ("zotek" in fam) or ("closed_cell" in flg),
-        ("eva" in cat) or ("ctb" in flg) or ("nomex" in fam) or ("nylon" in fam) or ("polyester" in fam),
-        ("glove" in cat) or ("nitrile" in fam),
-        ("wipe" in flg) or ("textile" in cat),
-    ]
-    return any(rules)
 
 # --------------------- cargar y normalizar a esquema estándar ---------------------
 raw = load_waste_df().copy()
@@ -128,6 +116,25 @@ if "_inventory_baseline" not in st.session_state:
     st.session_state["_inventory_baseline"] = {"df": raw.copy(deep=True), "saved_at": None}
 
 df = _build_editable_df(raw)
+id_col    = _pick_col(raw, ["id"])
+cat_col   = _pick_col(raw, ["category", "Category"])
+mat_col   = _pick_col(raw, ["material_family", "material", "Material"])
+mass_col  = _pick_col(raw, ["mass_kg", "kg", "Mass_kg"])
+vol_col   = _pick_col(raw, ["volume_l", "Volume_L"])
+flags_col = _pick_col(raw, ["flags", "Flags"])
+
+# Construimos un DF estándar para edición/guardado:
+df = pd.DataFrame({
+    "id": raw[id_col] if id_col else raw.index.astype(str),
+    "category": raw[cat_col] if cat_col else "",
+    "material_family": raw[mat_col] if mat_col else "",
+    "mass_kg": pd.to_numeric(raw[mass_col], errors="coerce").fillna(0.0) if mass_col else 0.0,
+    "volume_l": pd.to_numeric(raw[vol_col], errors="coerce").fillna(0.0) if vol_col else 0.0,
+    "flags": (raw[flags_col].astype(str) if flags_col else ""),
+})
+
+problematic_series = problematic_mask(df)
+df["_problematic"] = problematic_series
 
 # --------------------- métricas “sabor laboratorio” ---------------------
 c1, c2, c3, c4 = st.columns(4)
@@ -166,7 +173,8 @@ sidebar = st.sidebar
 sidebar.header("Análisis instantáneo")
 
 session_df = st.session_state["inventory_data"].copy()
-session_df["_problematic"] = session_df.apply(_is_problematic_row, axis=1)
+session_df["_problematic"] = problematic_mask(session_df)
+st.session_state["inventory_data"] = session_df.copy()
 
 baseline_state = _get_baseline_state()
 baseline_df = _build_editable_df(baseline_state["df"]) if baseline_state else None
@@ -250,7 +258,6 @@ if selected_filters:
 # ------------------------------------------------------------------
 # Configuración de AG Grid
 filtered_df = filtered_df.reset_index(drop=True)
-filtered_df["_problematic"] = filtered_df.apply(_is_problematic_row, axis=1)
 
 flag_chip_renderer = JsCode(
     """
@@ -378,6 +385,7 @@ with grid_col:
     if not updated_df.empty:
         updated_df["mass_kg"] = pd.to_numeric(updated_df["mass_kg"], errors="coerce").fillna(0.0)
         updated_df["volume_l"] = pd.to_numeric(updated_df["volume_l"], errors="coerce").fillna(0.0)
+        updated_df["_problematic"] = problematic_mask(updated_df)
         st.session_state["inventory_data"] = updated_df
 
 selected_rows = grid_response.get("selected_rows", []) if "grid_response" in locals() else []
@@ -388,7 +396,7 @@ with preview_col:
     if selected_rows:
         st.caption("Lotes seleccionados — edición contextual")
         preview_df = pd.DataFrame(selected_rows)
-        preview_df["_problematic"] = preview_df.apply(_is_problematic_row, axis=1)
+        preview_df["_problematic"] = problematic_mask(preview_df)
         st.dataframe(
             preview_df[["id", "category", "flags", "mass_kg", "volume_l"]]
             .rename(columns={"mass_kg": "kg", "volume_l": "L"}),
@@ -438,6 +446,7 @@ with preview_col:
             live_df.loc[mask, "flags"] = live_df.loc[mask, "flags"].fillna("").apply(
                 lambda text: ", ".join(sorted(set([*filter(None, map(str.strip, text.split(","))), new_flag.strip()])))
             )
+        live_df["_problematic"] = problematic_mask(live_df)
         st.session_state["inventory_data"] = live_df
         st.toast("Edición en lote aplicada.")
         _trigger_rerun()

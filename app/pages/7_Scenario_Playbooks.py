@@ -55,28 +55,81 @@ featured_indices = [
     idx + 1 for idx, name in enumerate(ordered_scenarios) if name in FEATURED_PLAYBOOKS
 ]
 
-# ======== Estilos SpaceX/NASA-like ========
-radio_feature_css = "".join(
-    f"""
-    div[data-testid=\"stRadio\"] > div[role=\"radiogroup\"] > div:nth-child({index}) label {{
-        border-color:rgba(250,204,21,0.65);
-        box-shadow:0 16px 28px rgba(15,23,42,0.55), inset 0 0 0 1px rgba(250,204,21,0.35);
-        background:linear-gradient(135deg, rgba(250,204,21,0.22), rgba(56,189,248,0.08));
-        color:#f8fafc;
-    }}
-    div[data-testid=\"stRadio\"] > div[role=\"radiogroup\"] > div:nth-child({index}) label:hover {{
-        border-color:rgba(250,204,21,0.85);
-        box-shadow:0 20px 34px rgba(15,23,42,0.65), inset 0 0 0 1px rgba(250,204,21,0.45);
-    }}
-    div[data-testid=\"stRadio\"] > div[role=\"radiogroup\"] > div:nth-child({index}) label:has(input:checked) {{
-        border-color:rgba(253,224,71,0.95);
-        box-shadow:0 24px 38px rgba(15,23,42,0.7), inset 0 0 0 1px rgba(253,224,71,0.65);
-        color:#0f172a;
-        background:linear-gradient(135deg, rgba(253,224,71,0.65), rgba(56,189,248,0.32));
-    }}
+
+def build_radio_hud_css(feature_positions: list[int]) -> str:
+    """Return HUD-like styling for the radio selector, highlighting featured playbooks."""
+
+    base_styles = """
+    div[data-testid="stRadio"] > div[role="radiogroup"]{
+        display:flex;
+        gap:0.6rem;
+        flex-wrap:wrap;
+    }
+    div[data-testid="stRadio"] > div[role="radiogroup"] label{
+        cursor:pointer;
+        display:flex;
+        align-items:center;
+        gap:0.5rem;
+        padding:0.55rem 1.35rem;
+        border-radius:14px;
+        border:1px solid rgba(148,163,184,0.35);
+        background:rgba(15,23,42,0.62);
+        color:#e2e8f0;
+        font-weight:600;
+        letter-spacing:0.04em;
+        text-transform:uppercase;
+        box-shadow:inset 0 0 0 1px rgba(148,163,184,0.18);
+        transition:all .2s ease;
+        position:relative;
+    }
+    div[data-testid="stRadio"] > div[role="radiogroup"] label:hover{
+        border-color:rgba(148,163,184,0.75);
+        box-shadow:0 12px 24px rgba(15,23,42,0.48), inset 0 0 0 1px rgba(148,163,184,0.32);
+    }
+    div[data-testid="stRadio"] > div[role="radiogroup"] label::after{
+        content:"";
+        position:absolute;
+        inset:0;
+        border-radius:14px;
+        opacity:0;
+        transition:opacity .2s ease;
+        background:radial-gradient(circle at 30% 30%, rgba(148,197,255,0.32), transparent 70%);
+        mix-blend-mode:screen;
+    }
+    div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked)::after{
+        opacity:1;
+    }
+    div[data-testid="stRadio"] > div[role="radiogroup"] label:has(input:checked){
+        border:1px solid rgba(96,165,250,0.85);
+        box-shadow:0 18px 32px rgba(15,23,42,0.62), inset 0 0 0 1px rgba(96,165,250,0.55);
+        background:linear-gradient(135deg, rgba(59,130,246,0.45), rgba(56,189,248,0.25));
+        color:#0ea5e9;
+    }
     """
-    for index in featured_indices
-)
+
+    feature_styles = "".join(
+        f"""
+        div[data-testid=\"stRadio\"] > div[role=\"radiogroup\"] > div:nth-child({index}) label {{
+            border-color:rgba(250,204,21,0.65);
+            box-shadow:0 16px 28px rgba(15,23,42,0.55), inset 0 0 0 1px rgba(250,204,21,0.35);
+            background:linear-gradient(135deg, rgba(250,204,21,0.22), rgba(56,189,248,0.08));
+            color:#f8fafc;
+        }}
+        div[data-testid=\"stRadio\"] > div[role=\"radiogroup\"] > div:nth-child({index}) label:hover {{
+            border-color:rgba(250,204,21,0.85);
+            box-shadow:0 20px 34px rgba(15,23,42,0.65), inset 0 0 0 1px rgba(250,204,21,0.45);
+        }}
+        div[data-testid=\"stRadio\"] > div[role=\"radiogroup\"] > div:nth-child({index}) label:has(input:checked) {{
+            border-color:rgba(253,224,71,0.95);
+            box-shadow:0 24px 38px rgba(15,23,42,0.7), inset 0 0 0 1px rgba(253,224,71,0.65);
+            color:#0f172a;
+            background:linear-gradient(135deg, rgba(253,224,71,0.65), rgba(56,189,248,0.32));
+        }}
+        """
+        for index in feature_positions
+    )
+
+    return base_styles + feature_styles
 
 st.markdown(
     f"""
@@ -89,13 +142,7 @@ st.markdown(
     .why-panel h4{{margin:0 0 8px 0; font-size:1.05rem;}}
     .why-panel p{{margin:0 0 10px 0; font-size:0.92rem; line-height:1.45;}}
     .why-panel ul{{margin:0; padding-left:18px; font-size:0.88rem; line-height:1.5;}}
-    div[data-testid=\"stRadio\"] > div[role=\"radiogroup\"]{{display:flex; gap:0.6rem; flex-wrap:wrap;}}
-    div[data-testid=\"stRadio\"] > div[role=\"radiogroup\"] label{{cursor:pointer; display:flex; align-items:center; gap:0.5rem; padding:0.55rem 1.35rem; border-radius:14px; border:1px solid rgba(148,163,184,0.35); background:rgba(15,23,42,0.62); color:#e2e8f0; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; box-shadow:inset 0 0 0 1px rgba(148,163,184,0.18); transition:all .2s ease; position:relative;}}
-    div[data-testid=\"stRadio\"] > div[role=\"radiogroup\"] label:hover{{border-color:rgba(148,163,184,0.75); box-shadow:0 12px 24px rgba(15,23,42,0.48), inset 0 0 0 1px rgba(148,163,184,0.32);}}
-    div[data-testid=\"stRadio\"] > div[role=\"radiogroup\"] label::after{{content:\"\"; position:absolute; inset:0; border-radius:14px; opacity:0; transition:opacity .2s ease; background:radial-gradient(circle at 30% 30%, rgba(148,197,255,0.32), transparent 70%); mix-blend-mode:screen;}}
-    div[data-testid=\"stRadio\"] > div[role=\"radiogroup\"] label:has(input:checked)::after{{opacity:1;}}
-    div[data-testid=\"stRadio\"] > div[role=\"radiogroup\"] label:has(input:checked){{border:1px solid rgba(96,165,250,0.85); box-shadow:0 18px 32px rgba(15,23,42,0.62), inset 0 0 0 1px rgba(96,165,250,0.55); background:linear-gradient(135deg, rgba(59,130,246,0.45), rgba(56,189,248,0.25)); color:#0ea5e9;}}
-    {radio_feature_css}
+    {build_radio_hud_css(featured_indices)}
     </style>
     """,
     unsafe_allow_html=True,
@@ -198,8 +245,8 @@ with col_sel:
             "scenario": pb.name,
             "filters": filters_payload,
         }
-        st.experimental_set_query_params(page="3_Generator")
-        st.experimental_rerun()
+        st.session_state["mission_active_step"] = "generator"
+        st.switch_page("pages/3_Generator.py")
 
 # ======== Brief del Playbook + Estado de datos ========
 st.markdown("### 🧪 Brief del escenario")

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from functools import lru_cache
 from typing import Sequence
 
 import streamlit as st
@@ -35,6 +34,10 @@ MISSION_STEPS: tuple[MissionStep, ...] = (
 )
 
 _HUD_STATE_KEY = "__mission_hud_injected__"
+_MODEL_METADATA_CACHE_KEY = "__mission_hud_model_metadata_cache__"
+_MODEL_METADATA_READY_KEY = "__mission_hud_model_ready_state__"
+_MODEL_METADATA_VERSION_KEY = "__mission_hud_model_metadata_version__"
+_MODEL_METADATA_CACHE_VERSION_KEY = "__mission_hud_model_metadata_cache_version__"
 
 
 def set_active_step(step_key: str) -> None:
@@ -52,18 +55,33 @@ def _step_from_key(step_key: str | None) -> MissionStep | None:
     return None
 
 
-@lru_cache(maxsize=1)
 def _model_metadata() -> dict[str, str | dict[str, str]]:
     """Read lightweight metadata from the model registry once per run."""
 
     registry = get_model_registry()
-    ready = "✅ Listo" if registry.ready else "⚠️ Requiere entrenamiento"
+    ready_state = bool(registry.ready)
+
+    try:
+        state = st.session_state
+    except Exception:  # pragma: no cover - outside Streamlit runtime
+        state = None
+
+    current_version = 0
+    if state is not None:
+        current_version = state.get(_MODEL_METADATA_VERSION_KEY, 0)
+        cached = state.get(_MODEL_METADATA_CACHE_KEY)
+        cached_ready = state.get(_MODEL_METADATA_READY_KEY)
+        cached_version = state.get(_MODEL_METADATA_CACHE_VERSION_KEY)
+        if cached is not None and cached_ready == ready_state and cached_version == current_version:
+            return cached
+
+    ready = "✅ Listo" if ready_state else "⚠️ Requiere entrenamiento"
     trained_label = registry.metadata.get("trained_label") or registry.metadata.get("trained_on") or "—"
     trained_at = registry.metadata.get("trained_at") or "sin metadata"
 
     status_badge = {
-        "label": "Modelo listo" if registry.ready else "Entrenamiento pendiente",
-        "tone": "success" if registry.ready else "danger",
+        "label": "Modelo listo" if ready_state else "Entrenamiento pendiente",
+        "tone": "success" if ready_state else "danger",
     }
 
     uncertainty_raw = registry.uncertainty_label()
@@ -81,7 +99,7 @@ def _model_metadata() -> dict[str, str | dict[str, str]]:
         "tone": uncertainty_tone,
     }
 
-    return {
+    metadata = {
         "status": ready,
         "model_name": registry.metadata.get("model_name", "rexai-rf-ensemble"),
         "trained_label": str(trained_label),
@@ -90,6 +108,35 @@ def _model_metadata() -> dict[str, str | dict[str, str]]:
         "status_badge": status_badge,
         "uncertainty_badge": uncertainty_badge,
     }
+
+    if state is not None:
+        state[_MODEL_METADATA_CACHE_KEY] = metadata
+        state[_MODEL_METADATA_READY_KEY] = ready_state
+        state[_MODEL_METADATA_CACHE_VERSION_KEY] = current_version
+
+    return metadata
+
+
+def refresh_model_metadata() -> None:
+    """Invalidate cached HUD metadata and refresh the model registry resource."""
+
+    try:
+        state = st.session_state
+    except Exception:  # pragma: no cover - outside Streamlit runtime
+        state = None
+
+    if state is not None:
+        state.pop(_MODEL_METADATA_CACHE_KEY, None)
+        state.pop(_MODEL_METADATA_READY_KEY, None)
+        state.pop(_MODEL_METADATA_CACHE_VERSION_KEY, None)
+        state[_MODEL_METADATA_VERSION_KEY] = state.get(_MODEL_METADATA_VERSION_KEY, 0) + 1
+
+    clear_cache = getattr(get_model_registry, "clear", None)
+    if callable(clear_cache):
+        try:
+            clear_cache()
+        except Exception:  # pragma: no cover - defensive clear
+            pass
 
 
 def _page_url(page: str) -> str:
