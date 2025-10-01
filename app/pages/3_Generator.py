@@ -1,7 +1,5 @@
 import _bootstrap  # noqa: F401
 
-from datetime import datetime
-
 import altair as alt
 import pandas as pd
 import streamlit as st
@@ -16,11 +14,12 @@ from app.modules.safety import check_safety, safety_badge
 from app.modules.ui_blocks import (
     badge_group,
     layout_block,
+    layout_stack,
     load_theme,
     micro_divider,
     minimal_button,
 )
-from app.modules.luxe_components import ChipRow, MetricSpec, RankingCockpit, TeslaHero
+from app.modules.luxe_components import ChipRow, MetricSpec, RankingCockpit
 from app.modules.visualizations import ConvergenceScene
 
 st.set_page_config(page_title="Rex-AI • Generador", page_icon="🤖", layout="wide")
@@ -72,29 +71,20 @@ def _format_label_summary(summary: dict[str, dict[str, float]] | None) -> str:
 
     return " · ".join(parts)
 
-# ----------------------------- Hero -----------------------------
-TeslaHero(
-    title="Generador asistido por IA",
-    subtitle=(
-        "Rex-AI explora combinaciones de residuos NASA, optimiza parámetros y "
-        "explica cada predicción con bandas de confianza e importancias de features."
-    ),
-    chips=[
-        {"label": "RandomForest + XGBoost (alternativo)", "tone": "accent"},
-        {"label": "Confianza 95%", "tone": "info"},
-        {"label": "Comparación heurística vs IA", "tone": "accent"},
-        {"label": "Trazabilidad NASA + MGS-1", "tone": "info"},
-    ],
-    icon="🤖",
-    gradient="linear-gradient(135deg, rgba(59,130,246,0.2), rgba(14,165,233,0.08))",
-    glow="rgba(56,189,248,0.45)",
-    density="cozy",
-    parallax_icons=[
-        {"icon": "🛰️", "top": "18%", "left": "75%", "size": "4rem", "speed": "20s"},
-        {"icon": "🧪", "top": "64%", "left": "82%", "size": "3.5rem", "speed": "26s"},
-    ],
-    variant="minimal",
-).render()
+# ----------------------------- Encabezado -----------------------------
+st.header("Generador asistido por IA")
+badge_group(
+    (
+        "RandomForest + XGBoost (alternativo)",
+        "Confianza 95%",
+        "Comparación heurística vs IA",
+        "Trazabilidad NASA + MGS-1",
+    )
+)
+st.caption(
+    "Rex-AI combina residuos NASA, ejecuta Ax + BoTorch y muestra trazabilidad con métricas"
+    " explicables en cada lote."
+)
 
 # ----------------------------- Pre-condición: target -----------------------------
 target = st.session_state.get("target")
@@ -121,105 +111,152 @@ button_error = st.session_state.get(generator_error_key)
 
 # ----------------------------- Panel de control + IA -----------------------------
 with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None) as grid:
-    with layout_block("side-panel layer-shadow fade-in", parent=grid) as control:
-        control.markdown("### 🎛️ Configuración")
-        stored_mode = st.session_state.get("prediction_mode", "Modo Rex-AI (ML)")
-        mode = control.radio(
-            "Motor de predicción",
-            ("Modo Rex-AI (ML)", "Modo heurístico"),
-            index=0 if stored_mode == "Modo Rex-AI (ML)" else 1,
-            help="Usá Rex-AI para predicciones ML o quedate con la estimación heurstica reproducible.",
-        )
-        st.session_state["prediction_mode"] = mode
-        use_ml = mode == "Modo Rex-AI (ML)"
-        n_candidates = control.slider("Recetas a explorar", 3, 12, 6)
-        opt_evals = control.slider(
-            "Iteraciones de optimización (Ax/BoTorch)",
-            0, 60, 18,
-            help="Loop bayesiano para maximizar score sin violar límites de recursos.",
-        )
-        seed_default = st.session_state.get("generator_seed_input", "")
-        seed_input = control.text_input(
-            "Semilla (opcional)",
-            value=seed_default,
-            help="Fijá una semilla entera para repetir los mismos candidatos en sesiones futuras.",
-        )
-        st.session_state["generator_seed_input"] = seed_input
-        crew_low = target.get("crew_time_low", False)
-        control.caption("Los resultados privilegian %s" % ("tiempo de tripulación" if crew_low else "un balance general"))
-        with control:
-            run = minimal_button(
-                "Generar recomendaciones",
-                key="generator_run_button",
-                state=button_state,
-                width="full",
-                help_text="Ax + BoTorch: 18 iteraciones recomendadas",
-                loading_label="Generando…",
-                success_label="Candidatos listos",
-                error_label="Reintentar",
-                status_hints={
-                    "idle": "",
-                    "loading": "Corriendo optimizador",
-                    "success": "Resultados actualizados",
-                    "error": "Revisá semilla o parámetros",
-                },
+    with layout_stack(parent=grid) as left_column:
+        with layout_block("side-panel layer-shadow fade-in", parent=left_column) as control:
+            control.markdown("### 🎛️ Configuración")
+            stored_mode = st.session_state.get("prediction_mode", "Modo Rex-AI (ML)")
+            mode = control.radio(
+                "Motor de predicción",
+                ("Modo Rex-AI (ML)", "Modo heurístico"),
+                index=0 if stored_mode == "Modo Rex-AI (ML)" else 1,
+                help="Usá Rex-AI para predicciones ML o quedate con la estimación heurística reproducible.",
+            )
+            st.session_state["prediction_mode"] = mode
+            use_ml = mode == "Modo Rex-AI (ML)"
+
+            control.markdown("#### Parámetros principales")
+            col_iters, col_recipes = control.columns(2)
+            opt_evals = col_iters.slider(
+                "Iteraciones (Ax/BoTorch)",
+                0,
+                60,
+                18,
+                help="Cantidad de pasos bayesianos para refinar el lote.",
+            )
+            n_candidates = col_recipes.slider(
+                "Recetas a explorar",
+                3,
+                12,
+                6,
+                help="Cantidad de combinaciones candidatas por lote.",
             )
 
-        if run and button_state != "loading":
-            st.session_state[generator_state_key] = "loading"
-            st.session_state[generator_trigger_key] = True
-            st.session_state.pop(generator_error_key, None)
-            st.experimental_rerun()
-
-        button_state_now = st.session_state.get(generator_state_key)
-        if button_error and button_state_now == "error":
-            control.error(button_error)
-        elif button_state_now == "success":
-            control.caption("✅ Última corrida lista abajo. Volvé a ejecutar si cambias parámetros.")
-        if not use_ml:
-            control.info("Modo heurístico activo: las métricas se basan en reglas físicas y no en ML.")
-
-        if isinstance(proc_filtered, pd.DataFrame) and not proc_filtered.empty:
-            preview_map = [
-                ("process_id", "ID"),
-                ("name", "Proceso"),
-                ("match_score", "Score"),
-                ("crew_min_per_batch", "Crew (min)"),
-                ("match_reason", "Por qué")
-            ]
-            cols_present = [col for col, _ in preview_map if col in proc_filtered.columns]
-            if cols_present:
-                control.markdown("#### Procesos sugeridos")
-                control.caption("Filtrado según residuo/flags y escenario seleccionado.")
-                preview_df = proc_filtered[cols_present].head(5).rename(columns=dict(preview_map))
-                control.dataframe(preview_df, hide_index=True, use_container_width=True)
-
-    with layout_block("depth-stack layer-glow fade-in-delayed", parent=grid) as ai_panel:
-        ai_panel.markdown("### 🧠 Modelo Rex-AI")
-        model_registry = get_model_registry()
-        trained_at = model_registry.metadata.get("trained_at", "—")
-        n_samples = model_registry.metadata.get("n_samples", "—")
-        top_features = model_registry.feature_importance_avg[:5]
-        if top_features:
-            df_feat = pd.DataFrame(top_features, columns=["feature", "weight"])
-            chart = alt.Chart(df_feat).mark_bar(color="#60a5fa").encode(
-                x=alt.X("weight", title="Importancia promedio"),
-                y=alt.Y("feature", sort="-x", title="Feature"),
-                tooltip=["feature", alt.Tooltip("weight", format=".3f")],
-            ).properties(height=180)
-            ai_panel.altair_chart(chart, use_container_width=True)
-        ai_panel.caption(f"Entrenado: {trained_at} · Muestras: {n_samples} · Features: {len(model_registry.feature_names)}")
-        if model_registry.metadata.get("random_forest", {}).get("metrics", {}).get("overall"):
-            overall = model_registry.metadata["random_forest"]["metrics"]["overall"]
-            try:
-                ai_panel.caption(
-                    f"MAE promedio: {overall.get('mae', float('nan')):.3f} · RMSE: {overall.get('rmse', float('nan')):.3f} · R²: {overall.get('r2', float('nan')):.3f}"
+            with control.expander("Opciones avanzadas") as advanced:
+                seed_default = st.session_state.get("generator_seed_input", "")
+                seed_input = advanced.text_input(
+                    "Semilla (opcional)",
+                    value=seed_default,
+                    help="Ingresá un entero para repetir exactamente el mismo lote.",
                 )
-            except Exception:
-                pass
-        label_summary_text = model_registry.label_distribution_label()
-        if label_summary_text and label_summary_text != "—":
-            ai_panel.caption(f"Fuentes de labels: {label_summary_text}")
+                st.session_state["generator_seed_input"] = seed_input
+
+            crew_low = target.get("crew_time_low", False)
+            control.caption(
+                "Los resultados privilegian %s"
+                % ("tiempo de tripulación" if crew_low else "un balance general")
+            )
+
+            with control:
+                run = minimal_button(
+                    "Generar lote",
+                    key="generator_run_button",
+                    state=button_state,
+                    width="full",
+                    help_text="Ejecuta Ax + BoTorch con los parámetros seleccionados.",
+                    loading_label="Generando lote…",
+                    success_label="Lote listo",
+                    error_label="Reintentar",
+                    status_hints={
+                        "idle": "",
+                        "loading": "Ejecutando optimizador",
+                        "success": "Resultados actualizados",
+                        "error": "Revisá la configuración",
+                    },
+                )
+
+            if run and button_state != "loading":
+                st.session_state[generator_state_key] = "loading"
+                st.session_state[generator_trigger_key] = True
+                st.session_state.pop(generator_error_key, None)
+                st.experimental_rerun()
+
+            button_state_now = st.session_state.get(generator_state_key)
+            if button_error and button_state_now == "error":
+                control.error(button_error)
+            elif button_state_now == "success":
+                control.caption("✅ Última corrida lista abajo. Volvé a ejecutar si cambias parámetros.")
+            if not use_ml:
+                control.info("Modo heurístico activo: las métricas se basan en reglas físicas y no en ML.")
+
+            if isinstance(proc_filtered, pd.DataFrame) and not proc_filtered.empty:
+                preview_map = [
+                    ("process_id", "ID"),
+                    ("name", "Proceso"),
+                    ("match_score", "Score"),
+                    ("crew_min_per_batch", "Crew (min)"),
+                    ("match_reason", "Por qué"),
+                ]
+                cols_present = [col for col, _ in preview_map if col in proc_filtered.columns]
+                if cols_present:
+                    control.markdown("#### Procesos sugeridos")
+                    control.caption("Filtrado según residuo/flags y escenario seleccionado.")
+                    preview_df = proc_filtered[cols_present].head(5).rename(columns=dict(preview_map))
+                    control.dataframe(preview_df, hide_index=True, use_container_width=True)
+    with layout_stack(parent=grid) as right_column:
+        with layout_block("side-panel layer-shadow fade-in", parent=right_column) as target_card:
+            target_card.markdown("### 🎯 Objetivo activo")
+            target_card.markdown(f"**{target.get('name', '—')}**")
+            scenario_label = target.get("scenario") or "Escenario general"
+            target_card.caption(f"Escenario: {scenario_label}")
+            if target.get("crew_time_low"):
+                badge_group(["⏱️ Prioriza crew-time"], parent=target_card)
+            limits = [
+                ("Rigidez objetivo", target.get("rigidity")),
+                ("Estanqueidad objetivo", target.get("tightness")),
+                ("Máx. energía (kWh)", target.get("max_energy_kwh")),
+                ("Máx. agua (L)", target.get("max_water_l")),
+                ("Máx. crew (min)", target.get("max_crew_min")),
+            ]
+            summary_rows = []
+            for label, value in limits:
+                try:
+                    numeric_value = float(value)
+                except (TypeError, ValueError):
+                    summary_rows.append({"Variable": label, "Valor": "—"})
+                else:
+                    summary_rows.append({"Variable": label, "Valor": f"{numeric_value:.2f}"})
+            if summary_rows:
+                summary_df = pd.DataFrame(summary_rows)
+                target_card.dataframe(summary_df, hide_index=True, use_container_width=True)
+
+        with layout_block("depth-stack layer-shadow fade-in-delayed", parent=right_column) as ai_panel:
+            ai_panel.markdown("### 🧠 Modelo Rex-AI")
+            model_registry = get_model_registry()
+            trained_at = model_registry.metadata.get("trained_at", "—")
+            n_samples = model_registry.metadata.get("n_samples", "—")
+            top_features = model_registry.feature_importance_avg[:5]
+            if top_features:
+                df_feat = pd.DataFrame(top_features, columns=["feature", "weight"])
+                chart = alt.Chart(df_feat).mark_bar(color="#60a5fa").encode(
+                    x=alt.X("weight", title="Importancia promedio"),
+                    y=alt.Y("feature", sort="-x", title="Feature"),
+                    tooltip=["feature", alt.Tooltip("weight", format=".3f")],
+                ).properties(height=180)
+                ai_panel.altair_chart(chart, use_container_width=True)
+            ai_panel.caption(
+                f"Entrenado: {trained_at} · Muestras: {n_samples} · Features: {len(model_registry.feature_names)}"
+            )
+            if model_registry.metadata.get("random_forest", {}).get("metrics", {}).get("overall"):
+                overall = model_registry.metadata["random_forest"]["metrics"]["overall"]
+                try:
+                    ai_panel.caption(
+                        f"MAE promedio: {overall.get('mae', float('nan')):.3f} · RMSE: {overall.get('rmse', float('nan')):.3f} · R²: {overall.get('r2', float('nan')):.3f}"
+                    )
+                except Exception:
+                    pass
+            label_summary_text = model_registry.label_distribution_label()
+            if label_summary_text and label_summary_text != "—":
+                ai_panel.caption(f"Fuentes de labels: {label_summary_text}")
 # ----------------------------- Generación -----------------------------
 if st.session_state.get("generator_button_trigger"):
     seed_value: int | None = None
@@ -271,7 +308,7 @@ history_df = st.session_state.get("optimizer_history", pd.DataFrame())
 
 if not cands:
     st.info(
-        "Todavía no hay candidatos. Configurá los controles y presioná **Generar recomendaciones**. "
+        "Todavía no hay candidatos. Configurá los controles y presioná **Generar lote**. "
         "Asegurate de que el inventario tenga pouches, espumas, EVA/CTB, textiles o nitrilo; "
         "y que el catálogo incluya P02/P03/P04."
     )
