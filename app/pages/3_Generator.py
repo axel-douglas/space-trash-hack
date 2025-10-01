@@ -130,7 +130,7 @@ def _collect_target_badges(target: dict[str, Any] | None) -> list[tuple[str, str
     return badges
 
 
-def render_safety_indicator(candidate: dict[str, Any]) -> dict[str, str]:
+def render_safety_indicator(candidate: dict[str, Any]) -> dict[str, Any]:
     """Renderiza la indicación de seguridad para un candidato y devuelve el badge."""
     materials_raw = candidate.get("materials") or []
     if isinstance(materials_raw, (list, tuple, set)):
@@ -145,6 +145,9 @@ def render_safety_indicator(candidate: dict[str, Any]) -> dict[str, str]:
 
     flags = check_safety(materials, process_name, process_id)
     badge = safety_badge(flags)
+    badge["pfas"] = bool(flags.pfas)
+    badge["microplastics"] = bool(flags.microplastics)
+    badge["incineration"] = bool(flags.incineration)
 
     level = badge.get("level", "OK")
     detail = badge.get("detail", "")
@@ -324,6 +327,44 @@ def render_candidate_card(
             feat_df = pd.DataFrame([feat_summary])
             st.markdown("**Features NASA/ML (alimentan la IA)**")
             st.dataframe(feat_df, hide_index=True, use_container_width=True)
+            highlight_badges: list[tuple[str, str]] = []
+            logistics_reuse = feat.get("logistics_reuse_index")
+            if logistics_reuse is not None:
+                highlight_badges.append(
+                    (
+                        f"🚚 Reuso logístico: {_format_number(logistics_reuse)}",
+                        "ok",
+                    )
+                )
+            gas_recovery = feat.get("gas_recovery_index")
+            if gas_recovery is not None:
+                highlight_badges.append(
+                    (
+                        f"🧪 Recupero gas: {_format_number(gas_recovery)}",
+                        "ok",
+                    )
+                )
+            if regolith_pct and regolith_pct > 0:
+                highlight_badges.append(
+                    (f"⛰️ Mezcla MGS-1: {regolith_pct * 100:.0f}%", "warn")
+                )
+            if highlight_badges:
+                badge_columns = st.columns(len(highlight_badges))
+                for column, (label, kind) in zip(badge_columns, highlight_badges):
+                    with column:
+                        pill(label, kind=kind)
+            scenario_label = str((target_data or {}).get("scenario") or "").strip()
+            scenario_casefold = scenario_label.casefold()
+            if scenario_casefold == "daring discoveries":
+                st.info(
+                    "🧯 Escenario Daring Discoveries: conectar con el playbook de filtros de carbono"
+                    " para capturar VOCs y regenerar cartuchos en paralelo al proceso." 
+                )
+            elif scenario_casefold == "residence renovations":
+                st.info(
+                    "🏠 Escenario Residence: priorizar valorización de volumen útil en hábitat y"
+                    " logística compacta." 
+                )
             if feat.get("latent_vector"):
                 st.caption("Latente Rex-AI incluido para análisis generativo.")
 
@@ -349,6 +390,23 @@ def render_candidate_card(
                     st.dataframe(pen_df, hide_index=True, use_container_width=True)
 
         badge = render_safety_indicator(candidate)
+
+        mitigation_chips = [
+            (
+                "PFAS evitados ✅" if not badge.get("pfas") else "PFAS evitados ⚠️",
+                "ok" if not badge.get("pfas") else "risk",
+            ),
+            (
+                "Microplásticos mitigados ✅"
+                if not badge.get("microplastics")
+                else "Microplásticos mitigados ⚠️",
+                "ok" if not badge.get("microplastics") else "risk",
+            ),
+        ]
+        chip_columns = st.columns(len(mitigation_chips))
+        for column, (label, kind) in zip(chip_columns, mitigation_chips):
+            with column:
+                pill(label, kind=kind)
 
         if st.button(f"✅ Seleccionar Opción {idx}", key=f"pick_{idx}"):
             st.session_state["selected"] = {"data": candidate, "safety": badge}
