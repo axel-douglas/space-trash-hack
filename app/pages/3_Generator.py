@@ -1,5 +1,7 @@
 import _bootstrap  # noqa: F401
 
+from typing import Any
+
 import altair as alt
 import pandas as pd
 import streamlit as st
@@ -18,6 +20,7 @@ from app.modules.ui_blocks import (
     load_theme,
     micro_divider,
     minimal_button,
+    pill,
 )
 from app.modules.luxe_components import ChipRow, MetricSpec, RankingCockpit
 from app.modules.visualizations import ConvergenceScene
@@ -70,6 +73,34 @@ def _format_label_summary(summary: dict[str, dict[str, float]] | None) -> str:
         parts.append(fragment)
 
     return " · ".join(parts)
+
+
+def render_safety_indicator(candidate: dict[str, Any]) -> dict[str, str]:
+    """Renderiza la indicación de seguridad para un candidato y devuelve el badge."""
+    materials_raw = candidate.get("materials") or []
+    if isinstance(materials_raw, (list, tuple, set)):
+        materials = [str(item) for item in materials_raw]
+    elif materials_raw:
+        materials = [str(materials_raw)]
+    else:
+        materials = []
+
+    process_name = str(candidate.get("process_name") or "")
+    process_id = str(candidate.get("process_id") or "")
+
+    flags = check_safety(materials, process_name, process_id)
+    badge = safety_badge(flags)
+
+    level = badge.get("level", "OK")
+    detail = badge.get("detail", "")
+    kind = "risk" if level == "Riesgo" else "ok"
+    icon = "⚠️" if level == "Riesgo" else "🛡️"
+
+    pill(f"{icon} Seguridad · {level}", kind=kind)
+    if level == "Riesgo" and detail:
+        st.warning(detail)
+
+    return badge
 
 # ----------------------------- Encabezado -----------------------------
 st.header("Generador IA")
@@ -609,9 +640,7 @@ for i, c in enumerate(cands):
                         penalty_card.dataframe(pen_df, hide_index=True, use_container_width=True)
 
         # Seguridad
-        flags = check_safety(c["materials"], c["process_name"], c["process_id"])
-        badge = safety_badge(flags)
-        st.info(f"Seguridad: {badge['level']} · {badge['detail']}")
+        badge = render_safety_indicator(c)
 
         # Botón de selección
         if st.button(f"✅ Seleccionar Opción {i+1}", key=f"pick_{i}"):
