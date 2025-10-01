@@ -16,10 +16,68 @@ import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 
+from app.modules.scenarios import PLAYBOOKS
+
 
 _CSS_KEY = "__rexai_luxe_css__"
 _TIMELINE_HOLOGRAM_KEY = "__timeline_hologram_assets__"
 _FRAMER_MOTION_SRC = "https://cdn.jsdelivr.net/npm/framer-motion@11.0.5/dist/framer-motion.umd.js"
+
+
+# Scenario narrative mapping -------------------------------------------------
+
+_SCENARIO_IO_MAP: Dict[str, Dict[str, Sequence[str]]] = {
+    "Residence Renovations": {
+        "inputs": (
+            "Marcos y puntales CTB recuperados",
+            "Espumas tipo ZOTEK laminadas",
+            "Films protectores de inventario NASA",
+        ),
+        "outputs": (
+            "Mobiliario modular presurizable",
+            "Paneles protectores sin microplásticos",
+            "Estaciones de almacenamiento reforzadas",
+        ),
+    },
+    "Cosmic Celebrations": {
+        "inputs": (
+            "Textiles y wipes poliéster/nylon",
+            "Films multicapa encapsulados",
+            "Clips y herrajes CTB reutilizados",
+        ),
+        "outputs": (
+            "Decoración ignífuga libre de agua",
+            "Utilería modular para eventos",
+            "Coberturas flexibles con sellado limpio",
+        ),
+    },
+    "Daring Discoveries": {
+        "inputs": (
+            "Carbono recuperado con tamizaje fino",
+            "Redes y filtros metálicos/poliméricos",
+            "Polímeros para encapsulado o sinter",
+        ),
+        "outputs": (
+            "Compósitos con refuerzo de carbono",
+            "Bloques sinterizados con MGS-1",
+            "Superficies selladas anti-polvo",
+        ),
+    },
+}
+
+
+def _build_scenario_profile(name: str) -> Dict[str, Any]:
+    """Return summary, inputs and outputs for the given scenario."""
+
+    profile: Dict[str, Any] = dict(_SCENARIO_IO_MAP.get(name, {}))
+    playbook = PLAYBOOKS.get(name)
+    if playbook:
+        profile["summary"] = playbook.summary
+    elif not profile:
+        profile["summary"] = "Seleccioná un escenario para ver hipótesis concretas."
+    profile.setdefault("inputs", tuple())
+    profile.setdefault("outputs", tuple())
+    return profile
 
 
 # ---------------------------------------------------------------------------
@@ -304,6 +362,64 @@ _BRIEFING_AND_TARGET_CSS = """
     transform: rotateY(-12deg) rotateX(6deg);
     transform-style: preserve-3d;
     position: relative;
+}
+.target-3d-card .scenario-summary {
+    margin: 0.85rem 0 0;
+    font-size: 0.9rem;
+    color: rgba(224, 239, 255, 0.88);
+}
+.target-3d-card .scenario-badges {
+    display: flex;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+    margin-top: 0.9rem;
+}
+.target-3d-card .scenario-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.35rem 0.75rem;
+    border-radius: 999px;
+    background: rgba(94, 174, 255, 0.18);
+    color: #d9f2ff;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+.target-3d-card .scenario-io {
+    margin-top: 1.1rem;
+    display: grid;
+    gap: 0.6rem;
+    font-size: 0.86rem;
+    line-height: 1.45;
+}
+.target-3d-card .scenario-io strong {
+    display: block;
+    font-size: 0.78rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: rgba(212, 232, 255, 0.8);
+}
+.target-3d-card .scenario-io-list {
+    margin: 0.2rem 0 0;
+    padding-left: 1.1rem;
+    display: grid;
+    gap: 0.15rem;
+}
+.target-3d-card .scenario-io-list li {
+    margin: 0;
+    list-style: disc;
+}
+.target-3d-card .nasa-summary {
+    margin-top: 0.9rem;
+    padding: 0.65rem 0.8rem;
+    border-radius: 14px;
+    background: rgba(148, 197, 255, 0.12);
+    color: rgba(223, 239, 255, 0.9);
+    font-size: 0.78rem;
+    line-height: 1.45;
+    border: 1px solid rgba(148, 197, 255, 0.24);
 }
 .target-3d-card .inner::after {
     content: "";
@@ -2454,15 +2570,57 @@ def target_configurator(
     with main_col:
         preview_col, controls_col = st.columns([1.2, 1.8])
         with preview_col:
+            scenario = current_target.get("scenario", "")
+            if scenario_options:
+                default_scenario = scenario if scenario in scenario_options else scenario_options[0]
+                default_idx = scenario_options.index(default_scenario)
+                scenario = st.selectbox(
+                    "Escenario del reto",
+                    scenario_options,
+                    index=default_idx,
+                )
+
+            scenario_profile = _build_scenario_profile(scenario)
+
+            badges_html = "".join(
+                f"<span class=\"scenario-badge\">{escape(label)}</span>"
+                for label in ("MGS-1 ready", "L2L boost")
+            )
+            inputs_html = "".join(
+                f"<li>{escape(item)}</li>"
+                for item in scenario_profile.get("inputs", ())
+            ) or "<li>Seleccioná un escenario para ver los recursos clave.</li>"
+            outputs_html = "".join(
+                f"<li>{escape(item)}</li>"
+                for item in scenario_profile.get("outputs", ())
+            ) or "<li>La tarjeta mostrará qué entregables logra la tripulación.</li>"
+            summary_html = escape(scenario_profile.get("summary", ""))
+
             st.markdown(
                 f"""
                 <div class="target-3d-card">
                     <div class="inner">
-                        <h3>{selected_name}</h3>
+                        <h3>{escape(selected_name)}</h3>
                         <p>Render conceptual en vivo del objeto seleccionado.</p>
+                        <p class="scenario-summary">{summary_html}</p>
+                        <div class="scenario-badges">{badges_html}</div>
+                        <div class="scenario-io">
+                            <div>
+                                <strong>Inputs clave</strong>
+                                <ul class="scenario-io-list">{inputs_html}</ul>
+                            </div>
+                            <div>
+                                <strong>Outputs esperados</strong>
+                                <ul class="scenario-io-list">{outputs_html}</ul>
+                            </div>
+                        </div>
                         <div style="margin-top:2rem; font-size:0.85rem; opacity:0.85;">
                             Rigidez base: {base['rigidity']:.2f}<br/>
                             Estanqueidad base: {base['tightness']:.2f}
+                            <div class="nasa-summary">
+                                <strong>NASA MGS-1:</strong> Curvas granulométricas dedicadas y perfiles TG/EGA
+                                con especies H₂O/O₂/CO₂ guían la modulación de rigidez y emisiones.
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -2470,18 +2628,6 @@ def target_configurator(
                 unsafe_allow_html=True,
             )
 
-            scenario = ""
-            if scenario_options:
-                default_scenario = current_target.get("scenario", scenario_options[0])
-                if default_scenario not in scenario_options:
-                    default_idx = 0
-                else:
-                    default_idx = scenario_options.index(default_scenario)
-                scenario = st.selectbox(
-                    "Escenario del reto",
-                    scenario_options,
-                    index=default_idx,
-                )
             crew_low = st.toggle(
                 "Crew-time Low",
                 value=current_target.get("crew_time_low", False),
