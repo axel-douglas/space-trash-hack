@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 import streamlit as st
 
@@ -209,14 +209,14 @@ def _prepare_rows(
     crew_limit = resource_limits.get("crew")
 
     for idx, cand in enumerate(candidates):
-        props = cand.get("props")
+        props = cand.get("props") or {}
         aux = cand.get("auxiliary") or {}
         materials = cand.get("materials", [])
 
-        rigidity = _safe_number(getattr(props, "rigidity", None))
-        water = _safe_number(getattr(props, "water_l", None))
-        energy = _safe_number(getattr(props, "energy_kwh", None))
-        crew = _safe_number(getattr(props, "crew_min", None))
+        rigidity = _safe_number(_get_prop_value(props, "rigidity"))
+        water = _safe_number(_get_prop_value(props, "water_l"))
+        energy = _safe_number(_get_prop_value(props, "energy_kwh"))
+        crew = _safe_number(_get_prop_value(props, "crew_min"))
         score = _safe_number(cand.get("score"), default=0.0)
 
         safety_flags = check_safety(materials, cand.get("process_name", ""), cand.get("process_id", ""))
@@ -296,17 +296,20 @@ def _render_candidate_table(
         st.caption("Filtros activos: " + ", ".join(active_filters))
 
     st.markdown("<div class='candidate-table'>", unsafe_allow_html=True)
-    header_cols = st.columns([0.26, 0.12, 0.12, 0.14, 0.18, 0.18], gap="small")
+    column_weights = [0.24, 0.1, 0.1, 0.12, 0.12, 0.12, 0.1, 0.1]
+    header_cols = st.columns(column_weights, gap="small")
     header_cols[0].markdown("**Proceso**")
     header_cols[1].markdown("**Score**")
     header_cols[2].markdown("**Rigidez**")
     header_cols[3].markdown("**Agua (L)**")
-    header_cols[4].markdown("**Seguridad**")
-    header_cols[5].markdown("**Acción**")
+    header_cols[4].markdown("**Energía (kWh)**")
+    header_cols[5].markdown("**Crew (min)**")
+    header_cols[6].markdown("**Seguridad**")
+    header_cols[7].markdown("**Acción**")
     st.markdown("<hr class='candidate-table__divider' />", unsafe_allow_html=True)
 
     for rank, row in enumerate(rows, start=1):
-        _render_candidate_row(rank, row, success_data)
+        _render_candidate_row(rank, row, success_data, column_weights)
 
     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -315,11 +318,18 @@ def _render_candidate_row(
     rank: int,
     row: dict[str, Any],
     success_data: dict[str, Any],
+    column_weights: Sequence[float],
 ) -> None:
-    process_col, score_col, rigidity_col, water_col, safety_col, action_col = st.columns(
-        [0.26, 0.12, 0.12, 0.14, 0.18, 0.18],
-        gap="small",
-    )
+    (
+        process_col,
+        score_col,
+        rigidity_col,
+        water_col,
+        energy_col,
+        crew_col,
+        safety_col,
+        action_col,
+    ) = st.columns(column_weights, gap="small")
 
     process_name = row["process_name"]
     process_id = row["process_id"]
@@ -343,6 +353,14 @@ def _render_candidate_row(
     )
     water_col.markdown(
         f"<div class='metric-cell'>{row['water']:.2f}</div>",
+        unsafe_allow_html=True,
+    )
+    energy_col.markdown(
+        f"<div class='metric-cell'>{row['energy']:.2f}</div>",
+        unsafe_allow_html=True,
+    )
+    crew_col.markdown(
+        f"<div class='metric-cell'>{row['crew']:.1f}</div>",
         unsafe_allow_html=True,
     )
 
@@ -470,6 +488,12 @@ def _safe_number(value, default: float | None = None) -> float:
         return float(default or 0.0)
 
 
+def _get_prop_value(props: object, key: str) -> Any:
+    if isinstance(props, Mapping):
+        return props.get(key)
+    return getattr(props, key, None)
+
+
 def _inject_css() -> None:
     if st.session_state.get(_CSS_KEY):
         return
@@ -484,6 +508,16 @@ def _inject_css() -> None:
             padding: 26px 30px;
             border: 1px solid rgba(148,163,184,0.2);
             box-shadow: 12px 18px 40px rgba(2,6,23,0.5);
+            overflow-x: auto;
+        }
+        .candidate-table [data-testid="stHorizontalBlock"] {
+            min-width: 780px;
+        }
+        .candidate-table [data-testid="column"] {
+            min-width: 110px;
+        }
+        .candidate-table [data-testid="column"]:first-child {
+            min-width: 220px;
         }
         .candidate-table__divider {
             border: none;
@@ -521,6 +555,7 @@ def _inject_css() -> None:
             font-size: 0.95rem;
             font-variant-numeric: tabular-nums;
             padding: 8px 0;
+            white-space: nowrap;
         }
         .metric-cell {
             text-align: center;
@@ -577,6 +612,17 @@ def _inject_css() -> None:
             background:rgba(45,212,191,0.16);
             border:1px solid rgba(94,234,212,0.35);
             display:inline-block;
+        }
+        @media (max-width: 960px) {
+            .candidate-table {
+                padding: 24px 20px 28px;
+            }
+            .candidate-table [data-testid="stHorizontalBlock"] {
+                min-width: 720px;
+            }
+            .candidate-table [data-testid="column"]:first-child {
+                min-width: 200px;
+            }
         }
         </style>
         """,
