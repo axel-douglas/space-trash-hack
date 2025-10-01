@@ -137,11 +137,6 @@ except Exception:  # pragma: no cover - pyarrow is expected in production
     pa = None  # type: ignore[assignment]
     pq = None  # type: ignore[assignment]
 
-try:
-    import pyarrow.parquet as pq
-except Exception:  # pragma: no cover - pyarrow is expected in production
-    pq = None  # type: ignore[assignment]
-
 from app.modules.execution import (
     DEFAULT_PARALLEL_THRESHOLD,
     ExecutionBackend,
