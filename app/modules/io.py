@@ -12,6 +12,7 @@ import polars as pl
 from .generator import prepare_waste_frame
 from .data_sources import official_features_bundle
 from .paths import DATA_ROOT
+from .problematic import problematic_mask
 
 DATA_DIR = DATA_ROOT
 
@@ -135,19 +136,7 @@ def _load_waste_df_cached() -> pd.DataFrame:
             result[source_column] = values
 
     if "_problematic" not in result.columns:
-        flags_lower = result.get("flags", "").astype(str).str.lower()
-        category_lower = result.get("category", "").astype(str).str.lower()
-        material_lower = result.get("material", "").astype(str).str.lower()
-        problem_mask = (
-            category_lower.str.contains("pouches")
-            | category_lower.str.contains("foam")
-            | category_lower.str.contains("eva")
-            | category_lower.str.contains("glove")
-            | material_lower.str.contains("aluminum")
-        )
-        for tag in PROBLEM_TAGS.keys():
-            problem_mask = problem_mask | flags_lower.str.contains(tag)
-        result["_problematic"] = problem_mask
+        result["_problematic"] = problematic_mask(result)
 
     return result
 
