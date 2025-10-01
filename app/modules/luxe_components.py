@@ -16,12 +16,19 @@ import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 
+from app.modules.io import load_waste_df
 from app.modules.scenarios import PLAYBOOKS
 
 
 _CSS_KEY = "__rexai_luxe_css__"
 _TIMELINE_HOLOGRAM_KEY = "__timeline_hologram_assets__"
 _FRAMER_MOTION_SRC = "https://cdn.jsdelivr.net/npm/framer-motion@11.0.5/dist/framer-motion.umd.js"
+
+
+_CREW_SIZE_BASELINE = 8
+_CREW_MINUTES_PER_MEMBER = 7.5
+_ENERGY_KWH_PER_KG_BASELINE = 0.0032
+_WATER_L_PER_VOLUME_L_BASELINE = 1 / 3000
 
 
 # Scenario narrative mapping -------------------------------------------------
@@ -78,6 +85,161 @@ def _build_scenario_profile(name: str) -> Dict[str, Any]:
     profile.setdefault("inputs", tuple())
     profile.setdefault("outputs", tuple())
     return profile
+
+
+def _compute_target_limits(presets: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Derive slider bounds and helper text from presets and NASA baselines."""
+
+    def _values_for(key: str) -> list[float]:
+        values: list[float] = []
+        for preset in presets:
+            raw_value = preset.get(key)
+            if raw_value is not None:
+                try:
+                    values.append(float(raw_value))
+                except (TypeError, ValueError):
+                    continue
+        return values
+
+    try:
+        waste_df = load_waste_df()
+    except Exception:
+        waste_df = None
+
+    volume_l: np.ndarray
+    mass_kg: np.ndarray
+    if waste_df is not None:
+        volume_l = (
+            waste_df.get("_source_volume_l")
+            if "_source_volume_l" in waste_df
+            else waste_df.get("volume_l")
+        )
+        mass_kg = (
+            waste_df.get("kg")
+            if "kg" in waste_df
+            else waste_df.get("mass_kg")
+        )
+        volume_l = (
+            volume_l.dropna().to_numpy(dtype=float) if volume_l is not None else np.array([])
+        )
+        mass_kg = mass_kg.dropna().to_numpy(dtype=float) if mass_kg is not None else np.array([])
+    else:
+        volume_l = np.array([])
+        mass_kg = np.array([])
+
+    bounds: Dict[str, Dict[str, Any]] = {}
+
+    def _ensure_span(min_val: float, max_val: float, span: float = 0.1) -> tuple[float, float]:
+        if max_val - min_val < 1e-6:
+            min_val = max(0.0, min_val - span / 2)
+            max_val = min_val + span
+        return min_val, max_val
+
+    rigidity_values = _values_for("rigidity")
+    rigidity_min = min(rigidity_values) if rigidity_values else 0.0
+    rigidity_min = min(rigidity_min, 0.0)
+    rigidity_max = max(rigidity_values + [1.0]) if rigidity_values else 1.0
+    rigidity_min, rigidity_max = _ensure_span(rigidity_min, rigidity_max)
+    rigidity_min_clamped = max(0.0, rigidity_min)
+    rigidity_max_clamped = min(1.0, rigidity_max)
+    bounds["rigidity"] = {
+        "min": round(rigidity_min_clamped, 2),
+        "max": round(rigidity_max_clamped, 2),
+        "step": 0.05,
+        "help": f"Rango derivado de presets NASA (máximo {rigidity_max_clamped:.2f}).",
+    }
+
+    tightness_values = _values_for("tightness")
+    tightness_min = min(tightness_values) if tightness_values else 0.0
+    tightness_min = min(tightness_min, 0.0)
+    tightness_max = max(tightness_values + [1.0]) if tightness_values else 1.0
+    tightness_min, tightness_max = _ensure_span(tightness_min, tightness_max)
+    tightness_min_clamped = max(0.0, tightness_min)
+    tightness_max_clamped = min(1.0, tightness_max)
+    bounds["tightness"] = {
+        "min": round(tightness_min_clamped, 2),
+        "max": round(tightness_max_clamped, 2),
+        "step": 0.05,
+        "help": f"Rango derivado de presets NASA (máximo {tightness_max_clamped:.2f}).",
+    }
+
+    water_values = _values_for("max_water_l")
+    water_min = min(water_values) if water_values else 0.0
+    water_min = min(water_min, 0.0)
+    water_max_preset = max(water_values) if water_values else 0.0
+    water_max = water_max_preset
+    water_help_parts = []
+    if volume_l.size:
+        volume_p90 = float(np.quantile(volume_l, 0.9))
+        baseline = volume_p90 * _WATER_L_PER_VOLUME_L_BASELINE
+        water_max = max(water_max, baseline)
+        water_help_parts.append(
+            "NASA baseline: P90 volumen inventario "
+            f"{volume_p90:,.0f} L → {baseline:.2f} L de proceso"
+        )
+    water_help_parts.append(f"Máximo preset actual: {water_max_preset:.2f} L")
+    water_min, water_max = _ensure_span(water_min, water_max, span=0.2)
+    water_min = max(0.0, water_min)
+    water_max = max(water_min + 0.05, water_max)
+    water_max_rounded = round(water_max, 2)
+    bounds["max_water_l"] = {
+        "min": round(water_min, 2),
+        "max": water_max_rounded,
+        "step": 0.1,
+        "help": "; ".join(water_help_parts),
+    }
+
+    energy_values = _values_for("max_energy_kwh")
+    energy_min = min(energy_values) if energy_values else 0.0
+    energy_min = min(energy_min, 0.0)
+    energy_max_preset = max(energy_values) if energy_values else 0.0
+    energy_max = energy_max_preset
+    energy_help_parts = []
+    if mass_kg.size:
+        mass_p90 = float(np.quantile(mass_kg, 0.9))
+        baseline = mass_p90 * _ENERGY_KWH_PER_KG_BASELINE
+        energy_max = max(energy_max, baseline)
+        energy_help_parts.append(
+            "NASA baseline: P90 masa inventario "
+            f"{mass_p90:,.0f} kg × {_ENERGY_KWH_PER_KG_BASELINE:.4f} kWh/kg"
+            f" = {baseline:.2f} kWh"
+        )
+    energy_help_parts.append(f"Máximo preset actual: {energy_max_preset:.2f} kWh")
+    energy_min, energy_max = _ensure_span(energy_min, energy_max, span=0.2)
+    energy_min = max(0.0, energy_min)
+    energy_max = max(energy_min + 0.05, energy_max)
+    energy_max_rounded = round(energy_max, 2)
+    bounds["max_energy_kwh"] = {
+        "min": round(energy_min, 2),
+        "max": energy_max_rounded,
+        "step": 0.1,
+        "help": "; ".join(energy_help_parts),
+    }
+
+    crew_values = _values_for("max_crew_min")
+    crew_min = min(crew_values) if crew_values else 0.0
+    crew_min = min(crew_min, 0.0)
+    crew_max_preset = max(crew_values) if crew_values else 0.0
+    crew_max = crew_max_preset
+    crew_baseline = _CREW_SIZE_BASELINE * _CREW_MINUTES_PER_MEMBER
+    crew_max = max(crew_max, crew_baseline)
+    crew_help = (
+        f"Crew of {_CREW_SIZE_BASELINE}: {_CREW_SIZE_BASELINE} × "
+        f"{_CREW_MINUTES_PER_MEMBER:.1f} min = {crew_baseline:.0f} min"
+    )
+    if crew_max_preset:
+        crew_help = f"{crew_help}; Máximo preset actual: {crew_max_preset:.0f} min"
+    crew_min, crew_max = _ensure_span(crew_min, crew_max, span=5.0)
+    crew_min = max(0.0, crew_min)
+    crew_max = max(crew_min + 1.0, crew_max)
+    bounds["max_crew_min"] = {
+        "min": int(max(0, round(crew_min))),
+        "max": int(round(crew_max)),
+        "step": 1,
+        "help": crew_help,
+    }
+
+    return bounds
 
 
 # ---------------------------------------------------------------------------
@@ -2515,11 +2677,21 @@ def _render_preset_cards(presets: Iterable[Dict]) -> str:
     return st.session_state["_target_selected"]
 
 
-def _render_indicator(value: float, max_value: float, accent: str, label: str) -> None:
+def _render_indicator(
+    value: float,
+    max_value: float,
+    accent: str,
+    label: str,
+    *,
+    fmt: str = "{:.2f}",
+    unit: str = "",
+) -> None:
     percentage = 100 * value / max_value if max_value else 0
+    unit_suffix = f" {unit}" if unit else ""
     st.markdown(
         f"<div class='circular-indicator' style='--value:{percentage}; --accent-color:{accent};'>"
-        f"<span>{percentage:.0f}%</span></div><div class='feedback-pill'>{label}: {value:.2f}</div>",
+        f"<span>{percentage:.0f}%</span></div><div class='feedback-pill'>{label}: "
+        f"{fmt.format(value)}{unit_suffix} / {fmt.format(max_value)}{unit_suffix}</div>",
         unsafe_allow_html=True,
     )
 
@@ -2590,6 +2762,7 @@ def target_configurator(
 
     selected_name = _render_preset_cards(presets)
     selected_preset = next(p for p in presets if p["name"] == selected_name)
+    slider_limits = _compute_target_limits(presets)
 
     current_target = st.session_state.get("target")
     default_scenario = scenario_options[0] if scenario_options else ""
@@ -2685,50 +2858,90 @@ def target_configurator(
             )
         with controls_col:
             st.markdown("#### Ajustes dinámicos")
+            rigidity_bounds = slider_limits["rigidity"]
+            default_rigidity = float(
+                current_target.get("rigidity", selected_preset["rigidity"])
+            )
+            default_rigidity = min(
+                max(default_rigidity, rigidity_bounds["min"]), rigidity_bounds["max"]
+            )
             rigidity = st.slider(
                 "Rigidez deseada",
-                0.0,
-                1.0,
-                float(current_target.get("rigidity", selected_preset["rigidity"])),
-                0.05,
+                rigidity_bounds["min"],
+                rigidity_bounds["max"],
+                default_rigidity,
+                rigidity_bounds["step"],
+                help=rigidity_bounds["help"],
             )
-            _render_indicator(rigidity, 1.0, "#4ecdc4", "Rigidez")
+            _render_indicator(rigidity, rigidity_bounds["max"], "#4ecdc4", "Rigidez")
 
+            tightness_bounds = slider_limits["tightness"]
+            default_tightness = float(
+                current_target.get("tightness", selected_preset["tightness"])
+            )
+            default_tightness = min(
+                max(default_tightness, tightness_bounds["min"]), tightness_bounds["max"]
+            )
             tightness = st.slider(
                 "Estanqueidad deseada",
-                0.0,
-                1.0,
-                float(current_target.get("tightness", selected_preset["tightness"])),
-                0.05,
+                tightness_bounds["min"],
+                tightness_bounds["max"],
+                default_tightness,
+                tightness_bounds["step"],
+                help=tightness_bounds["help"],
             )
-            _render_indicator(tightness, 1.0, "#ff8c69", "Estanqueidad")
+            _render_indicator(tightness, tightness_bounds["max"], "#ff8c69", "Estanqueidad")
 
+            water_bounds = slider_limits["max_water_l"]
+            default_water = float(
+                current_target.get("max_water_l", selected_preset["max_water_l"])
+            )
+            default_water = min(
+                max(default_water, water_bounds["min"]), water_bounds["max"]
+            )
             max_water = st.slider(
                 "Agua máxima (L)",
-                0.0,
-                3.0,
-                float(current_target.get("max_water_l", selected_preset["max_water_l"])),
-                0.1,
+                water_bounds["min"],
+                water_bounds["max"],
+                default_water,
+                water_bounds["step"],
+                help=water_bounds["help"],
             )
-            _render_indicator(max_water, 3.0, "#59b1ff", "Agua")
+            _render_indicator(max_water, water_bounds["max"], "#59b1ff", "Agua", fmt="{:.2f}", unit="L")
 
+            energy_bounds = slider_limits["max_energy_kwh"]
+            default_energy = float(
+                current_target.get("max_energy_kwh", selected_preset["max_energy_kwh"])
+            )
+            default_energy = min(
+                max(default_energy, energy_bounds["min"]), energy_bounds["max"]
+            )
             max_energy = st.slider(
                 "Energía máxima (kWh)",
-                0.0,
-                3.0,
-                float(current_target.get("max_energy_kwh", selected_preset["max_energy_kwh"])),
-                0.1,
+                energy_bounds["min"],
+                energy_bounds["max"],
+                default_energy,
+                energy_bounds["step"],
+                help=energy_bounds["help"],
             )
-            _render_indicator(max_energy, 3.0, "#f8d66d", "Energía")
+            _render_indicator(max_energy, energy_bounds["max"], "#f8d66d", "Energía", fmt="{:.2f}", unit="kWh")
 
+            crew_bounds = slider_limits["max_crew_min"]
+            default_crew = int(
+                current_target.get("max_crew_min", selected_preset["max_crew_min"])
+            )
+            default_crew = min(
+                max(default_crew, crew_bounds["min"]), crew_bounds["max"]
+            )
             max_crew = st.slider(
                 "Tiempo máximo de tripulación (min)",
-                5,
-                60,
-                int(current_target.get("max_crew_min", selected_preset["max_crew_min"])),
-                1,
+                crew_bounds["min"],
+                crew_bounds["max"],
+                default_crew,
+                crew_bounds["step"],
+                help=crew_bounds["help"],
             )
-            _render_indicator(max_crew, 60.0, "#d277ff", "Crew")
+            _render_indicator(max_crew, float(crew_bounds["max"]), "#d277ff", "Crew", fmt="{:.0f}", unit="min")
 
             audio_enabled = st.checkbox(
                 "Audio feedback", value=st.session_state.get("_target_audio", False)
@@ -2746,11 +2959,23 @@ def target_configurator(
         st.markdown("#### Simulación visual")
         gauges = st.columns(3)
         with gauges[0]:
-            _gauge("Agua", max_water, 3.0, " L")
+            _gauge("Agua", max_water, slider_limits["max_water_l"]["max"], " L")
         with gauges[1]:
-            _gauge("Energía", max_energy, 3.0, " kWh", color="#f8d66d")
+            _gauge(
+                "Energía",
+                max_energy,
+                slider_limits["max_energy_kwh"]["max"],
+                " kWh",
+                color="#f8d66d",
+            )
         with gauges[2]:
-            _gauge("Crew", max_crew, 60.0, " min", color="#d277ff")
+            _gauge(
+                "Crew",
+                float(max_crew),
+                float(slider_limits["max_crew_min"]["max"]),
+                " min",
+                color="#d277ff",
+            )
 
         feedback_area = st.empty()
 
