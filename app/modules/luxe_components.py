@@ -1002,6 +1002,30 @@ _LUXE_COMPONENT_CSS = """
   gap: 0.35rem;
 }
 
+.luxe-mission-metric[data-tone='positive'] {
+  border-color: color-mix(in srgb, var(--tone-ok-border) 62%, transparent);
+  background: color-mix(in srgb, var(--tone-ok-bg) 26%, var(--surface-card) 74%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone-ok-border) 34%, transparent);
+}
+
+.luxe-mission-metric[data-tone='warning'] {
+  border-color: color-mix(in srgb, var(--tone-warn-border) 60%, transparent);
+  background: color-mix(in srgb, var(--tone-warn-bg) 24%, var(--surface-card) 76%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone-warn-border) 32%, transparent);
+}
+
+.luxe-mission-metric[data-tone='danger'] {
+  border-color: color-mix(in srgb, var(--tone-risk-border) 60%, transparent);
+  background: color-mix(in srgb, var(--tone-risk-bg) 26%, var(--surface-card) 74%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone-risk-border) 34%, transparent);
+}
+
+.luxe-mission-metric[data-tone='info'] {
+  border-color: color-mix(in srgb, var(--accent) 46%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, var(--surface-card) 82%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
 .luxe-mission-metric.is-active {
   border-color: color-mix(in srgb, var(--accent) 60%, transparent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
@@ -1018,6 +1042,32 @@ _LUXE_COMPONENT_CSS = """
   color: var(--accent);
   font-size: 1.1rem;
   margin-bottom: 2px;
+}
+
+.luxe-mission-metric[data-tone='positive'] .luxe-mission-metric__icon {
+  background: color-mix(in srgb, var(--tone-ok-bg) 55%, transparent);
+  color: var(--tone-ok-fg);
+}
+
+.luxe-mission-metric[data-tone='warning'] .luxe-mission-metric__icon {
+  background: color-mix(in srgb, var(--tone-warn-bg) 52%, transparent);
+  color: var(--tone-warn-fg);
+}
+
+.luxe-mission-metric[data-tone='danger'] .luxe-mission-metric__icon {
+  background: color-mix(in srgb, var(--tone-risk-bg) 52%, transparent);
+  color: var(--tone-risk-fg);
+}
+
+.luxe-mission-metric[data-tone='info'] .luxe-mission-metric__icon {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  color: color-mix(in srgb, var(--accent) 92%, var(--ink) 8%);
+}
+
+.luxe-mission-metric__delta {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--muted) 82%, transparent);
 }
 
 .mission-board {
@@ -3697,6 +3747,8 @@ class MissionMetric:
     caption: str | None = None
     icon: str | None = None
     stage_key: str | None = None
+    tone: str | None = None
+    delta: str | None = None
 
     @classmethod
     def from_mapping(cls, payload: Mapping[str, Any]) -> "MissionMetric":
@@ -3715,6 +3767,8 @@ class MissionMetric:
             caption=payload.get("caption"),
             icon=payload.get("icon"),
             stage_key=payload.get("stage_key"),
+            tone=payload.get("tone"),
+            delta=payload.get("delta"),
         )
 
 
@@ -3765,9 +3819,15 @@ class MissionMetrics:
             classes = ["luxe-mission-metric"]
             if highlight and metric.stage_key == highlight:
                 classes.append("is-active")
+            tone_attr = f" data-tone='{metric.tone}'" if metric.tone else ""
             icon_html = (
                 f"<span class='luxe-mission-metric__icon'>{metric.icon}</span>"
                 if metric.icon
+                else ""
+            )
+            delta_html = (
+                f"<span class='luxe-mission-metric__delta'>{metric.delta}</span>"
+                if metric.delta
                 else ""
             )
             details = metric.details
@@ -3780,10 +3840,11 @@ class MissionMetrics:
                 else ""
             )
             return (
-                f"<div class='{_class_names(classes)}' data-key='{metric.key}'>"
+                f"<div class='{_class_names(classes)}' data-key='{metric.key}'{tone_attr}>"
                 f"{icon_html}"
                 f"<h5>{metric.label}</h5>"
                 f"<strong>{metric.value}</strong>"
+                f"{delta_html}"
                 f"{detail_html}"
                 f"{caption_html}"
                 "</div>"
