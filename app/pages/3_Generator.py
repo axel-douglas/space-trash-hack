@@ -1,6 +1,6 @@
 import _bootstrap  # noqa: F401
 
-from typing import Any
+from typing import Any, Mapping
 
 import math
 
@@ -40,6 +40,17 @@ load_theme()
 
 render_breadcrumbs("generator")
 
+_playbook_prefill_raw = st.session_state.get("_playbook_generator_filters")
+_playbook_prefilters: dict[str, object] | None = None
+_playbook_prefill_label: str | None = None
+if isinstance(_playbook_prefill_raw, dict):
+    filters_candidate = _playbook_prefill_raw.get("filters")
+    if isinstance(filters_candidate, dict):
+        _playbook_prefilters = dict(filters_candidate)
+    scenario_hint = _playbook_prefill_raw.get("scenario")
+    if isinstance(scenario_hint, str) and scenario_hint.strip():
+        _playbook_prefill_label = scenario_hint.strip()
+
 st.header("Generador asistido por IA")
 
 # ----------------------------- Helpers -----------------------------
@@ -50,6 +61,30 @@ TARGET_DISPLAY = {
     "water_l": "Agua (L)",
     "crew_min": "Crew (min)",
 }
+
+
+def _apply_generator_prefilters(
+    filters: Mapping[str, object],
+    target: dict[str, Any] | None,
+) -> None:
+    """Push recommended filter defaults into ``st.session_state``."""
+
+    for key, value in filters.items():
+        st.session_state[key] = value
+
+    if not isinstance(target, dict):
+        return
+
+    energy_limit = _safe_float(target.get("max_energy_kwh"))
+    water_limit = _safe_float(target.get("max_water_l"))
+    crew_limit = _safe_float(target.get("max_crew_min"))
+
+    if filters.get("showroom_limit_energy") and energy_limit is not None:
+        st.session_state["showroom_energy_limit_value"] = float(energy_limit)
+    if filters.get("showroom_limit_water") and water_limit is not None:
+        st.session_state["showroom_water_limit_value"] = float(water_limit)
+    if filters.get("showroom_limit_crew") and crew_limit is not None:
+        st.session_state["showroom_crew_limit_value"] = float(crew_limit)
 
 
 def _safe_float(value: object) -> float | None:
@@ -493,6 +528,12 @@ def render_candidate_card(
 
 target = st.session_state.get("target")
 
+playbook_filters_applied = False
+if _playbook_prefilters is not None and isinstance(target, dict):
+    _apply_generator_prefilters(_playbook_prefilters, target)
+    st.session_state.pop("_playbook_generator_filters", None)
+    playbook_filters_applied = True
+
 # ----------------------------- Encabezado -----------------------------
 st.header("Generador IA")
 header_badges = _collect_target_badges(target)
@@ -505,6 +546,14 @@ st.caption(
     "Rex-AI combina residuos NASA, ejecuta Ax + BoTorch y muestra trazabilidad con métricas"
     " explicables en cada lote. Ranking ponderado energía↔agua↔crew con penalizaciones de estanqueidad."
 )
+
+if playbook_filters_applied:
+    if _playbook_prefill_label:
+        st.success(
+            f"Filtros recomendados para **{_playbook_prefill_label}** activados. Revisá el showroom para verlos en acción."
+        )
+    else:
+        st.success("Filtros recomendados activados. Revisá el showroom para verlos en acción.")
 
 # ----------------------------- Pre-condición: target -----------------------------
 if not target:
