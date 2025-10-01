@@ -127,6 +127,14 @@ TeslaHero(
         "Elegí uno y exportá el plan enlazado al objetivo definido en 2) Target."
     ),
     chips=[
+        {
+            "label": "Residence Renovations (volumen alto)",
+            "tone": "accent",
+        },
+        {
+            "label": "Daring Discoveries (reuso de carbono)",
+            "tone": "accent",
+        },
         {"label": "Paso 1 — Explorar", "tone": "info"},
         {"label": "Paso 2 — Seleccionar", "tone": "info"},
         {"label": "Paso 3 — Exportar", "tone": "accent"},
@@ -186,12 +194,127 @@ MetricGalaxy(metrics=kpi_items, density="compact").render()
 
 # ======== What-If de límites ========
 st.markdown("### 🎛️ What-If (filtro visual)")
-f1, f2, f3 = st.columns(3)
-with f1: lim_e = st.number_input("Límite de Energía (kWh)", 0.0, 999.0, float(target["max_energy_kwh"]), 0.1)
-with f2: lim_w = st.number_input("Límite de Agua (L)", 0.0, 999.0, float(target["max_water_l"]), 0.1)
-with f3: lim_c = st.number_input("Límite de Crew (min)", 0.0, 999.0, float(target["max_crew_min"]), 1.0)
 
-mask_ok = (df_plot["Energía (kWh)"]<=lim_e) & (df_plot["Agua (L)"]<=lim_w) & (df_plot["Crew (min)"]<=lim_c)
+what_if_presets = {
+    "Residence": {
+        "label": "Residence Renovations (volumen alto)",
+        "button_label": "Residence",
+        "energy": 1.8,
+        "water": 0.28,
+        "crew": 36.0,
+        "insight": "Favorece piezas voluminosas optimizando agua y minutos de tripulación.",
+    },
+    "Daring": {
+        "label": "Daring Discoveries (reuso de carbono)",
+        "button_label": "Daring",
+        "energy": 1.1,
+        "water": 0.15,
+        "crew": 28.0,
+        "insight": "Maximiza el reuso de carbono con operaciones de baja energía y agua controlada.",
+    },
+}
+
+def _safe_float(value, fallback: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return fallback
+
+target_signature = (
+    round(_safe_float(target.get("max_energy_kwh", 0.0)), 3),
+    round(_safe_float(target.get("max_water_l", 0.0)), 3),
+    round(_safe_float(target.get("max_crew_min", 0.0)), 1),
+    str(target.get("scenario", "")),
+)
+
+if st.session_state.get("__what_if_signature") != target_signature:
+    st.session_state["__what_if_energy"] = _safe_float(target.get("max_energy_kwh", 0.0))
+    st.session_state["__what_if_water"] = _safe_float(target.get("max_water_l", 0.0))
+    st.session_state["__what_if_crew"] = _safe_float(target.get("max_crew_min", 0.0))
+    st.session_state["__what_if_signature"] = target_signature
+    st.session_state["__what_if_active_preset"] = None
+
+
+def _apply_what_if_preset(preset_key: str) -> None:
+    preset_cfg = what_if_presets[preset_key]
+    st.session_state["__what_if_energy"] = _safe_float(preset_cfg["energy"], 0.0)
+    st.session_state["__what_if_water"] = _safe_float(preset_cfg["water"], 0.0)
+    st.session_state["__what_if_crew"] = _safe_float(preset_cfg["crew"], 0.0)
+    st.session_state["__what_if_active_preset"] = preset_key
+
+
+preset_cols = st.columns([1.3, 1, 1])
+with preset_cols[0]:
+    st.caption(
+        "Activá límites sugeridos NASA según el foco del escenario y ajustá manualmente si lo necesitás."
+    )
+for col, preset_key in zip(preset_cols[1:], ("Residence", "Daring")):
+    with col:
+        cfg = what_if_presets[preset_key]
+        if st.button(cfg["button_label"], use_container_width=True):
+            _apply_what_if_preset(preset_key)
+        st.caption(
+            f"≤ {cfg['energy']:.2f} kWh · {cfg['water']:.2f} L · {cfg['crew']:.0f} min"
+        )
+
+f1, f2, f3 = st.columns(3)
+with f1:
+    lim_e = st.number_input(
+        "Límite de Energía (kWh)",
+        min_value=0.0,
+        max_value=999.0,
+        value=_safe_float(
+            st.session_state.get("__what_if_energy", target.get("max_energy_kwh", 0.0))
+        ),
+        step=0.1,
+        key="__what_if_energy",
+    )
+with f2:
+    lim_w = st.number_input(
+        "Límite de Agua (L)",
+        min_value=0.0,
+        max_value=999.0,
+        value=_safe_float(
+            st.session_state.get("__what_if_water", target.get("max_water_l", 0.0))
+        ),
+        step=0.1,
+        key="__what_if_water",
+    )
+with f3:
+    lim_c = st.number_input(
+        "Límite de Crew (min)",
+        min_value=0.0,
+        max_value=999.0,
+        value=_safe_float(
+            st.session_state.get("__what_if_crew", target.get("max_crew_min", 0.0))
+        ),
+        step=1.0,
+        key="__what_if_crew",
+    )
+
+current_limits = {
+    "energy": _safe_float(lim_e),
+    "water": _safe_float(lim_w),
+    "crew": _safe_float(lim_c),
+}
+
+matched_preset = None
+for preset_name, preset_cfg in what_if_presets.items():
+    if (
+        abs(current_limits["energy"] - _safe_float(preset_cfg["energy"])) < 1e-6
+        and abs(current_limits["water"] - _safe_float(preset_cfg["water"])) < 1e-6
+        and abs(current_limits["crew"] - _safe_float(preset_cfg["crew"])) < 1e-6
+    ):
+        matched_preset = preset_name
+        break
+
+st.session_state["__what_if_active_preset"] = matched_preset
+
+mask_ok = (
+    (df_plot["Energía (kWh)"] <= current_limits["energy"])
+    & (df_plot["Agua (L)"] <= current_limits["water"])
+    & (df_plot["Crew (min)"] <= current_limits["crew"])
+)
 df_view = df_plot.copy()
 df_view["Dentro_límites"] = np.where(mask_ok, "Dentro de límites", "Excede límites")
 
@@ -302,6 +425,43 @@ with tab_pareto:
     if usable.empty:
         st.info("No hay suficientes datos para graficar.")
     else:
+        active_preset = st.session_state.get("__what_if_active_preset")
+        explanation_lines: list[str] = []
+        for preset_key, preset_cfg in what_if_presets.items():
+            preset_mask = (
+                (df_view["Pareto"] == "Pareto")
+                & (df_view["Energía (kWh)"] <= _safe_float(preset_cfg["energy"]))
+                & (df_view["Agua (L)"] <= _safe_float(preset_cfg["water"]))
+                & (df_view["Crew (min)"] <= _safe_float(preset_cfg["crew"]))
+            )
+            subset = df_view[preset_mask].sort_values("Score", ascending=False)
+            if subset.empty:
+                detail = (
+                    "sin candidatos Pareto dentro de los límites sugeridos "
+                    f"(≤ {preset_cfg['energy']:.2f} kWh · {preset_cfg['water']:.2f} L · {preset_cfg['crew']:.0f} min)."
+                )
+            else:
+                top_row = subset.iloc[0]
+                option_raw = top_row.get("Opción")
+                option_label = (
+                    f"Plan #{int(option_raw)}" if pd.notna(option_raw) else "Plan destacado"
+                )
+                detail = (
+                    f"{option_label} lidera con Score {top_row['Score']:.2f}, "
+                    f"{top_row['Energía (kWh)']:.2f} kWh, {top_row['Agua (L)']:.2f} L y "
+                    f"{top_row['Crew (min)']:.1f} min. {preset_cfg['insight']}"
+                )
+                if subset.shape[0] > 1:
+                    detail += f" ({subset.shape[0]} planes dentro de límites.)"
+            marker = "⭐" if preset_key == active_preset else "•"
+            explanation_lines.append(
+                f"- {marker} **{preset_cfg['label']}**: {detail}"
+            )
+
+        st.markdown("#### Dominio Pareto por escenario")
+        st.markdown("\n".join(explanation_lines))
+        st.caption("⭐ indica el preset aplicado en los filtros What-If.")
+
         if "Opción" in usable:
             usable["Opción"] = pd.to_numeric(usable["Opción"], errors="coerce")
 
