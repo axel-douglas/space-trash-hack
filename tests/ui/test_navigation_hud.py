@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import types
+
 import pytest
 
 pytest.importorskip("streamlit")
@@ -85,3 +87,67 @@ def test_mission_hud_hides_settings_without_target(monkeypatch) -> None:
 
     assert hud_markup, "Mission HUD markup was not rendered"
     assert "Editar target" not in hud_markup
+
+
+def test_refresh_model_metadata_updates_without_restart(monkeypatch) -> None:
+    """Refreshing metadata should expose latest training info without restart."""
+
+    from app.modules import navigation
+
+    session_proxy: dict[str, object] = {}
+    mock_streamlit = types.SimpleNamespace(session_state=session_proxy)
+
+    monkeypatch.setattr(navigation, "st", mock_streamlit)
+
+    class _Registry:
+        def __init__(self) -> None:
+            self.ready = True
+            self.metadata = {
+                "model_name": "demo-regressor",
+                "trained_label": "Simulación",
+                "trained_at": "2024-01-01",
+            }
+            self._uncertainty = "reportada"
+
+        def uncertainty_label(self) -> str:  # noqa: D401
+            return self._uncertainty
+
+    registry = _Registry()
+
+    def _fake_registry() -> _Registry:
+        return registry
+
+    _fake_registry.cleared = False
+
+    def _fake_clear() -> None:
+        _fake_registry.cleared = True
+
+    _fake_registry.clear = _fake_clear  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(navigation, "get_model_registry", _fake_registry)
+
+    first = navigation._model_metadata()
+    assert first["trained_at"] == "2024-01-01"
+    assert first["uncertainty_badge"]["tone"] == "success"
+
+    registry.metadata["trained_at"] = "2024-02-02"
+    registry._uncertainty = "alta"
+
+    cached = navigation._model_metadata()
+    assert cached["trained_at"] == "2024-01-01", "Cache should remain until manual refresh"
+
+    navigation.refresh_model_metadata()
+    assert _fake_registry.cleared is True
+
+    updated = navigation._model_metadata()
+    assert updated["trained_at"] == "2024-02-02"
+    assert updated["uncertainty_badge"]["tone"] == "danger"
+
+    registry.ready = False
+    registry.metadata["trained_at"] = "2024-03-03"
+    registry._uncertainty = "reportada"
+
+    auto_updated = navigation._model_metadata()
+    assert auto_updated["trained_at"] == "2024-03-03"
+    assert auto_updated["status_badge"]["tone"] == "danger"
+    assert auto_updated["uncertainty_badge"]["tone"] == "success"
