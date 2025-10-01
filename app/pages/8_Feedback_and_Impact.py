@@ -28,6 +28,64 @@ from app.modules.impact import (
 from app.modules.data_sources import load_regolith_thermal_profiles
 
 
+@st.cache_data(show_spinner=False)
+def _regolith_thermal_summary():
+    try:
+        bundle = load_regolith_thermal_profiles()
+    except Exception as exc:  # noqa: BLE001
+        st.warning(
+            "No se pudieron cargar los perfiles térmicos de regolito en este momento. "
+            "Intentá recargar la página o consultá al equipo de datos.",
+            icon="⚠️",
+        )
+        st.caption(f"Detalles técnicos: {exc}")
+        return {}
+
+    peaks = (
+        bundle.gas_peaks.to_dict("records")
+        if isinstance(bundle.gas_peaks, pd.DataFrame)
+        else []
+    )
+    events = (
+        bundle.mass_events.to_dict("records")
+        if isinstance(bundle.mass_events, pd.DataFrame)
+        else []
+    )
+    return {"peaks": peaks, "events": events}
+
+
+def _regolith_observation_lines(
+    regolith_pct: float, thermo: dict[str, Any] | None
+) -> list[str]:
+    if regolith_pct <= 0 or not thermo:
+        return []
+
+    lines: list[str] = []
+    lines.append(
+        f"{regolith_pct * 100:.0f}% de MGS-1: monitorear densificación, ventilación y sellos al liberar volátiles."
+    )
+
+    peaks = thermo.get("peaks", []) if isinstance(thermo, dict) else []
+    for peak in peaks[:2]:
+        temperature = peak.get("temperature_c")
+        species = peak.get("species_label") or peak.get("species") or "Volátiles"
+        signal = peak.get("signal_ppb")
+        temp_txt = f"{temperature:.0f} °C" if isinstance(temperature, (int, float)) else "pico térmico"
+        signal_txt = f" (~{signal:.2f} ppb eq.)" if isinstance(signal, (int, float)) else ""
+        lines.append(f"TG/EGA: {species} con liberación cerca de {temp_txt}{signal_txt}.")
+
+    events = thermo.get("events", []) if isinstance(thermo, dict) else []
+    for event in events[:2]:
+        label = (event.get("event") or "").replace("_", " ").strip().capitalize()
+        mass_pct = event.get("mass_pct")
+        temperature = event.get("temperature_c")
+        mass_txt = f"{mass_pct:.1f}%" if isinstance(mass_pct, (int, float)) else "variación"
+        temp_txt = f"{temperature:.0f} °C" if isinstance(temperature, (int, float)) else "el perfil térmico"
+        lines.append(f"TG: {label or 'Evento'} → {mass_txt} alrededor de {temp_txt}.")
+
+    return lines
+
+
 def _parse_extra_blob(blob: Any) -> dict:
     """Convierte el campo `extra` a un dict manejando texto plano o JSON."""
     if isinstance(blob, dict):
@@ -99,44 +157,6 @@ if target:
 scenario_key = scenario_label.casefold()
 thermo_summary = _regolith_thermal_summary() if regolith_pct > 0 else None
 regolith_observations = _regolith_observation_lines(regolith_pct, thermo_summary)
-
-
-@st.cache_data(show_spinner=False)
-def _regolith_thermal_summary():
-    bundle = load_regolith_thermal_profiles()
-    peaks = bundle.gas_peaks.to_dict("records") if isinstance(bundle.gas_peaks, pd.DataFrame) else []
-    events = bundle.mass_events.to_dict("records") if isinstance(bundle.mass_events, pd.DataFrame) else []
-    return {"peaks": peaks, "events": events}
-
-
-def _regolith_observation_lines(regolith_pct: float, thermo: dict[str, Any] | None) -> list[str]:
-    if regolith_pct <= 0 or not thermo:
-        return []
-
-    lines: list[str] = []
-    lines.append(
-        f"{regolith_pct * 100:.0f}% de MGS-1: monitorear densificación, ventilación y sellos al liberar volátiles."
-    )
-
-    peaks = thermo.get("peaks", []) if isinstance(thermo, dict) else []
-    for peak in peaks[:2]:
-        temperature = peak.get("temperature_c")
-        species = peak.get("species_label") or peak.get("species") or "Volátiles"
-        signal = peak.get("signal_ppb")
-        temp_txt = f"{temperature:.0f} °C" if isinstance(temperature, (int, float)) else "pico térmico"
-        signal_txt = f" (~{signal:.2f} ppb eq.)" if isinstance(signal, (int, float)) else ""
-        lines.append(f"TG/EGA: {species} con liberación cerca de {temp_txt}{signal_txt}.")
-
-    events = thermo.get("events", []) if isinstance(thermo, dict) else []
-    for event in events[:2]:
-        label = (event.get("event") or "").replace("_", " ").strip().capitalize()
-        mass_pct = event.get("mass_pct")
-        temperature = event.get("temperature_c")
-        mass_txt = f"{mass_pct:.1f}%" if isinstance(mass_pct, (int, float)) else "variación"
-        temp_txt = f"{temperature:.0f} °C" if isinstance(temperature, (int, float)) else "el perfil térmico"
-        lines.append(f"TG: {label or 'Evento'} → {mass_txt} alrededor de {temp_txt}.")
-
-    return lines
 
 
 def _scenario_side_hints(scenario_key: str) -> list[str]:
