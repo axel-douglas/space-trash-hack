@@ -39,43 +39,64 @@ st.caption(
 )
 
 # --------------------- helpers robustos de columnas ---------------------
-def _pick_col(df: pd.DataFrame, names, default=None):
-    for n in names:
-        if n in df.columns:
-            return n
-    return default
+def _resolve_column(df: pd.DataFrame, names: tuple[str, ...], *, numeric: bool = False) -> pd.Series:
+    for name in names:
+        if name in df.columns:
+            series = df[name]
+            if numeric:
+                return pd.to_numeric(series, errors="coerce").fillna(0.0)
+            if series.dtype == object:
+                return series.fillna("").astype(str)
+            return series
+    if numeric:
+        return pd.Series(0.0, index=df.index, dtype=float)
+    return pd.Series("", index=df.index, dtype=str)
+
+
+@st.cache_data
+def _load_processing_products() -> pd.DataFrame:
+    try:
+        return pd.read_csv("datasets/nasa_waste_processing_products.csv")
+    except Exception:
+        return pd.DataFrame()
 
 # --------------------- cargar y normalizar a esquema estándar ---------------------
 raw = load_waste_df().copy()
 
 
 def _build_editable_df(source: pd.DataFrame) -> pd.DataFrame:
-    id_col = _pick_col(source, ["id"])
-    cat_col = _pick_col(source, ["category", "Category"])
-    mat_col = _pick_col(source, ["material_family", "material", "Material"])
-    mass_col = _pick_col(source, ["mass_kg", "kg", "Mass_kg"])
-    vol_col = _pick_col(source, ["volume_l", "Volume_L"])
-    flags_col = _pick_col(source, ["flags", "Flags"])
+    columns_map: dict[str, tuple[str, ...]] = {
+        "id": ("_source_id", "id"),
+        "category": ("_source_category", "category", "Category"),
+        "material": ("_source_material", "material"),
+        "material_family": ("_source_material_family", "material_family"),
+        "mass_kg": ("_source_mass_kg", "mass_kg", "kg", "Mass_kg"),
+        "volume_l": ("_source_volume_l", "volume_l", "Volume_L"),
+        "moisture_pct": ("_source_moisture_pct", "moisture_pct"),
+        "difficulty_factor": ("_source_difficulty_factor", "difficulty_factor"),
+        "pct_mass": ("_source_pct_mass", "pct_mass"),
+        "pct_volume": ("_source_pct_volume", "pct_volume"),
+        "flags": ("_source_flags", "flags", "Flags"),
+        "key_materials": ("_source_key_materials", "key_materials"),
+        "notes": ("_source_notes", "notes"),
+    }
 
-    editable = pd.DataFrame(
-        {
-            "id": source[id_col] if id_col else source.index.astype(str),
-            "category": source[cat_col] if cat_col else "",
-            "material_family": source[mat_col] if mat_col else "",
-            "mass_kg": (
-                pd.to_numeric(source[mass_col], errors="coerce").fillna(0.0)
-                if mass_col
-                else 0.0
-            ),
-            "volume_l": (
-                pd.to_numeric(source[vol_col], errors="coerce").fillna(0.0)
-                if vol_col
-                else 0.0
-            ),
-            "flags": (source[flags_col].astype(str) if flags_col else ""),
-        }
-    )
-    editable["_problematic"] = editable.apply(_is_problematic_row, axis=1)
+    numeric_fields = {"mass_kg", "volume_l", "moisture_pct", "pct_mass", "pct_volume", "difficulty_factor"}
+
+    editable_data: dict[str, pd.Series] = {}
+    for target, candidates in columns_map.items():
+        editable_data[target] = _resolve_column(source, candidates, numeric=target in numeric_fields)
+
+    editable = pd.DataFrame(editable_data)
+    editable["id"] = editable["id"].astype(str)
+    editable["category"] = editable["category"].astype(str)
+    editable["material"] = editable["material"].astype(str)
+    editable["material_family"] = editable["material_family"].astype(str)
+    editable["flags"] = editable["flags"].astype(str)
+    editable["key_materials"] = editable["key_materials"].astype(str)
+    editable["notes"] = editable["notes"].astype(str)
+
+    editable["_problematic"] = problematic_mask(editable)
     return editable
 
 
@@ -116,32 +137,102 @@ if "_inventory_baseline" not in st.session_state:
     st.session_state["_inventory_baseline"] = {"df": raw.copy(deep=True), "saved_at": None}
 
 df = _build_editable_df(raw)
-id_col    = _pick_col(raw, ["id"])
-cat_col   = _pick_col(raw, ["category", "Category"])
-mat_col   = _pick_col(raw, ["material_family", "material", "Material"])
-mass_col  = _pick_col(raw, ["mass_kg", "kg", "Mass_kg"])
-vol_col   = _pick_col(raw, ["volume_l", "Volume_L"])
-flags_col = _pick_col(raw, ["flags", "Flags"])
 
-# Construimos un DF estándar para edición/guardado:
-df = pd.DataFrame({
-    "id": raw[id_col] if id_col else raw.index.astype(str),
-    "category": raw[cat_col] if cat_col else "",
-    "material_family": raw[mat_col] if mat_col else "",
-    "mass_kg": pd.to_numeric(raw[mass_col], errors="coerce").fillna(0.0) if mass_col else 0.0,
-    "volume_l": pd.to_numeric(raw[vol_col], errors="coerce").fillna(0.0) if vol_col else 0.0,
-    "flags": (raw[flags_col].astype(str) if flags_col else ""),
-})
+derived_columns: dict[str, pd.Series] = {}
+for column in raw.columns:
+    if column in df.columns:
+        continue
+    if column.startswith("summary_"):
+        derived_columns[column] = raw[column]
+        continue
+    if column.startswith("_source_"):
+        derived_columns[column] = raw[column]
+        continue
+    if column.endswith("_pct") and column not in {"pct_mass", "pct_volume"}:
+        derived_columns[column] = raw[column]
+        continue
+    if column in {"kg", "density_kg_m3", "category_total_mass_kg", "category_total_volume_m3", "material_display"}:
+        derived_columns[column] = raw[column]
 
-problematic_series = problematic_mask(df)
-df["_problematic"] = problematic_series
+if derived_columns:
+    df = pd.concat([df, pd.DataFrame(derived_columns)], axis=1)
+
+composition_cols = [
+    column
+    for column in df.columns
+    if column.endswith("_pct") and column not in {"pct_mass", "pct_volume"} and not column.startswith("_source_")
+]
+
+if composition_cols:
+    def _format_composition(row: pd.Series) -> str:
+        parts: list[str] = []
+        for column in composition_cols:
+            value = row.get(column)
+            if pd.isna(value) or float(value) <= 0:
+                continue
+            label = column.replace("_pct", "").replace("_", " ")
+            parts.append(f"{label} {float(value):.0f}%")
+        return ", ".join(parts)
+
+    df["composition_summary"] = df[composition_cols].apply(_format_composition, axis=1)
+else:
+    df["composition_summary"] = ""
+
+mission_columns = [column for column in df.columns if column.startswith("summary_")]
+mission_labels = {
+    "summary_gateway_phase_i_mass_kg": "Gateway I",
+    "summary_gateway_phase_ii_mass_kg": "Gateway II",
+    "summary_mars_transit_mass_kg": "Mars Transit",
+    "summary_total_mass_kg": "Total NASA",
+}
+
+if mission_columns:
+    def _format_mission_bundle(row: pd.Series) -> str:
+        parts: list[str] = []
+        for column in mission_columns:
+            value = row.get(column)
+            if pd.isna(value) or float(value) <= 0:
+                continue
+            label = mission_labels.get(column, column.replace("summary_", "").replace("_", " "))
+            parts.append(f"{label}: {float(value):.1f} kg")
+        return " · ".join(parts)
+
+    df["nasa_mission_bundle"] = df[mission_columns].apply(_format_mission_bundle, axis=1)
+else:
+    df["nasa_mission_bundle"] = ""
 
 # --------------------- métricas “sabor laboratorio” ---------------------
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Ítems", len(df))
-c2.metric("Masa total (kg)", f"{float(pd.to_numeric(df['mass_kg'], errors='coerce').sum()):.2f}")
-c3.metric("Volumen (L)", f"{float(pd.to_numeric(df['volume_l'], errors='coerce').sum()):.1f}")
-c4.metric("Problemáticos", int(df["_problematic"].sum()))
+inventory_metrics = [
+    ("Ítems", f"{len(df)}", None),
+    ("Masa total (kg)", f"{float(df['mass_kg'].sum()):.2f}", None),
+    ("Volumen (L)", f"{float(df['volume_l'].sum()):.1f}", None),
+    ("Problemáticos", f"{int(df['_problematic'].sum())}", None),
+]
+
+metric_columns = st.columns(len(inventory_metrics))
+for column, (label, value, delta) in zip(metric_columns, inventory_metrics):
+    column.metric(label, value, delta=delta)
+
+mission_totals: dict[str, float] = {}
+for column in mission_columns:
+    mission_totals[column] = float(pd.to_numeric(df[column], errors="coerce").sum())
+
+if mission_totals:
+    mission_order = [
+        "summary_gateway_phase_i_mass_kg",
+        "summary_gateway_phase_ii_mass_kg",
+        "summary_mars_transit_mass_kg",
+        "summary_total_mass_kg",
+    ]
+    ordered_totals = [
+        (mission_labels.get(column, column), mission_totals[column])
+        for column in mission_order
+        if column in mission_totals
+    ]
+    mission_cols = st.columns(len(ordered_totals))
+    for column, (label, value) in zip(mission_cols, ordered_totals):
+        column.metric(f"NASA · {label}", f"{value:.1f} kg")
+    st.caption("Referencias NASA: masas estimadas por misión usando `nasa_waste_summary.csv`.")
 
 with st.expander("¿Por qué estos ítems? (resumen rápido)", expanded=False):
     st.markdown(
@@ -309,9 +400,42 @@ problematic_row_style = JsCode(
     """
 )
 
-gb = GridOptionsBuilder.from_dataframe(
-    filtered_df[["id", "category", "material_family", "mass_kg", "volume_l", "flags", "_problematic"]]
-)
+grid_column_order = [
+    "id",
+    "category",
+    "material",
+    "material_display",
+    "material_family",
+    "mass_kg",
+    "volume_l",
+    "moisture_pct",
+    "difficulty_factor",
+    "flags",
+    "key_materials",
+    "notes",
+    "composition_summary",
+    "nasa_mission_bundle",
+    "density_kg_m3",
+    "_problematic",
+]
+
+for column in mission_columns:
+    if column not in grid_column_order:
+        grid_column_order.append(column)
+
+for column in composition_cols:
+    if column not in grid_column_order:
+        grid_column_order.append(column)
+
+source_columns = [column for column in filtered_df.columns if column.startswith("_source_")]
+for column in source_columns:
+    if column not in grid_column_order:
+        grid_column_order.append(column)
+
+grid_columns = [column for column in grid_column_order if column in filtered_df.columns]
+grid_df = filtered_df[grid_columns].copy()
+
+gb = GridOptionsBuilder.from_dataframe(grid_df)
 gb.configure_default_column(
     editable=True,
     groupable=True,
@@ -321,12 +445,36 @@ gb.configure_default_column(
     tooltipField="flags",
 )
 gb.configure_column("id", header_name="ID", pinned="left")
-gb.configure_column("category", header_name="Category", rowGroup=True, hide=True)
-gb.configure_column("material_family", header_name="Material")
+gb.configure_column("category", header_name="Categoría NASA", rowGroup=True, hide=True)
+gb.configure_column("material", header_name="Subitem NASA")
+gb.configure_column("material_display", header_name="Resumen", editable=False)
+gb.configure_column("material_family", header_name="Familia material")
 gb.configure_column("mass_kg", header_name="Masa (kg)", type=["numericColumn"], cellStyle=tesla_gradient_style)
 gb.configure_column("volume_l", header_name="Volumen (L)", type=["numericColumn"], cellStyle=tesla_gradient_style)
+gb.configure_column("moisture_pct", header_name="Humedad (%)", type=["numericColumn"], cellStyle=tesla_gradient_style)
+gb.configure_column("difficulty_factor", header_name="Dificultad", type=["numericColumn"], cellStyle=tesla_gradient_style)
 gb.configure_column("flags", header_name="Flags", cellRenderer=flag_chip_renderer, editable=True)
+gb.configure_column("key_materials", header_name="Key materials", wrapText=True, autoHeight=True)
+gb.configure_column("notes", header_name="Notas", wrapText=True, autoHeight=True)
+gb.configure_column("composition_summary", header_name="Composición NASA", editable=False, wrapText=True, autoHeight=True)
+gb.configure_column("nasa_mission_bundle", header_name="Masas por misión", editable=False, wrapText=True, autoHeight=True)
+gb.configure_column("density_kg_m3", header_name="Densidad (kg/m³)", type=["numericColumn"], editable=False)
 gb.configure_column("_problematic", header_name="Problemático", editable=False, hide=True)
+
+for column in mission_columns:
+    if column in grid_df.columns:
+        header = f"{mission_labels.get(column, column)} (kg)"
+        gb.configure_column(column, header_name=header, editable=False, type=["numericColumn"], hide=True)
+
+for column in composition_cols:
+    if column in grid_df.columns:
+        header = column.replace("_pct", " (%)").replace("_", " ")
+        gb.configure_column(column, header_name=header, editable=False, hide=True)
+
+for column in source_columns:
+    if column in grid_df.columns:
+        gb.configure_column(column, header_name=column, editable=False, hide=True)
+
 gb.configure_grid_options(
     animateRows=True,
     enableRangeSelection=True,
@@ -370,7 +518,7 @@ grid_col, preview_col = st.columns((2.2, 1))
 
 with grid_col:
     grid_response = AgGrid(
-        filtered_df,
+        grid_df,
         gridOptions=grid_options,
         update_mode=GridUpdateMode.MODEL_CHANGED | GridUpdateMode.SELECTION_CHANGED,
         data_return_mode="AS_INPUT",
@@ -381,11 +529,25 @@ with grid_col:
 
     st.session_state["inventory_grid_state"] = grid_response.get("grid_state", st.session_state["inventory_grid_state"])
 
-    updated_df = pd.DataFrame(grid_response.get("data", filtered_df))
+    updated_df = pd.DataFrame(grid_response.get("data", grid_df))
     if not updated_df.empty:
-        updated_df["mass_kg"] = pd.to_numeric(updated_df["mass_kg"], errors="coerce").fillna(0.0)
-        updated_df["volume_l"] = pd.to_numeric(updated_df["volume_l"], errors="coerce").fillna(0.0)
+        numeric_candidates = [
+            "mass_kg",
+            "volume_l",
+            "moisture_pct",
+            "pct_mass",
+            "pct_volume",
+            "difficulty_factor",
+            "density_kg_m3",
+        ]
+        for column in numeric_candidates:
+            if column in updated_df.columns:
+                updated_df[column] = pd.to_numeric(updated_df[column], errors="coerce").fillna(0.0)
         updated_df["_problematic"] = problematic_mask(updated_df)
+        if composition_cols and all(column in updated_df.columns for column in composition_cols):
+            updated_df["composition_summary"] = updated_df[composition_cols].apply(_format_composition, axis=1)
+        if mission_columns and all(column in updated_df.columns for column in mission_columns):
+            updated_df["nasa_mission_bundle"] = updated_df[mission_columns].apply(_format_mission_bundle, axis=1)
         st.session_state["inventory_data"] = updated_df
 
 selected_rows = grid_response.get("selected_rows", []) if "grid_response" in locals() else []
@@ -397,21 +559,81 @@ with preview_col:
         st.caption("Lotes seleccionados — edición contextual")
         preview_df = pd.DataFrame(selected_rows)
         preview_df["_problematic"] = problematic_mask(preview_df)
+        preview_columns = [
+            "id",
+            "category",
+            "material",
+            "mass_kg",
+            "volume_l",
+            "composition_summary",
+            "nasa_mission_bundle",
+        ]
+        preview_columns = [column for column in preview_columns if column in preview_df.columns]
         st.dataframe(
-            preview_df[["id", "category", "flags", "mass_kg", "volume_l"]]
-            .rename(columns={"mass_kg": "kg", "volume_l": "L"}),
+            preview_df[preview_columns]
+            .rename(columns={"mass_kg": "kg", "volume_l": "L", "composition_summary": "Composición", "nasa_mission_bundle": "Misiones"}),
             use_container_width=True,
             hide_index=True,
         )
+
         st.markdown("**Flags representados**")
         chips = []
-        for flags in preview_df["flags"].fillna(""):
+        for flags in preview_df.get("flags", pd.Series(dtype=str)).fillna(""):
             chips.extend([f.strip() for f in str(flags).split(",") if f.strip()])
         chips = sorted(set(chips))
         if chips:
             st.markdown(
                 " ".join([f"<span class='flag-chip'>{chip}</span>" for chip in chips]),
                 unsafe_allow_html=True,
+            )
+        else:
+            st.caption("Sin flags adicionales en selección.")
+
+        if composition_cols and "composition_summary" in preview_df:
+            st.markdown("**Composición NASA**")
+            for _, row in preview_df.iterrows():
+                summary = row.get("composition_summary") or "—"
+                st.markdown(f"• **{row.get('material', row.get('category', 'Lote'))}**: {summary}")
+
+        if mission_columns:
+            mission_summary = {
+                mission_labels.get(column, column): float(pd.to_numeric(preview_df.get(column), errors="coerce").sum())
+                for column in mission_columns
+                if column in preview_df.columns
+            }
+            if mission_summary:
+                st.markdown("**Masa proyectada por misión (selección)**")
+                mission_table = pd.DataFrame(
+                    {"Misión": mission_summary.keys(), "kg": mission_summary.values()}
+                )
+                st.dataframe(mission_table, hide_index=True, use_container_width=True)
+
+        processing_df = _load_processing_products()
+        if not processing_df.empty:
+            st.markdown("**Procesamiento NASA (Trash-to-Gas / Trash-to-Supply Gas)**")
+            st.dataframe(
+                processing_df[
+                    [
+                        "approach",
+                        "propellant_per_cm_day_kg",
+                        "gateway_phase_i_propellant_kg",
+                        "gateway_phase_ii_propellant_kg",
+                        "mars_outbound_propellant_kg",
+                        "total_propellant_kg",
+                    ]
+                ]
+                .rename(
+                    columns={
+                        "approach": "Enfoque",
+                        "propellant_per_cm_day_kg": "kg prop./cm·día",
+                        "gateway_phase_i_propellant_kg": "Gateway I (kg)",
+                        "gateway_phase_ii_propellant_kg": "Gateway II (kg)",
+                        "mars_outbound_propellant_kg": "Mars outbound (kg)",
+                        "total_propellant_kg": "Total propulsor (kg)",
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True,
             )
     else:
         st.caption("Seleccioná filas para ver detalles y acciones en lote.")
@@ -468,7 +690,24 @@ with colA:
             "error": "",
         },
     ):
-        out = st.session_state["inventory_data"][["id", "category", "material_family", "mass_kg", "volume_l", "flags"]].copy()
+        save_columns = [
+            "id",
+            "category",
+            "material",
+            "material_family",
+            "mass_kg",
+            "volume_l",
+            "moisture_pct",
+            "difficulty_factor",
+            "pct_mass",
+            "pct_volume",
+            "flags",
+            "key_materials",
+            "notes",
+        ]
+        inventory_df = st.session_state["inventory_data"]
+        save_columns = [column for column in save_columns if column in inventory_df.columns]
+        out = inventory_df[save_columns].copy()
         save_waste_df(out)
         st.session_state["_inventory_baseline"] = {
             "df": load_waste_df().copy(deep=True),
