@@ -616,9 +616,9 @@ with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None
                 help="Cantidad de combinaciones candidatas por lote.",
             )
 
-            with control.expander("Opciones avanzadas"):
+            with control.expander("Opciones avanzadas") as advanced:
                 seed_default = st.session_state.get("generator_seed_input", "")
-                seed_input = control.text_input(
+                seed_input = advanced.text_input(
                     "Semilla (opcional)",
                     value=seed_default,
                     help="Ingresá un entero para repetir exactamente el mismo lote.",
