@@ -40,7 +40,7 @@ load_theme()
 
 render_breadcrumbs("generator")
 
-_playbook_prefill_raw = st.session_state.get("_playbook_generator_filters")
+_playbook_prefill_raw = st.session_state.pop("_playbook_generator_filters", None)
 _playbook_prefilters: dict[str, object] | None = None
 _playbook_prefill_label: str | None = None
 if isinstance(_playbook_prefill_raw, dict):
@@ -531,7 +531,6 @@ target = st.session_state.get("target")
 playbook_filters_applied = False
 if _playbook_prefilters is not None and isinstance(target, dict):
     _apply_generator_prefilters(_playbook_prefilters, target)
-    st.session_state.pop("_playbook_generator_filters", None)
     playbook_filters_applied = True
 
 # ----------------------------- Encabezado -----------------------------
