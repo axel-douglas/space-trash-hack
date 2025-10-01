@@ -36,6 +36,9 @@ _WATER_L_PER_VOLUME_L_BASELINE = 1 / 3000
 
 _SCENARIO_IO_MAP: Dict[str, Dict[str, Sequence[str]]] = {
     "Residence Renovations": {
+        "badges": (
+            "📦 Volumen alto CTB",
+        ),
         "inputs": (
             "Marcos y puntales CTB recuperados",
             "Espumas tipo ZOTEK laminadas",
@@ -60,6 +63,10 @@ _SCENARIO_IO_MAP: Dict[str, Dict[str, Sequence[str]]] = {
         ),
     },
     "Daring Discoveries": {
+        "badges": (
+            "🧪 Refuerzo de carbono",
+            "🪤 Gestión crítica de filtros",
+        ),
         "inputs": (
             "Carbono recuperado con tamizaje fino",
             "Redes y filtros metálicos/poliméricos",
@@ -77,14 +84,23 @@ _SCENARIO_IO_MAP: Dict[str, Dict[str, Sequence[str]]] = {
 def _build_scenario_profile(name: str) -> Dict[str, Any]:
     """Return summary, inputs and outputs for the given scenario."""
 
-    profile: Dict[str, Any] = dict(_SCENARIO_IO_MAP.get(name, {}))
+    name = name or ""
+    base_info = _SCENARIO_IO_MAP.get(name, {}) if name else {}
+
+    profile: Dict[str, Any] = {
+        "inputs": tuple(base_info.get("inputs", ())),
+        "outputs": tuple(base_info.get("outputs", ())),
+        "badges": tuple(label for label in base_info.get("badges", ()) if label),
+    }
+
     playbook = PLAYBOOKS.get(name)
     if playbook:
         profile["summary"] = playbook.summary
-    elif not profile:
+    elif not name or not base_info:
         profile["summary"] = "Seleccioná un escenario para ver hipótesis concretas."
-    profile.setdefault("inputs", tuple())
-    profile.setdefault("outputs", tuple())
+    else:
+        profile["summary"] = str(base_info.get("summary", ""))
+
     return profile
 
 
@@ -2882,9 +2898,14 @@ def target_configurator(
 
             scenario_profile = _build_scenario_profile(scenario)
 
+            badge_labels: list[str] = []
+            for raw_label in scenario_profile.get("badges", ()):
+                label = str(raw_label).strip()
+                if label:
+                    badge_labels.append(label)
             badges_html = "".join(
                 f"<span class=\"scenario-badge\">{escape(label)}</span>"
-                for label in ("MGS-1 ready", "L2L boost")
+                for label in badge_labels
             )
             inputs_html = "".join(
                 f"<li>{escape(item)}</li>"
@@ -2895,6 +2916,9 @@ def target_configurator(
                 for item in scenario_profile.get("outputs", ())
             ) or "<li>La tarjeta mostrará qué entregables logra la tripulación.</li>"
             summary_html = escape(scenario_profile.get("summary", ""))
+            badges_section = (
+                f"<div class=\"scenario-badges\">{badges_html}</div>" if badges_html else ""
+            )
 
             st.markdown(
                 f"""
@@ -2903,7 +2927,7 @@ def target_configurator(
                         <h3>{escape(selected_name)}</h3>
                         <p>Render conceptual en vivo del objeto seleccionado.</p>
                         <p class="scenario-summary">{summary_html}</p>
-                        <div class="scenario-badges">{badges_html}</div>
+                        {badges_section}
                         <div class="scenario-io">
                             <div>
                                 <strong>Inputs clave</strong>
