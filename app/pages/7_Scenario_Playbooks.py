@@ -38,25 +38,72 @@ state_sel   = st.session_state.get("selected", None)
 candidato   = state_sel["data"] if state_sel else None
 props       = candidato["props"] if candidato else None
 
+# ======== Selector de Playbook ========
+if not target:
+    st.info("Definí primero el escenario en **2) Target Designer**.")
+    st.stop()
+
+scenario_default = target.get("scenario", next(iter(PLAYBOOKS.keys())))
+scenarios = list(PLAYBOOKS.keys())
+ordered_scenarios = [s for s in FEATURED_PLAYBOOKS if s in scenarios]
+ordered_scenarios.extend([s for s in scenarios if s not in ordered_scenarios])
+
+if scenario_default not in ordered_scenarios:
+    scenario_default = ordered_scenarios[0]
+
+featured_indices = [
+    idx + 1 for idx, name in enumerate(ordered_scenarios) if name in FEATURED_PLAYBOOKS
+]
+
 # ======== Estilos SpaceX/NASA-like ========
-st.markdown(
+radio_feature_css = "".join(
+    f"""
+    div[data-testid=\"stRadio\"] > div[role=\"radiogroup\"] > div:nth-child({index}) label {{
+        border-color:rgba(250,204,21,0.65);
+        box-shadow:0 16px 28px rgba(15,23,42,0.55), inset 0 0 0 1px rgba(250,204,21,0.35);
+        background:linear-gradient(135deg, rgba(250,204,21,0.22), rgba(56,189,248,0.08));
+        color:#f8fafc;
+    }}
+    div[data-testid=\"stRadio\"] > div[role=\"radiogroup\"] > div:nth-child({index}) label:hover {{
+        border-color:rgba(250,204,21,0.85);
+        box-shadow:0 20px 34px rgba(15,23,42,0.65), inset 0 0 0 1px rgba(250,204,21,0.45);
+    }}
+    div[data-testid=\"stRadio\"] > div[role=\"radiogroup\"] > div:nth-child({index}) label:has(input:checked) {{
+        border-color:rgba(253,224,71,0.95);
+        box-shadow:0 24px 38px rgba(15,23,42,0.7), inset 0 0 0 1px rgba(253,224,71,0.65);
+        color:#0f172a;
+        background:linear-gradient(135deg, rgba(253,224,71,0.65), rgba(56,189,248,0.32));
+    }}
     """
+    for index in featured_indices
+)
+
+st.markdown(
+    f"""
     <style>
-    .hero {border-radius:16px; background: radial-gradient(900px 260px at 20% -10%, rgba(80,120,255,.10), transparent);}
-    .step{border:1px dashed var(--bd); border-radius:14px; padding:14px; margin-bottom:12px;}
-    .step h4{margin:0 0 6px 0;}
-    .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;}
-    .why-panel{border:1px solid var(--bd); border-radius:16px; padding:16px; background:linear-gradient(135deg, rgba(59,130,246,0.12), rgba(13,148,136,0.10)); box-shadow:0 16px 28px rgba(15,23,42,0.22);}
-    .why-panel h4{margin:0 0 8px 0; font-size:1.05rem;}
-    .why-panel p{margin:0 0 10px 0; font-size:0.92rem; line-height:1.45;}
-    .why-panel ul{margin:0; padding-left:18px; font-size:0.88rem; line-height:1.5;}
+    .hero {{border-radius:16px; background: radial-gradient(900px 260px at 20% -10%, rgba(80,120,255,.10), transparent);}}
+    .step{{border:1px dashed var(--bd); border-radius:14px; padding:14px; margin-bottom:12px;}}
+    .step h4{{margin:0 0 6px 0;}}
+    .mono{{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, \"Liberation Mono\", monospace;}}
+    .why-panel{{border:1px solid var(--bd); border-radius:16px; padding:16px; background:linear-gradient(135deg, rgba(59,130,246,0.12), rgba(13,148,136,0.10)); box-shadow:0 16px 28px rgba(15,23,42,0.22);}}
+    .why-panel h4{{margin:0 0 8px 0; font-size:1.05rem;}}
+    .why-panel p{{margin:0 0 10px 0; font-size:0.92rem; line-height:1.45;}}
+    .why-panel ul{{margin:0; padding-left:18px; font-size:0.88rem; line-height:1.5;}}
+    div[data-testid=\"stRadio\"] > div[role=\"radiogroup\"]{{display:flex; gap:0.6rem; flex-wrap:wrap;}}
+    div[data-testid=\"stRadio\"] > div[role=\"radiogroup\"] label{{cursor:pointer; display:flex; align-items:center; gap:0.5rem; padding:0.55rem 1.35rem; border-radius:14px; border:1px solid rgba(148,163,184,0.35); background:rgba(15,23,42,0.62); color:#e2e8f0; font-weight:600; letter-spacing:0.04em; text-transform:uppercase; box-shadow:inset 0 0 0 1px rgba(148,163,184,0.18); transition:all .2s ease; position:relative;}}
+    div[data-testid=\"stRadio\"] > div[role=\"radiogroup\"] label:hover{{border-color:rgba(148,163,184,0.75); box-shadow:0 12px 24px rgba(15,23,42,0.48), inset 0 0 0 1px rgba(148,163,184,0.32);}}
+    div[data-testid=\"stRadio\"] > div[role=\"radiogroup\"] label::after{{content:\"\"; position:absolute; inset:0; border-radius:14px; opacity:0; transition:opacity .2s ease; background:radial-gradient(circle at 30% 30%, rgba(148,197,255,0.32), transparent 70%); mix-blend-mode:screen;}}
+    div[data-testid=\"stRadio\"] > div[role=\"radiogroup\"] label:has(input:checked)::after{{opacity:1;}}
+    div[data-testid=\"stRadio\"] > div[role=\"radiogroup\"] label:has(input:checked){{border:1px solid rgba(96,165,250,0.85); box-shadow:0 18px 32px rgba(15,23,42,0.62), inset 0 0 0 1px rgba(96,165,250,0.55); background:linear-gradient(135deg, rgba(59,130,246,0.45), rgba(56,189,248,0.25)); color:#0ea5e9;}}
+    {radio_feature_css}
     </style>
     """,
     unsafe_allow_html=True,
 )
 
 # ======== HERO ========
-st.markdown("""
+st.markdown(
+    """
 <div class="hero">
   <h1 style="margin:0 0 6px 0">📚 Scenario Playbooks</h1>
   <div class="small">
@@ -71,9 +118,10 @@ st.markdown("""
     <span class="pill ok">3) Ejecutá & registra feedback</span>
   </div>
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
-# ======== Selector de Playbook ========
 st.markdown("### 🎯 Escenario operativo")
 
 if not target:
@@ -90,15 +138,15 @@ if scenario_default not in ordered_scenarios:
 
 if scenario_default not in FEATURED_PLAYBOOKS:
     scenario_default = next((s for s in ordered_scenarios if s in FEATURED_PLAYBOOKS), ordered_scenarios[0])
-
 col_sel, col_help = st.columns([1.5, 1.0])
 with col_sel:
     st.caption("Seleccioná un playbook destacado o cambiá a otro escenario de misión.")
-    scenario = st.segmented_control(
+    scenario = st.radio(
         "Playbooks disponibles",
         options=ordered_scenarios,
-        default=scenario_default,
+        index=ordered_scenarios.index(scenario_default),
         key="playbook_selector",
+        horizontal=True,
     )
 
 pb = PLAYBOOKS.get(scenario)
