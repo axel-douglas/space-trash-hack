@@ -10,6 +10,7 @@ import pandas as pd
 import pytest
 
 from app.modules import label_mapper
+from app.modules.paths import GOLD_DIR
 
 
 gold_module = pytest.importorskip("scripts.build_gold_dataset")
@@ -124,7 +125,7 @@ def test_build_gold_dataset_hermetic(tmp_path: Path, monkeypatch: pytest.MonkeyP
     GoldFeatureRow = getattr(gold_module, "GoldFeatureRow")
     GoldLabelRow = getattr(gold_module, "GoldLabelRow")
 
-    gold_dir = Path("datasets") / "gold"
+    gold_dir = GOLD_DIR
     preexisting = set()
     if gold_dir.exists():
         preexisting = {path.resolve() for path in gold_dir.glob("*.parquet")}

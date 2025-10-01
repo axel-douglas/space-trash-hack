@@ -29,7 +29,7 @@ Formato de datasets:
 
 * `datasets/bronze/*.parquet`: ingesta cruda.
 * `datasets/silver/*.parquet`: datos curados y sin fugas entre splits.
-* `datasets/gold/*.parquet`: splits de entrenamiento/validación con `label_source` y `label_weight`.
+* `data/gold/*.parquet`: splits de entrenamiento/validación con `label_source` y `label_weight`.
 
 ## 3) Entrenamiento reproducible y medible
 
@@ -51,7 +51,7 @@ Salida esperada: `data/models/rexai_regressor.joblib`, `metadata.json`, y opcion
 
 * Versionar únicamente `metadata.json` en Git; publicar los binarios (`.joblib/.pt`) mediante releases o almacenamiento externo.
 * Asegurarse de que `metadata.json` incluya `feature_names`, estadísticas (`means`, `std`), `residual_std` por target e `importances`.
-* Automatizar un flujo (CI/CD) que entrene con `datasets/gold`, publique artefactos y ejecute una prueba de inferencia (`predict() != {}`).
+* Automatizar un flujo (CI/CD) que entrene con `data/gold`, publique artefactos y ejecute una prueba de inferencia (`predict() != {}`).
 
 ## 5) Integración en la app
 

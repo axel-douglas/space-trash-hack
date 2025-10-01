@@ -25,7 +25,7 @@ Este backlog transforma el plan técnico en sprints accionables. Cada tarea se p
 
 | ID | Tarea | Prioridad | Tipo | Dependencias | Entregable |
 | --- | --- | --- | --- | --- | --- |
-| S1.1 | Implementar script ETL `scripts/build_gold_dataset.py` que combine fuentes y genere `datasets/gold/{features,labels}.parquet` | 🔴 | data | S0.2 | Script + Parquet de muestra |
+| S1.1 | Implementar script ETL `scripts/build_gold_dataset.py` que combine fuentes y genere `data/gold/{features,labels}.parquet` | 🔴 | data | S0.2 | Script + Parquet de muestra |
 | S1.2 | Extender `compute_feature_vector()` para incluir fracciones de óxidos, flags EVA/CTB/multilayer, índices Trash-to-Gas y parámetros de proceso | 🔴 | ml | S1.1 | PR con cambios + pruebas unitarias |
 | S1.3 | Añadir targets `rigidez`, `estanqueidad`, `energy_kwh`, `water_l`, `crew_min` en el pipeline de entrenamiento (RandomForest multisalida) | 🔴 | ml | S1.1 | `data/models/rexai_regressor.joblib`, `metadata.json` |
 | S1.4 | Calcular intervalos CI95 usando varianza entre árboles + residuales; persistir en `metadata.json` | 🔴 | ml | S1.3 | Campos `confidence_interval` por target |

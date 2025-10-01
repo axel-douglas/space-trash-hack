@@ -11,7 +11,7 @@ reproduce el experimento y guarda la evidencia en `data/benchmarks/`.
    clasificadores y metadata) están disponibles. Podés regenerarlos con:
 
    ```bash
-   python -m app.modules.model_training --gold datasets/gold --append-logs "data/logs/feedback_*.parquet"
+   python -m app.modules.model_training --gold data/gold --append-logs "data/logs/feedback_*.parquet"
    ```
 
    Si preferís evitar el entrenamiento local, descargá el bundle

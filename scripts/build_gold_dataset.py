@@ -17,7 +17,10 @@ def main() -> None:
         "--output-dir",
         type=Path,
         default=None,
-        help="Directory where features.parquet and labels.parquet will be written.",
+        help=(
+            "Directory where features.parquet and labels.parquet will be written. "
+            "Defaults to data/gold when omitted."
+        ),
     )
     args = parser.parse_args()
     build_gold_dataset(args.output_dir, return_frames=False)

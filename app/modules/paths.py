@@ -18,5 +18,8 @@ MODELS_DIR = DATA_ROOT / "models"
 LOGS_DIR = DATA_ROOT / "logs"
 """Directory where runtime telemetry such as inference logs is persisted."""
 
+GOLD_DIR = DATA_ROOT / "gold"
+"""Default location for the curated gold feature/label parquet files."""
 
-__all__ = ["DATA_ROOT", "MODELS_DIR", "LOGS_DIR"]
+
+__all__ = ["DATA_ROOT", "MODELS_DIR", "LOGS_DIR", "GOLD_DIR"]

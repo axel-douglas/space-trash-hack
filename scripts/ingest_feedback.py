@@ -12,10 +12,11 @@ import pandas as pd
 
 from app.modules import model_training
 from app.modules.label_mapper import CLASS_TARGET_COLUMNS, TARGET_COLUMNS
+from app.modules.paths import GOLD_DIR
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_FEEDBACK = ROOT / "feedback" / "recipes.parquet"
-DEFAULT_GOLD_DIR = ROOT / "datasets" / "gold"
+DEFAULT_GOLD_DIR = GOLD_DIR
 
 FEATURE_COLUMNS = list(model_training.FEATURE_COLUMNS)
 TARGET_LIST = list(TARGET_COLUMNS)
@@ -154,7 +155,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--gold-dir",
         type=Path,
         default=DEFAULT_GOLD_DIR,
-        help="Directorio donde viven features.parquet y labels.parquet",
+        help="Directorio donde viven features.parquet y labels.parquet (por defecto data/gold)",
     )
     parser.add_argument(
         "--dry-run",
