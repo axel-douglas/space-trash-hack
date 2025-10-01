@@ -420,6 +420,96 @@ if category_items:
         reveal=False,
     ).render()
 
+risk_watchlist: list[dict[str, object]] = []
+risk_flag_map = {
+    "pfas": {
+        "label": "PFAS",
+        "keywords": ["pfas", "fluoro", "ptfe", "fep"],
+    },
+    "microplastics": {
+        "label": "Microplásticos",
+        "keywords": ["micro", "foam", "pellet"],
+    },
+    "incineration": {
+        "label": "Incineración",
+        "keywords": ["inciner", "combust", "burn"],
+    },
+}
+
+if inventory_df is not None and not inventory_df.empty:
+    flags_series = inventory_df["flags"].fillna("").astype(str)
+    for risk_key, config in risk_flag_map.items():
+        mask = pd.Series(False, index=flags_series.index)
+        for keyword in config["keywords"]:
+            if not keyword:
+                continue
+            mask |= flags_series.str.contains(keyword, case=False, na=False)
+        count = int(mask.sum())
+        materials = (
+            inventory_df.loc[mask, "material"].head(3).dropna().astype(str).tolist()
+            if count
+            else []
+        )
+        risk_watchlist.append(
+            {
+                "key": risk_key,
+                "label": config["label"],
+                "count": count,
+                "status": "warning" if count else "ok",
+                "status_label": "Advertencia" if count else "OK",
+                "materials": materials,
+            }
+        )
+
+if risk_watchlist:
+    pill_items = []
+    for item in risk_watchlist:
+        materials_html = (
+            f"<span class=\"pill-materials\">{', '.join(item['materials'])}</span>"
+            if item["materials"]
+            else "<span class=\"pill-materials pill-materials--empty\">Sin materiales críticos detectados</span>"
+        )
+        pill_items.append(
+            """
+            <div class="pill-stack__item">
+              <span class="pill {status}">
+                <strong>{label}</strong>
+                <span class="pill-count">{count}</span>
+                <span class="pill-status">{status_label}</span>
+              </span>
+              {materials_html}
+            </div>
+            """.format(
+                status=item["status"],
+                label=item["label"],
+                count=item["count"],
+                status_label=item["status_label"],
+                materials_html=materials_html,
+            )
+        )
+
+    checklist_link = (
+        "<a class=\"pill-stack__link\" href=\"./?page=8_Feedback_and_Impact\">"
+        "Abrir checklist Feedback & Impact</a>"
+    )
+    st.markdown(
+        """
+        <section class="home-card home-card--pills">
+          <header class="pill-stack__header">
+            <h4>Vigilancia de riesgos</h4>
+            {checklist_link}
+          </header>
+          <div class="pill-stack">
+            {pill_items}
+          </div>
+        </section>
+        """.format(
+            pill_items="".join(pill_items),
+            checklist_link=checklist_link,
+        ),
+        unsafe_allow_html=True,
+    )
+
 info_cards: list[str] = [
     """
     <article class="home-card">
