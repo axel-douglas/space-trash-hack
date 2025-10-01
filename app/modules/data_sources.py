@@ -64,6 +64,7 @@ __all__ = [
     "load_regolith_granulometry",
     "load_regolith_spectral_curves",
     "load_regolith_thermal_profiles",
+    "regolith_observation_lines",
 ]
 
 
@@ -1621,6 +1622,82 @@ def load_regolith_thermal_profiles() -> RegolithThermalBundle:
         gas_peaks=peaks_df,
         mass_events=events_df,
     )
+
+
+def regolith_observation_lines(
+    regolith_pct: float, thermo: Mapping[str, Any] | RegolithThermalBundle | None
+) -> list[str]:
+    """Return human-readable TG/EGA notes for a regolito blend."""
+
+    if regolith_pct <= 0 or not thermo:
+        return []
+
+    lines = [
+        (
+            f"{regolith_pct * 100:.0f}% de MGS-1: monitorear densificación, ventilación y "
+            "sellos al liberar volátiles."
+        )
+    ]
+
+    if isinstance(thermo, RegolithThermalBundle):
+        peaks_data: Iterable[Any]
+        events_data: Iterable[Any]
+        if isinstance(thermo.gas_peaks, pd.DataFrame):
+            peaks_data = thermo.gas_peaks.to_dict("records")
+        else:
+            peaks_data = thermo.gas_peaks or []
+        if isinstance(thermo.mass_events, pd.DataFrame):
+            events_data = thermo.mass_events.to_dict("records")
+        else:
+            events_data = thermo.mass_events or []
+        peaks = list(peaks_data)
+        events = list(events_data)
+    else:
+        peaks = list(thermo.get("peaks", [])) if isinstance(thermo, Mapping) else []
+        events = list(thermo.get("events", [])) if isinstance(thermo, Mapping) else []
+
+    for peak in peaks[:2]:
+        temperature = peak.get("temperature_c") if isinstance(peak, Mapping) else None
+        species = (
+            peak.get("species_label")
+            if isinstance(peak, Mapping)
+            else None
+        ) or (
+            peak.get("species") if isinstance(peak, Mapping) else None
+        ) or "Volátiles"
+        signal = peak.get("signal_ppb") if isinstance(peak, Mapping) else None
+        temp_txt = (
+            f"{temperature:.0f} °C"
+            if isinstance(temperature, (int, float))
+            else "pico térmico"
+        )
+        signal_txt = (
+            f" (~{signal:.2f} ppb eq.)"
+            if isinstance(signal, (int, float))
+            else ""
+        )
+        lines.append(f"TG/EGA: {species} con liberación cerca de {temp_txt}{signal_txt}.")
+
+    for event in events[:2]:
+        if isinstance(event, Mapping):
+            label = (event.get("event") or "").replace("_", " ").strip().capitalize()
+            mass_pct = event.get("mass_pct")
+            temperature = event.get("temperature_c")
+        else:
+            label = "Evento"
+            mass_pct = None
+            temperature = None
+        mass_txt = (
+            f"{mass_pct:.1f}%" if isinstance(mass_pct, (int, float)) else "variación"
+        )
+        temp_txt = (
+            f"{temperature:.0f} °C"
+            if isinstance(temperature, (int, float))
+            else "el perfil térmico"
+        )
+        lines.append(f"TG: {label or 'Evento'} → {mass_txt} alrededor de {temp_txt}.")
+
+    return lines
 
 
 REGOLITH_VECTOR = _load_regolith_vector()
