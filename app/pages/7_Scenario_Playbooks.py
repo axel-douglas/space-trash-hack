@@ -24,12 +24,6 @@ GENERATOR_FILTER_PRESETS: dict[str, dict[str, bool]] = {
         "showroom_limit_water": True,
         "showroom_limit_crew": True,
     },
-    "Cosmic Celebrations": {
-        "showroom_only_safe": True,
-        "showroom_limit_energy": False,
-        "showroom_limit_water": True,
-        "showroom_limit_crew": False,
-    },
     "Daring Discoveries": {
         "showroom_only_safe": False,
         "showroom_limit_energy": True,
@@ -113,8 +107,9 @@ st.markdown(
 <div class="hero">
   <h1 style="margin:0 0 6px 0">📚 Scenario Playbooks</h1>
   <div class="small">
-    Procedimientos guiados para ejecutar la receta seleccionada en contextos de misión
-    (<b>Residence Renovations</b>, <b>Cosmic Celebrations</b>, <b>Daring Discoveries</b>).
+    Procedimientos guiados para ejecutar la receta seleccionada en contextos de misión.
+    <b>Residence Renovations</b> y <b>Daring Discoveries</b> son nuestros playbooks ganadores:
+    maximizan la eficiencia de recursos y la adopción operativa en misiones reales.
     Cada playbook es una lista de pasos accionables, con material y recursos provenientes de tus datos reales.
   </div>
   <div class="legend" style="margin-top:8px">
@@ -129,6 +124,20 @@ st.markdown(
 
 st.markdown("### 🎯 Escenario operativo")
 
+if not target:
+    st.info("Definí primero el escenario en **2) Target Designer**.")
+    st.stop()
+
+scenario_default = target.get("scenario", None)
+scenarios = list(PLAYBOOKS.keys())
+ordered_scenarios = [s for s in FEATURED_PLAYBOOKS if s in scenarios]
+ordered_scenarios.extend([s for s in scenarios if s not in ordered_scenarios])
+
+if scenario_default not in ordered_scenarios:
+    scenario_default = ordered_scenarios[0]
+
+if scenario_default not in FEATURED_PLAYBOOKS:
+    scenario_default = next((s for s in ordered_scenarios if s in FEATURED_PLAYBOOKS), ordered_scenarios[0])
 col_sel, col_help = st.columns([1.5, 1.0])
 with col_sel:
     st.caption("Seleccioná un playbook destacado o cambiá a otro escenario de misión.")
@@ -144,6 +153,15 @@ pb = PLAYBOOKS.get(scenario)
 
 with col_help:
     if pb:
+        st.markdown(
+            """
+<div class="block">
+<b>Playbooks ganadores:</b> Residence Renovations simplifica remodelaciones internas con protocolos de ahorro de agua y crew;
+Daring Discoveries desbloquea iteraciones científicas rápidas manteniendo consumo energético bajo control.
+</div>
+""",
+            unsafe_allow_html=True,
+        )
         highlights = "".join(
             f"<li><strong>{step.title}</strong>: {step.detail}</li>"
             for step in pb.steps[:3]

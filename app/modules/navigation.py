@@ -236,6 +236,7 @@ def render_mission_hud() -> None:
         )
 
     target_state = st.session_state.get("target", {})
+    has_target = bool(target_state)
 
     def _format_limit(value: object) -> str:
         if isinstance(value, (int, float)):
@@ -284,6 +285,13 @@ def render_mission_hud() -> None:
         uncertainty=metadata["uncertainty"],
     )
 
+    settings_cta = ""
+    if has_target:
+        settings_cta = (
+            f"<a class=\"mission-hud__settings\" href=\"{_page_url('2_Target_Designer')}\" "
+            "title=\"Editar target\">🎯 Editar target</a>"
+        )
+
     st.markdown(
         f"""
         <div class="mission-hud mission-hud--compact">
@@ -305,7 +313,7 @@ def render_mission_hud() -> None:
                   {details_rows}
                 </div>
               </details>
-              <a class="mission-hud__settings" href="{_page_url('Design_Lab')}">⚙️ Ajustes</a>
+              {settings_cta}
             </div>
           </div>
         </div>
