@@ -98,7 +98,7 @@ los documentos de NASA y UCF:
 `app/modules/model_training.py` construye combinaciones realistas mezclando esos
 datasets con el catálogo de procesos y genera:
 
-- Dataset procesado en `datasets/processed/rexai_training_dataset.parquet`.
+- Dataset procesado en `data/processed/rexai_training_dataset.parquet`.
 - Pipeline RandomForest multi-salida (`data/models/rexai_regressor.joblib`) con
   estimación de incertidumbre (desvío entre árboles + residuales de validación).
 - Ensemble de modelos de "wow effect":
