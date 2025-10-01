@@ -109,6 +109,11 @@ generator_error_key = "generator_button_error"
 button_state = st.session_state.get(generator_state_key, "idle")
 button_error = st.session_state.get(generator_error_key)
 
+if "candidates" not in st.session_state:
+    st.session_state["candidates"] = []
+if "optimizer_history" not in st.session_state:
+    st.session_state["optimizer_history"] = pd.DataFrame()
+
 # ----------------------------- Panel de control + IA -----------------------------
 with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None) as grid:
     with layout_stack(parent=grid) as left_column:
@@ -174,6 +179,7 @@ with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None
                     },
                 )
 
+            result: object | None = None
             if run and button_state != "loading":
                 st.session_state[generator_state_key] = "loading"
                 st.session_state[generator_trigger_key] = True
@@ -280,26 +286,63 @@ if st.session_state.get("generator_button_trigger"):
             use_ml=use_ml,
             seed=seed_value,
         )
-        if isinstance(result, tuple):
-            cands, history = result
-        else:
-            cands, history = result, pd.DataFrame()
-        if isinstance(cands, pd.DataFrame):
-            cands = cands.to_dict("records")
-        elif isinstance(cands, dict):
-            cands = [cands]
-        else:
-            cands = [dict(c) for c in cands]
-        history_df = history if isinstance(history, pd.DataFrame) else pd.DataFrame()
-        st.session_state["candidates"] = cands
-        st.session_state["optimizer_history"] = history_df
-        st.session_state["generator_button_state"] = "success"
-        st.session_state["generator_button_trigger"] = False
-        st.session_state.pop("generator_button_error", None)
     except Exception as exc:  # noqa: BLE001
         st.session_state["generator_button_state"] = "error"
         st.session_state["generator_button_error"] = f"Error generando candidatos: {exc}"
         st.session_state["generator_button_trigger"] = False
+    else:
+        candidates_raw: object | None = None
+        history_raw: object | None = None
+        if isinstance(result, tuple):
+            if len(result) >= 2:
+                candidates_raw, history_raw = result[0], result[1]
+            elif len(result) == 1:
+                candidates_raw = result[0]
+        elif isinstance(result, list):
+            candidates_raw = result
+        elif result is not None:
+            candidates_raw = result
+
+        if candidates_raw is None:
+            processed_candidates: list[dict[str, object]] = []
+        elif isinstance(candidates_raw, pd.DataFrame):
+            processed_candidates = candidates_raw.to_dict("records")
+        elif isinstance(candidates_raw, dict):
+            processed_candidates = [candidates_raw]
+        elif isinstance(candidates_raw, list):
+            processed_candidates = []
+            for cand in candidates_raw:
+                if isinstance(cand, dict):
+                    processed_candidates.append(cand)
+                else:
+                    try:
+                        processed_candidates.append(dict(cand))
+                    except (TypeError, ValueError):
+                        try:
+                            processed_candidates.append(vars(cand))
+                        except TypeError:
+                            processed_candidates.append({})
+        else:
+            try:
+                processed_candidates = [dict(candidates_raw)]
+            except (TypeError, ValueError):
+                try:
+                    processed_candidates = list(candidates_raw)
+                except TypeError:
+                    processed_candidates = [candidates_raw]
+
+        if isinstance(history_raw, pd.DataFrame):
+            history_df = history_raw
+        elif history_raw is None:
+            history_df = pd.DataFrame()
+        else:
+            history_df = pd.DataFrame(history_raw)
+
+        st.session_state["candidates"] = processed_candidates
+        st.session_state["optimizer_history"] = history_df
+        st.session_state["generator_button_state"] = "success"
+        st.session_state["generator_button_trigger"] = False
+        st.session_state.pop("generator_button_error", None)
 
 # ----------------------------- Si no hay candidatos aún -----------------------------
 st.divider()
