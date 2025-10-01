@@ -5,9 +5,11 @@ import copy
 import json
 from functools import lru_cache
 from pathlib import Path
+
 import pandas as pd
 import polars as pl
 
+from .generator import prepare_waste_frame
 from .paths import DATA_ROOT
 
 DATA_DIR = DATA_ROOT
@@ -42,63 +44,75 @@ def _load_waste_df_cached() -> pd.DataFrame:
     """
     _ensure_exists()
 
-    flags_str = pl.col("flags").cast(pl.Utf8, strict=False).fill_null("")
-    category_str = pl.col("category").cast(pl.Utf8, strict=False).fill_null("")
-    material_family_str = (
-        pl.col("material_family").cast(pl.Utf8, strict=False).fill_null("")
-    )
+    base_df = pd.read_csv(WASTE_CSV)
+    source_snapshot = base_df.copy(deep=True)
 
-    category_lower = category_str.str.to_lowercase()
-    flags_lower = flags_str.str.to_lowercase()
-
-    problem_exprs = [
-        category_lower.str.contains("pouches"),
-        category_lower.str.contains("foam"),
-        category_lower.str.contains("eva"),
-        category_lower.str.contains("glove"),
-        category_lower.str.contains("aluminum"),
+    string_columns = [
+        "id",
+        "category",
+        "material",
+        "material_family",
+        "flags",
+        "key_materials",
+        "notes",
     ]
-    problem_exprs.extend(
-        flags_lower.str.contains(tag) for tag in PROBLEM_TAGS.keys()
-    )
+    for column in string_columns:
+        if column in base_df.columns:
+            base_df[column] = base_df[column].fillna("").astype(str)
 
-    problematic_expr = pl.any_horizontal(*problem_exprs)
+    numeric_columns = [
+        "mass_kg",
+        "volume_l",
+        "moisture_pct",
+        "pct_mass",
+        "pct_volume",
+        "difficulty_factor",
+    ]
+    for column in numeric_columns:
+        if column in base_df.columns:
+            base_df[column] = pd.to_numeric(base_df[column], errors="coerce").fillna(0.0)
 
-    lf = pl.scan_csv(WASTE_CSV)
-    result = (
-        lf.with_columns(
-            [
-                pl.concat_str(
-                    [category_str, pl.lit(" — "), material_family_str],
-                    separator="",
-                ).alias("material"),
-                pl.col("mass_kg").cast(pl.Float64, strict=False).alias("kg"),
-                flags_str.alias("notes"),
-                problematic_expr.alias("_problematic"),
-                pl.col("id").alias("_source_id"),
-                pl.col("category").alias("_source_category"),
-                pl.col("material_family").alias("_source_material_family"),
-                pl.col("volume_l").alias("_source_volume_l"),
-                pl.col("flags").alias("_source_flags"),
-            ]
+    if "mass_kg" in base_df.columns:
+        base_df["kg"] = base_df["mass_kg"].fillna(0.0)
+    else:
+        base_df["kg"] = 0.0
+
+    if "volume_l" in base_df.columns:
+        base_df["volume_l"] = base_df["volume_l"].fillna(0.0)
+
+    category_display = base_df.get("category", "").astype(str).str.strip()
+    family_display = base_df.get("material_family", "").astype(str).str.strip()
+    material_display = category_display.where(family_display.eq(""), category_display + " — " + family_display)
+    base_df["material_display"] = material_display.replace({" — ": ""})
+
+    prepared = prepare_waste_frame(base_df)
+    result = prepared.copy(deep=True)
+
+    for column, values in source_snapshot.items():
+        source_column = f"_source_{column}"
+        if source_column in result.columns:
+            continue
+        if values.dtype == object:
+            result[source_column] = values.fillna("").astype(str)
+        else:
+            result[source_column] = values
+
+    if "_problematic" not in result.columns:
+        flags_lower = result.get("flags", "").astype(str).str.lower()
+        category_lower = result.get("category", "").astype(str).str.lower()
+        material_lower = result.get("material", "").astype(str).str.lower()
+        problem_mask = (
+            category_lower.str.contains("pouches")
+            | category_lower.str.contains("foam")
+            | category_lower.str.contains("eva")
+            | category_lower.str.contains("glove")
+            | material_lower.str.contains("aluminum")
         )
-        .select(
-            [
-                "material",
-                "kg",
-                "notes",
-                "_source_id",
-                "_source_category",
-                "_source_material_family",
-                "_source_volume_l",
-                "_source_flags",
-                "_problematic",
-            ]
-        )
-        .collect()
-    )
+        for tag in PROBLEM_TAGS.keys():
+            problem_mask = problem_mask | flags_lower.str.contains(tag)
+        result["_problematic"] = problem_mask
 
-    return result.to_pandas(use_pyarrow_extension_array=False)
+    return result
 
 
 def load_waste_df() -> pd.DataFrame:
