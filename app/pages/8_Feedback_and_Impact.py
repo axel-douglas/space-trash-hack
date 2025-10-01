@@ -9,11 +9,11 @@ st.set_page_config(page_title="Feedback & Impact", page_icon="📝", layout="wid
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.ui_blocks import load_theme
 
-set_active_step("feedback")
+current_step = set_active_step("feedback")
 
 load_theme()
 
-render_breadcrumbs("feedback")
+render_breadcrumbs(current_step)
 
 import pandas as pd
 from datetime import datetime

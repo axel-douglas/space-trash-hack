@@ -31,7 +31,7 @@ def _trigger_rerun() -> None:
 # ⚠️ Debe ser la PRIMERA llamada de Streamlit en la página
 st.set_page_config(page_title="Inventario", page_icon="🧱", layout="wide")
 
-set_active_step("inventory")
+_current_step = set_active_step("inventory")
 
 load_theme()
 

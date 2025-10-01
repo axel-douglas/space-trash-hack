@@ -29,7 +29,7 @@ st.set_page_config(
     layout="wide",
 )
 
-set_active_step("brief")
+_current_step = set_active_step("brief")
 
 load_theme()
 model_registry = get_model_registry()

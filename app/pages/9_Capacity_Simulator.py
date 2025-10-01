@@ -9,11 +9,11 @@ st.set_page_config(page_title="Capacity Simulator", page_icon="🧮", layout="wi
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.ui_blocks import load_theme
 
-set_active_step("capacity")
+current_step = set_active_step("capacity")
 
 load_theme()
 
-render_breadcrumbs("capacity")
+render_breadcrumbs(current_step)
 
 import math
 import numpy as np

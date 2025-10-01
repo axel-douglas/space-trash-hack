@@ -24,11 +24,11 @@ from app.modules.io import load_waste_df
 # ⚠️ PRIMERA llamada
 st.set_page_config(page_title="Pareto & Export", page_icon="📤", layout="wide")
 
-set_active_step("export")
+current_step = set_active_step("export")
 
 load_theme()
 
-render_breadcrumbs("export")
+render_breadcrumbs(current_step)
 
 # Columnas externas (polímeros / aluminio)
 POLYMER_NUMERIC_COLUMNS = (

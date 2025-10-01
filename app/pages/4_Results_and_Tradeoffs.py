@@ -33,11 +33,11 @@ from app.modules.schema import (
 
 st.set_page_config(page_title="Rex-AI • Resultados", page_icon="📊", layout="wide")
 
-set_active_step("results")
+current_step = set_active_step("results")
 
 load_theme()
 
-render_breadcrumbs("results")
+render_breadcrumbs(current_step)
 
 selected = st.session_state.get("selected")
 target = st.session_state.get("target")

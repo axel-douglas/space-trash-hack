@@ -175,11 +175,11 @@ def _format_reference_value(key: str, value: float) -> str:
 
 # ⚠️ Debe ser la PRIMERA llamada de Streamlit en la página
 st.set_page_config(page_title="Comparar & Explicar", page_icon="🧪", layout="wide")
-set_active_step("compare")
+current_step = set_active_step("compare")
 
 load_theme()
 
-render_breadcrumbs("compare")
+render_breadcrumbs(current_step)
 # ======== estado requerido ========
 cands  = st.session_state.get("candidates", [])
 target = st.session_state.get("target", None)
