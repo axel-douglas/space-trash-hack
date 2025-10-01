@@ -72,7 +72,7 @@ def _format_label_summary(summary: dict[str, dict[str, float]] | None) -> str:
     return " · ".join(parts)
 
 # ----------------------------- Encabezado -----------------------------
-st.header("Generador asistido por IA")
+st.header("Generador IA")
 badge_group(
     (
         "RandomForest + XGBoost (alternativo)",
@@ -113,7 +113,7 @@ button_error = st.session_state.get(generator_error_key)
 with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None) as grid:
     with layout_stack(parent=grid) as left_column:
         with layout_block("side-panel layer-shadow fade-in", parent=left_column) as control:
-            control.markdown("### 🎛️ Configuración")
+            control.markdown("### 🎛️ Configurar lote")
             stored_mode = st.session_state.get("prediction_mode", "Modo Rex-AI (ML)")
             mode = control.radio(
                 "Motor de predicción",
@@ -124,7 +124,7 @@ with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None
             st.session_state["prediction_mode"] = mode
             use_ml = mode == "Modo Rex-AI (ML)"
 
-            control.markdown("#### Parámetros principales")
+            control.markdown("#### Ajustar parámetros")
             col_iters, col_recipes = control.columns(2)
             opt_evals = col_iters.slider(
                 "Iteraciones (Ax/BoTorch)",
@@ -152,7 +152,7 @@ with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None
 
             crew_low = target.get("crew_time_low", False)
             control.caption(
-                "Los resultados privilegian %s"
+                "Los resultados priorizan %s"
                 % ("tiempo de tripulación" if crew_low else "un balance general")
             )
 
@@ -184,7 +184,7 @@ with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None
             if button_error and button_state_now == "error":
                 control.error(button_error)
             elif button_state_now == "success":
-                control.caption("✅ Última corrida lista abajo. Volvé a ejecutar si cambias parámetros.")
+                control.caption("✅ Última corrida disponible abajo. Volvé a ejecutar si cambiás parámetros.")
             if not use_ml:
                 control.info("Modo heurístico activo: las métricas se basan en reglas físicas y no en ML.")
 
@@ -204,7 +204,7 @@ with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None
                     control.dataframe(preview_df, hide_index=True, use_container_width=True)
     with layout_stack(parent=grid) as right_column:
         with layout_block("side-panel layer-shadow fade-in", parent=right_column) as target_card:
-            target_card.markdown("### 🎯 Objetivo activo")
+            target_card.markdown("### 🎯 Objetivo")
             target_card.markdown(f"**{target.get('name', '—')}**")
             scenario_label = target.get("scenario") or "Escenario general"
             target_card.caption(f"Escenario: {scenario_label}")
@@ -230,7 +230,7 @@ with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None
                 target_card.dataframe(summary_df, hide_index=True, use_container_width=True)
 
         with layout_block("depth-stack layer-shadow fade-in-delayed", parent=right_column) as ai_panel:
-            ai_panel.markdown("### 🧠 Modelo Rex-AI")
+            ai_panel.markdown("### 🧠 Modelo IA")
             model_registry = get_model_registry()
             trained_at = model_registry.metadata.get("trained_at", "—")
             n_samples = model_registry.metadata.get("n_samples", "—")
@@ -309,16 +309,16 @@ history_df = st.session_state.get("optimizer_history", pd.DataFrame())
 if not cands:
     st.info(
         "Todavía no hay candidatos. Configurá los controles y presioná **Generar lote**. "
-        "Asegurate de que el inventario tenga pouches, espumas, EVA/CTB, textiles o nitrilo; "
-        "y que el catálogo incluya P02/P03/P04."
+        "Verificá que el inventario incluya pouches, espumas, EVA/CTB, textiles o nitrilo y "
+        "que el catálogo contenga P02, P03 o P04."
     )
-    with st.expander("¿Qué hace el generador (en criollo)?", expanded=False):
+    with st.expander("¿Cómo funciona el generador?", expanded=False):
         st.markdown(
-            "- **Mira tus residuos** (enfocado en los problemáticos de NASA).\n"
-            "- **Elige un proceso** coherente (laminar, sinter con regolito, reconfigurar CTB, etc.).\n"
-            "- **Predice** propiedades y recursos de la receta.\n"
+            "- **Revisa residuos** con foco en los problemáticos de NASA.\n"
+            "- **Elige un proceso** consistente (laminar, sinter con regolito, reconfigurar CTB).\n"
+            "- **Predice** propiedades y recursos de cada receta.\n"
             "- **Puntúa** balanceando objetivos y costos.\n"
-            "- **Muestra trazabilidad** para ver qué basura se valorizó."
+            "- **Muestra trazabilidad** para ver qué residuos se valorizaron."
         )
     st.stop()
 
@@ -327,8 +327,8 @@ if isinstance(history_df, pd.DataFrame) and not history_df.empty:
     scene = ConvergenceScene(
         history_df,
         subtitle=(
-            "Pistas visuales sobre cómo evoluciona el frente Pareto tras cada iteración "
-            "(pasá el cursor para leer hipervolumen, dominancia y scores)."
+            "Visualizá cómo evoluciona el frente Pareto tras cada iteración. Pasá el cursor "
+            "para ver hipervolumen, dominancia y scores."
         ),
     )
     scene.render(st)
@@ -356,8 +356,8 @@ for idx, cand in enumerate(cands, start=1):
     )
 
 if summary_rows:
-    st.subheader("Ranking multiobjetivo")
-    st.caption("Ordenado por score total, con sellado y riesgo resumidos.")
+    st.subheader("Ranking de candidatos")
+    st.caption("Ordenado por score total con sellado y riesgo resumidos.")
     cockpit = RankingCockpit(
         entries=summary_rows,
         metric_specs=[
@@ -378,8 +378,8 @@ if summary_rows:
 # ----------------------------- Showroom de candidatos -----------------------------
 st.subheader("Resultados del generador")
 st.caption(
-    "Explorá cada receta como card 3D con tabs de propiedades, recursos y trazabilidad. "
-    "Ajustá el timeline lateral para priorizar rigidez o agua y filtrar rápidamente."
+    "Explorá cada receta con tabs de propiedades, recursos y trazabilidad. "
+    "Ajustá el timeline lateral para priorizar rigidez o agua y filtrar rápido."
 )
 
 filtered_cands = render_candidate_showroom(cands, target)
@@ -575,25 +575,25 @@ for i, c in enumerate(cands):
             st.session_state["selected"] = {"data": c, "safety": badge}
             st.success("Opción seleccionada. Abrí **4) Resultados**, **5) Comparar & Explicar** o **6) Pareto & Export**.")
 
-# ----------------------------- Explicación en criollo (popover global) -----------------------------
+# ----------------------------- Explicación rápida (popover global) -----------------------------
 top = filtered_cands[0] if filtered_cands else (cands[0] if cands else None)
-pop = st.popover("🧠 ¿Por qué estas recetas pintan bien? (explicación en criollo)")
+pop = st.popover("🧠 ¿Por qué destacamos estas recetas?")
 with pop:
     bullets = []
-    bullets.append("• Sumamos puntos si **rigidez/estanqueidad** se acercan a lo que pediste.")
-    bullets.append("• Restamos si se pasa en **agua/energía/tiempo** de la tripulación.")
+    bullets.append("• Sumamos puntos cuando **rigidez** y **estanqueidad** se acercan al objetivo.")
+    bullets.append("• Restamos si supera límites de **agua**, **energía** o **tiempo de crew**.")
     if top:
         cats = " ".join(map(str, top.get("source_categories", []))).lower()
         flg = " ".join(map(str, top.get("source_flags", []))).lower()
         if any(k in cats or k in flg for k in ["pouches", "multilayer", "foam", "eva", "ctb", "nitrile", "wipe"]):
-            bullets.append("• Bonus porque priorizamos **basura problemática** (la que más molesta en la base).")
+            bullets.append("• Priorizamos residuos problemáticos (pouches, EVA, multilayer, nitrilo, wipes).")
         if top.get("regolith_pct", 0) > 0:
-            bullets.append("• Usa **MGS-1** (regolito) como carga mineral → ISRU: menos dependencia de la Tierra.")
+            bullets.append("• Valoramos **MGS-1** como carga mineral para ISRU y menos dependencia de la Tierra.")
     st.markdown("\n".join(bullets))
 
 # ----------------------------- Glosario -----------------------------
 micro_divider()
-with st.expander("📚 Glosario ultra rápido", expanded=False):
+with st.expander("📚 Glosario rápido", expanded=False):
     st.markdown(
         "- **ISRU**: *In-Situ Resource Utilization*. Usar recursos del lugar (en Marte, el **regolito** MGS-1).\n"
         "- **P02 – Press & Heat Lamination**: “plancha” y “fusiona” multicapa para dar forma.\n"
@@ -601,4 +601,4 @@ with st.expander("📚 Glosario ultra rápido", expanded=False):
         "- **P04 – CTB Reconfig**: reusar/transformar bolsas EVA/CTB con herrajes.\n"
         "- **Score**: qué tanto ‘cierra’ la opción según objetivo y límites de recursos/tiempo."
     )
-st.info("Tip: generá varias opciones y pasá a **4) Resultados**, **5) Comparar** y **6) Pareto & Export** para cerrar tu plan.")
+st.info("Generá varias opciones y pasá a **4) Resultados**, **5) Comparar** y **6) Pareto & Export** para cerrar tu plan.")

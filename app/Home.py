@@ -90,63 +90,63 @@ mission_stages = [
         key="inventory",
         order=1,
         name="Inventario",
-        hero_headline="Calibrá el inventario",
-        hero_copy="Normalizá residuos, detectá flags EVA y estructuras multi-layer.",
+        hero_headline="Prepará el inventario",
+        hero_copy="Normalizá residuos y registrá flags EVA o multilayer.",
         card_body=(
-            "Normalizá residuos, marcá flags (multilayer, EVA, nitrilo) y trabajá sobre "
-            "<code>data/waste_inventory_sample.csv</code> o tu CSV limpio."
+            "Normalizá residuos en <code>data/waste_inventory_sample.csv</code> o en tu CSV y "
+            "registrá flags EVA, multilayer o nitrilo."
         ),
         compact_card_body=(
-            "Normalizá residuos y flags EVA/multilayer sobre <code>data/waste_inventory_sample.csv</code>."
+            "Normalizá residuos y flags EVA o multilayer en <code>data/waste_inventory_sample.csv</code>."
         ),
         icon="🧱",
         timeline_label="Inventario en vivo",
-        timeline_description="Ingerí CSV NASA, normalizá unidades y marca riesgos EVA desde la cabina.",
-        footer="Dataset NASA + crew flags",
+        timeline_description="Cargá CSV NASA, normalizá unidades y marcá riesgos EVA.",
+        footer="Dataset NASA y flags de crew",
     ),
     HeroFlowStage(
         key="target",
         order=2,
         name="Target",
-        hero_headline="Seleccioná objetivo",
-        hero_copy="Define límites de agua, energía y logística con presets marcianos.",
+        hero_headline="Definí el objetivo",
+        hero_copy="Configurá límites de agua, energía y crew-time con presets marcianos.",
         card_body=(
-            "Elegí producto final, límites de agua/energía y presets marcianos (container, utensil, tool, interior)."
+            "Elegí producto final, límites de agua y energía y presets marcianos (container, utensil, tool, interior)."
         ),
         compact_card_body="Elegí producto y límites con presets marcianos certificados.",
         icon="🎯",
         timeline_label="Target marciano",
-        timeline_description="Seleccioná producto final, límites de agua y energía, o usa presets homologados.",
-        footer="Presets o límites manuales",
+        timeline_description="Seleccioná producto, límites de agua y energía o usá presets homologados.",
+        footer="Presets y límites manuales",
     ),
     HeroFlowStage(
         key="generator",
         order=3,
         name="Generador",
-        hero_headline="Generá y valida",
-        hero_copy="Rex-AI mezcla, explica contribuciones y exporta procesos listos para la tripulación.",
+        hero_headline="Generá y validá",
+        hero_copy="Combiná residuos, compará IA vs heurística y verificá contribuciones.",
         card_body=(
-            "Rex-AI mezcla ítems, compara heurística vs modelo y explica cada contribución en vivo."
+            "Rex-AI mezcla ítems, contrasta heurística con modelo y detalla cada contribución en vivo."
         ),
-        compact_card_body="Mezclá ítems, compará heurística vs IA y revisá contribuciones al instante.",
+        compact_card_body="Mezclá ítems, compará IA vs heurística y revisá contribuciones al instante.",
         icon="🤖",
         timeline_label="Generador IA",
-        timeline_description="Explorá mezclas óptimas, revisá contribuciones y bandas de confianza en segundos.",
-        footer="ML + heurística cooperativa",
+        timeline_description="Explorá mezclas, revisá contribuciones y bandas de confianza en segundos.",
+        footer="ML y heurística cooperativa",
     ),
     HeroFlowStage(
         key="results",
         order=4,
         name="Resultados",
         hero_headline="Reportá y exportá",
-        hero_copy="Trade-offs, confianza 95% y comparativa heurística listos para ingeniería.",
+        hero_copy="Compartí trade-offs, confianza 95% y comparativas para ingeniería.",
         card_body=(
-            "Trade-offs, bandas 95%, comparación heurística vs IA y export Sankey/feedback listos para ingeniería."
+            "Trade-offs, bandas 95%, comparación heurística vs IA y export de Sankey o feedback listos para ingeniería."
         ),
-        compact_card_body="Revisá trade-offs, bandas 95% y export Sankey/feedback final.",
+        compact_card_body="Revisá trade-offs, bandas 95% y exportá Sankey o feedback final.",
         icon="📊",
         timeline_label="Resultados y export",
-        timeline_description="Compará heurísticas vs IA, exportá recetas y registra feedback para retraining.",
+        timeline_description="Compará heurística e IA, exportá recetas y registrá feedback para retraining.",
         footer="Listo para experimentos",
     ),
 ]
@@ -198,11 +198,11 @@ mission_metrics = [
 hero_col, metrics_col = st.columns([2.8, 1.2], gap="large")
 with hero_col:
     TeslaHero(
-        title="Rex-AI orquesta el reciclaje orbital y marciano",
+        title="Rex-AI coordina el reciclaje orbital y marciano",
         subtitle=(
-            "Un loop autónomo que mezcla regolito MGS-1, polímeros EVA y residuos de carga "
-            "para fabricar piezas listas para misión. El copiloto gestiona riesgos, "
-            "energía y trazabilidad sin perder contexto."
+            "Automatiza mezclas con regolito MGS-1, polímeros EVA y residuos de carga "
+            "para producir piezas listas para misión. Gestiona riesgos, energía y trazabilidad "
+            "en una sola vista."
         ),
         chips=[
             {"label": "RandomForest multisalida", "tone": "accent"},
@@ -243,14 +243,14 @@ mission_board_payload = [
     {
         "key": "target",
         "title": "Target",
-        "description": "Define objetivo, límites de agua/energía y presets marcianos.",
+        "description": "Definí objetivo, límites de agua y energía y presets marcianos.",
         "href": "./?page=2_Target_Designer",
         "icon": "🎯",
     },
     {
         "key": "generator",
         "title": "Generador",
-        "description": "Compara recetas IA vs heurística y valida contribuciones.",
+        "description": "Compará recetas IA y heurística y validá contribuciones.",
         "href": "./?page=3_Generator",
         "icon": "🤖",
     },
@@ -304,7 +304,7 @@ st.markdown(
         <span class="home-section__icon">🧪</span>
         <h2>Laboratorio profundo</h2>
       </div>
-      <p class="home-section__lead">Radiografiamos el inventario NASA, destacamos masas críticas y exponemos hipótesis de proceso en paneles compactos.</p>
+      <p class="home-section__lead">Analizamos el inventario NASA, destacamos masas críticas y mostramos hipótesis de proceso en paneles compactos.</p>
     </section>
     """,
     unsafe_allow_html=True,
@@ -396,7 +396,7 @@ if info_cards:
         unsafe_allow_html=True,
     )
 # ──────────── Ruta guiada ────────────
-st.markdown("### Ruta de misión (guided flow)")
+st.markdown("### Ruta de misión")
 
 demo_steps = timeline_milestones
 active_demo_step = guided_demo(steps=demo_steps, step_duration=6.5)
@@ -426,5 +426,5 @@ MetricGalaxy(
 
 st.info(
     "Usá el **Mission HUD** superior para saltar entre pasos o presioná las teclas `1-9` "
-    "para navegar más rápido por el flujo guiado."
+    "para navegar rápido por el flujo guiado."
 )
