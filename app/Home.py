@@ -314,8 +314,14 @@ mission_stages = [
 
 hero_chips = [
     {"label": "Hook: 8 astronautas → 12.6 t", "tone": "warning"},
-    {"label": "Playbook • Residence Renovations", "tone": "accent"},
-    {"label": "Playbook • Daring Discoveries", "tone": "accent"},
+    {
+        "label": "Playbook • Residence Renovations (volumen alto)",
+        "tone": "accent",
+    },
+    {
+        "label": "Playbook • Daring Discoveries (reuso de carbono)",
+        "tone": "accent",
+    },
     {"label": "RandomForest multisalida", "tone": "info"},
 ]
 
