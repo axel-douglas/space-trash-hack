@@ -14,6 +14,7 @@ DOCS_DIR = REPO_ROOT / "docs"
 
 TOKEN_SOURCE = STATIC_DIR / "design_tokens.scss"
 CSS_OUTPUT = STATIC_DIR / "theme.css"
+MIN_CSS_OUTPUT = STATIC_DIR / "theme.min.css"
 DOC_OUTPUT = DOCS_DIR / "design-system.md"
 
 TOKEN_SECTION_METADATA: Dict[str, Tuple[str, str]] = {
@@ -46,6 +47,8 @@ def compile_theme() -> str:
     sass = _load_sass()
     css = sass.compile(filename=str(TOKEN_SOURCE), output_style="expanded")
     CSS_OUTPUT.write_text(css, encoding="utf-8")
+    minified = sass.compile(filename=str(TOKEN_SOURCE), output_style="compressed")
+    MIN_CSS_OUTPUT.write_text(minified, encoding="utf-8")
     return css
 
 
@@ -92,6 +95,12 @@ def write_docs(css: str) -> None:
         "Este documento se genera desde `scripts/build_theme.py` y describe los tokens disponibles",
         "tras compilar `app/static/design_tokens.scss`. Actualiza el SCSS y vuelve a ejecutar el",
         "script para refrescar las tablas.",
+        "",
+        "## Decisiones de tema",
+        "",
+        "- `mars-minimal` se convierte en el preset predeterminado con altos contrastes y superficies planas para reducir coste de render.",
+        "- Conservamos `dark` y `dark-high-contrast` como variantes de compatibilidad para usuarios que ya dependen de esos valores.",
+        "- El bundle servido por defecto es `theme.min.css`; `theme.css` queda para depuración y la generación de esta documentación.",
         "",
         "## Tokens",
     ]

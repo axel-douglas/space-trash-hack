@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from typing import Dict, Tuple
 
-CSS_PATH = Path(__file__).resolve().parents[1] / "app" / "static" / "design_tokens.css"
+CSS_PATH = Path(__file__).resolve().parents[1] / "app" / "static" / "theme.min.css"
 
 THEME_KEYS = {
     "bg",

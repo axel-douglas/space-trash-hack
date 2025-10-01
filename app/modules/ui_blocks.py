@@ -28,11 +28,9 @@ _REVEAL_FLAG_KEY = "__rexai_reveal_flag__"
 _HUD_PLACEHOLDER: Optional[DeltaGenerator] = None
 
 _THEME_LABELS = {
-    "dark": "Oscuro",
+    "mars-minimal": "Marte minimal",
+    "dark": "Oscuro (fallback)",
     "dark-high-contrast": "Oscuro · Alto contraste",
-    "light": "Claro",
-    "light-high-contrast": "Claro · Alto contraste",
-    "solarized": "Solarized",
 }
 
 _FONT_LABELS = {
@@ -63,11 +61,7 @@ def _static_path(filename: str) -> Path:
 
 
 def _theme_path() -> Path:
-    return _static_path("theme.css")
-
-
-def _tokens_path() -> Path:
-    return _static_path("design_tokens.css")
+    return _static_path("theme.min.css")
 
 
 def _layout_path() -> Path:
@@ -79,14 +73,20 @@ def _home_path() -> Path:
 
 
 def _ensure_defaults() -> None:
-    st.session_state.setdefault(_THEME_STATE_KEY, "dark")
+    st.session_state.setdefault(_THEME_STATE_KEY, "mars-minimal")
     st.session_state.setdefault(_FONT_STATE_KEY, "base")
     st.session_state.setdefault(_COLORBLIND_STATE_KEY, "normal")
+
+    current = st.session_state.get(_THEME_STATE_KEY)
+    if current not in _THEME_LABELS:
+        name = str(current)
+        fallback = "dark-high-contrast" if "high-contrast" in name else "dark"
+        st.session_state[_THEME_STATE_KEY] = fallback
 
 
 def _read_css_bundle() -> str:
     css_parts: list[str] = []
-    for path in (_tokens_path(), _theme_path(), _layout_path(), _home_path()):
+    for path in (_theme_path(), _layout_path(), _home_path()):
         try:
             css_parts.append(path.read_text(encoding="utf-8"))
         except FileNotFoundError:
