@@ -11,6 +11,8 @@ from uuid import uuid4
 import streamlit as st
 from streamlit.components.v1 import html as components_html
 from streamlit.delta_generator import DeltaGenerator
+from streamlit.runtime.scriptrunner.script_runner import get_script_run_ctx
+from streamlit.runtime.state.safe_session_state import SafeSessionState
 
 from app import _bootstrap
 
@@ -23,6 +25,7 @@ _THEME_STATE_KEY = "hud_theme"
 _FONT_STATE_KEY = "hud_font"
 _COLORBLIND_STATE_KEY = "hud_colorblind"
 _REVEAL_FLAG_KEY = "__rexai_reveal_flag__"
+_HUD_PLACEHOLDER: Optional[DeltaGenerator] = None
 
 _THEME_LABELS = {
     "dark": "Oscuro",
@@ -42,6 +45,17 @@ _COLORBLIND_LABELS = {
     "normal": "Sin ajustes",
     "safe": "Daltonismo (paleta segura)",
 }
+
+
+if not hasattr(SafeSessionState, "get"):
+
+    def _safe_state_get(self: SafeSessionState, key: str, default: Any = None) -> Any:
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+    SafeSessionState.get = _safe_state_get  # type: ignore[attr-defined]
 
 
 def _static_path(filename: str) -> Path:
@@ -313,7 +327,18 @@ def _apply_runtime_theme() -> None:
 
 
 def _render_hud() -> None:
-    hud_container = st.container()
+    ctx = get_script_run_ctx()
+    if ctx and {
+        _THEME_STATE_KEY,
+        _FONT_STATE_KEY,
+        _COLORBLIND_STATE_KEY,
+    }.intersection(ctx.widget_user_keys_this_run):
+        return
+
+    global _HUD_PLACEHOLDER
+    if _HUD_PLACEHOLDER is None:
+        _HUD_PLACEHOLDER = st.empty()
+    hud_container = _HUD_PLACEHOLDER.container()
     with hud_container:
         st.markdown('<div class="rexai-hud">', unsafe_allow_html=True)
         st.markdown('<div class="rexai-hud__title">HUD · Accesibilidad</div>', unsafe_allow_html=True)

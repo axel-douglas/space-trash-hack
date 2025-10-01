@@ -61,37 +61,32 @@ def _load_regolith_context():
         "thermal": load_regolith_thermal_profiles(),
     }
 
-st.markdown(
-    f"""
-    <section class="hero-res layer-glow fade-in">
-      <h1>📊 Resultado seleccionado · Score {score:.3f}</h1>
-      <p>Proceso <strong>{cand['process_id']} · {cand['process_name']}</strong>. La IA Rex-AI proporciona predicciones con trazabilidad NASA, bandas de confianza y comparación contra heurísticas originales.</p>
-    </section>
-    """,
-    unsafe_allow_html=True,
-)
+header_chips = [
+    {"label": f"Score {score:.3f}", "tone": "accent"},
+    {"label": f"Target: {target.get('name', '—')}", "tone": "info"},
+]
+if target.get("crew_time_low"):
+    header_chips.append({"label": "Crew-time low", "tone": "caution"})
+if ci:
+    header_chips.append({"label": "CI 95% activo", "tone": "success"})
 
-cards = []
-TeslaHero(
-    title=f"Resultado seleccionado · Score {score:.3f}",
-    subtitle=(
-        f"Proceso {cand['process_id']} · {cand['process_name']}. "
-        "La IA Rex-AI proporciona predicciones con trazabilidad NASA, bandas de confianza y comparación contra heurísticas originales."
-    ),
-    chips=[
-        {"label": f"Target: {target.get('name', '—')}", "tone": "accent"},
-        {"label": f"Crew priority: {'baja' if target.get('crew_time_low') else 'balance'}", "tone": "info"},
-    ],
-    icon="📊",
-    gradient="linear-gradient(135deg, rgba(20,184,166,0.22), rgba(14,165,233,0.08))",
-    glow="rgba(45,212,191,0.42)",
-    density="cozy",
-    parallax_icons=[
-        {"icon": "🧪", "top": "18%", "left": "78%", "size": "3.6rem", "speed": "21s"},
-        {"icon": "🛰️", "top": "60%", "left": "84%", "size": "4.2rem", "speed": "27s"},
-    ],
-    variant="minimal",
-).render()
+if header_chips:
+    TeslaHero(
+        title=f"📊 {cand['process_id']} · {cand['process_name']}",
+        subtitle=(
+            "Predicciones Rex-AI con trazabilidad NASA y contraste frente a la heurística de referencia."
+        ),
+        chips=header_chips,
+        icon="📊",
+        gradient="linear-gradient(135deg, rgba(20,184,166,0.22), rgba(14,165,233,0.08))",
+        glow="rgba(45,212,191,0.32)",
+        density="cozy",
+        variant="minimal",
+    ).render()
+else:
+    st.markdown(
+        f"## 📊 {cand['process_id']} · {cand['process_name']} — Score {score:.3f}"
+    )
 
 icon_map = {
     "Rigidez": "🧱",
@@ -100,7 +95,14 @@ icon_map = {
     "Agua (L)": "🚰",
     "Crew (min)": "🧑‍🚀",
 }
-metric_items: list[MetricItem] = []
+metric_items: list[MetricItem] = [
+    MetricItem(
+        label="Score total",
+        value=f"{score:.3f}",
+        caption="Función · Recursos · Seguridad",
+        icon="📊",
+    )
+]
 labels = [
     ("Rigidez", props.rigidity, heur.rigidity, ci.get("rigidez")),
     ("Estanqueidad", props.tightness, heur.tightness, ci.get("estanqueidad")),
@@ -109,21 +111,8 @@ labels = [
     ("Crew (min)", props.crew_min, heur.crew_min, ci.get("crew_min")),
 ]
 for label, val_ml, val_h, interval in labels:
-    ci_html = ""
-    if interval:
-        ci_html = f"<div class='delta'>CI 95%: [{interval[0]:.3f}, {interval[1]:.3f}]</div>"
-
-    cards.append(
-        f"<div class='stat-card layer-shadow'>"
-        f"<span>{label}</span>"
-        f"<strong>{val_ml:.3f}</strong>"
-        f"<div class='delta'>Heurística: {val_h:.3f} · Δ {val_ml - val_h:+.3f}</div>"
-        f"{ci_html}"
-        "</div>"
-    )
-
     delta_value = val_ml - val_h
-    caption_bits = [f"Heurística: {val_h:.3f}"]
+    caption_bits = [f"Heurística {val_h:.3f}"]
     if interval:
         try:
             caption_bits.append(f"CI 95% [{interval[0]:.3f}, {interval[1]:.3f}]")
@@ -139,9 +128,6 @@ for label, val_ml, val_h, interval in labels:
             icon=icon_map.get(label),
         )
     )
-
-metrics_html = "<div class='metric-grid fade-in'>" + "".join(cards) + "</div>"
-st.markdown(metrics_html, unsafe_allow_html=True)
 
 MetricGalaxy(metrics=metric_items, density="compact").render()
 if uncertainty:
@@ -174,17 +160,7 @@ with st.container():
         st.caption("Modelos secundarios (XGBoost / TabTransformer):")
         st.dataframe(pd.DataFrame(comparisons).T.style.format("{:.3f}"), use_container_width=True)
 
-st.markdown("### 🎯 Score anatomy")
-parts = score_breakdown(props, target, crew_time_low=target.get("crew_time_low", False))
-chart_parts = alt.Chart(parts).mark_bar(color="#60a5fa").encode(
-    x=alt.X("component", sort=None, title="Componente"),
-    y=alt.Y("contribution", title="Aporte"),
-    tooltip=["component", alt.Tooltip("contribution", format=".3f")],
-).properties(height=280)
-st.altair_chart(chart_parts, use_container_width=True)
-
-with st.container():
-    st.markdown("### 🛰️ Contexto y trazabilidad")
+with st.expander("🛰️ Contexto y trazabilidad", expanded=True):
     context_data = _load_regolith_context()
     chips_html = ChipRow(
         [
@@ -370,72 +346,58 @@ with st.container():
             "Aunque tu candidato no usa regolito, estas curvas sirven como referencia ISRU para futuras iteraciones."
         )
 
-st.markdown("### 📥 Export quick facts")
-with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None) as export_grid:
-    with layout_block("depth-stack layer-shadow", parent=export_grid) as export_panel:
-        export_panel.json(
-            {
-                "process": {"id": cand["process_id"], "name": cand["process_name"]},
-                "materials": cand["materials"],
-                "weights": cand.get("weights", []),
-                "predictions": {
-                    "rigidez": props.rigidity,
-                    "estanqueidad": props.tightness,
-                    "energy_kwh": props.energy_kwh,
-                    "water_l": props.water_l,
-                    "crew_min": props.crew_min,
+with st.expander("📥 Export quick facts"):
+    with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None) as export_grid:
+        with layout_block("depth-stack layer-shadow", parent=export_grid) as export_panel:
+            export_panel.json(
+                {
+                    "process": {"id": cand["process_id"], "name": cand["process_name"]},
+                    "materials": cand["materials"],
+                    "weights": cand.get("weights", []),
+                    "predictions": {
+                        "rigidez": props.rigidity,
+                        "estanqueidad": props.tightness,
+                        "energy_kwh": props.energy_kwh,
+                        "water_l": props.water_l,
+                        "crew_min": props.crew_min,
+                    },
+                    "confidence_interval": ci,
+                    "uncertainty": uncertainty,
+                    "model_metadata": metadata,
+                    "score": score,
                 },
-                "confidence_interval": ci,
-                "uncertainty": uncertainty,
-                "model_metadata": metadata,
-                "score": score,
-            },
-        )
-    with layout_block("side-panel layer-shadow", parent=export_grid) as safety_panel:
-        badge = safety
-        level = badge.get("level", "OK").lower()
-        cls = "ok" if "ok" in level else ("risk" if "riesgo" in level or "risk" in level else "warn")
-        safety_panel.markdown(
-            f'<span class="pill {cls}">Seguridad: {badge.get("level", "OK")}</span>',
-            unsafe_allow_html=True,
-        )
-        pop = safety_panel.popover("¿Qué chequeamos?")
-        with pop:
-            st.write(badge.get("detail", "Sin observaciones."))
-            st.caption(
-                "Validaciones: PFAS/microplásticos evitados, sin incineración, flags NASA (EVA/CTB, multilayers, nitrilo)."
             )
+        with layout_block("side-panel layer-shadow", parent=export_grid) as safety_panel:
+            badge = safety
+            level = badge.get("level", "OK").lower()
+            cls = "ok" if "ok" in level else ("risk" if "riesgo" in level or "risk" in level else "warn")
+            safety_panel.markdown(
+                f'<span class="pill {cls}">Seguridad: {badge.get("level", "OK")}</span>',
+                unsafe_allow_html=True,
+            )
+            pop = safety_panel.popover("¿Qué chequeamos?")
+            with pop:
+                st.write(badge.get("detail", "Sin observaciones."))
+                st.caption(
+                    "Validaciones: PFAS/microplásticos evitados, sin incineración, flags NASA (EVA/CTB, multilayers, nitrilo)."
+                )
 
-st.markdown("---")
-
-# ======== KPIs con contexto ========
-kpi_primary = [
-    ("Score total", f"{score:.2f}", "Función + Recursos + Bono problemáticos"),
-    ("Rigidez", f"{props.rigidity:.2f}", f"Objetivo: {float(target['rigidity']):.2f}"),
-    ("Estanqueidad", f"{props.tightness:.2f}", f"Objetivo: {float(target['tightness']):.2f}"),
-    ("Energía (kWh)", f"{props.energy_kwh:.2f}", f"Máx: {float(target['max_energy_kwh']):.2f}"),
-    ("Agua (L)", f"{props.water_l:.2f}", f"Máx: {float(target['max_water_l']):.2f}"),
-]
-primary_html = "<div class='metric-grid fade-in'>" + "".join(
-    f"<div class='kpi layer-shadow'><h3>{title}</h3><div class='v'>{value}</div><div class='hint'>{hint}</div></div>"
-    for title, value, hint in kpi_primary
-) + "</div>"
-st.markdown(primary_html, unsafe_allow_html=True)
-
-kpi_secondary = [
-    ("Crew-time (min)", f"{props.crew_min:.0f}", f"Máx: {float(target['max_crew_min']):.0f}"),
-    ("Masa final (kg)", f"{props.mass_final_kg:.2f}", "Post-proceso / mermas"),
-    (
-        "Modo",
-        "Crew-time Low" if target.get("crew_time_low", False) else "Balanceado",
-        "Más peso al tiempo de tripulación" if target.get("crew_time_low", False) else "Trade-off estándar",
-    ),
-]
-secondary_html = "<div class='metric-grid fade-in'>" + "".join(
-    f"<div class='kpi layer-shadow'><h3>{title}</h3><div class='v'>{value}</div><div class='hint'>{hint}</div></div>"
-    for title, value, hint in kpi_secondary
-) + "</div>"
-st.markdown(secondary_html, unsafe_allow_html=True)
+with st.expander("🎯 Objetivos y límites de misión"):
+    st.markdown(
+        """
+        - **Rigidez objetivo:** {rig_obj:.2f}
+        - **Estanqueidad objetivo:** {tight_obj:.2f}
+        - **Límites recursos:** energía ≤ {energy_max:.2f} kWh · agua ≤ {water_max:.2f} L · crew ≤ {crew_max:.0f} min
+        - **Modo:** {mode_label}
+        """.format(
+            rig_obj=float(target["rigidity"]),
+            tight_obj=float(target["tightness"]),
+            energy_max=float(target["max_energy_kwh"]),
+            water_max=float(target["max_water_l"]),
+            crew_max=float(target["max_crew_min"]),
+            mode_label="Crew-time Low" if target.get("crew_time_low", False) else "Balanceado",
+        )
+    )
 
 # ======== Tabs principales: (1) Score anatomy (2) Flujo Sankey (3) Checklist (4) Trazabilidad ========
 tab1, tab2, tab3, tab4 = st.tabs(["🧩 Anatomía del Score", "🔀 Flujo del proceso (Sankey)", "🛠️ Checklist & Próximos pasos", "🛰️ Trazabilidad NASA"])
@@ -521,12 +483,12 @@ with tab3:
     """)
 
     st.markdown("### ⏱️ Recursos estimados")
-    resource_html = "<div class='metric-grid fade-in'>" + "".join([
-        f"<div class='kpi layer-shadow'><h3>Energía</h3><div class='v'>{props.energy_kwh:.2f} kWh</div></div>",
-        f"<div class='kpi layer-shadow'><h3>Agua</h3><div class='v'>{props.water_l:.2f} L</div></div>",
-        f"<div class='kpi layer-shadow'><h3>Crew-time</h3><div class='v'>{props.crew_min:.0f} min</div></div>",
-    ]) + "</div>"
-    st.markdown(resource_html, unsafe_allow_html=True)
+    resource_items = [
+        MetricItem(label="Energía", value=f"{props.energy_kwh:.2f} kWh", icon="⚡"),
+        MetricItem(label="Agua", value=f"{props.water_l:.2f} L", icon="🚰"),
+        MetricItem(label="Crew-time", value=f"{props.crew_min:.0f} min", icon="🧑‍🚀"),
+    ]
+    MetricGalaxy(metrics=resource_items, density="comfortable").render()
 
     pop3 = st.popover("¿Por qué importa?")
     with pop3:
