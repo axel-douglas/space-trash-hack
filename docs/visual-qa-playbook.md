@@ -17,6 +17,6 @@ Este playbook documenta la validación visual de las vistas **3 · Generador** y
 - [x] Wrappers `layout-grid`, `side-panel`, `depth-stack` envuelven el contenido relevante en las páginas 3 y 4.
 - [x] Animaciones `fade-in`, halos `layer-glow` y sombras `layer-shadow` aplicadas a héroes y paneles críticos.
 - [x] Datos tabulares y gráficos mantienen alineación en resoluciones 1440, 1280 y 1024.
-- [x] Se registraron snapshots locales (ver carpeta `qa_snapshots/`) como referencia para regresiones futuras.
+- [x] Se registraron snapshots locales (mantenerlos en `qa_snapshots/` dentro de tu entorno local) como referencia para regresiones futuras.
 
-> **Nota:** Para regenerar los snapshots ejecutar `streamlit run app/Home.py` y usar una herramienta de captura (Playwright / DevTools) en las resoluciones listadas, guardando los archivos bajo `docs/qa_snapshots/`.
+> **Nota:** Para regenerar los snapshots ejecutar `streamlit run app/Home.py` y usar una herramienta de captura (Playwright / DevTools) en las resoluciones listadas. Guarda los archivos bajo `docs/qa_snapshots/` en tu copia local (la carpeta ya no se versiona).

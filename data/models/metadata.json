@@ -88,7 +88,7 @@
   },
   "dataset": {
     "hash": "2cafd0e594a4305163f3830e21b1171cb2717c5c",
-    "path": "datasets/processed/rexai_training_dataset.parquet"
+    "path": "data/processed/rexai_training_dataset.parquet"
   },
   "feature_columns": [
     "process_id",

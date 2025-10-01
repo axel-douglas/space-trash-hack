@@ -101,6 +101,7 @@ datasets con el catálogo de procesos y genera:
 - Dataset procesado en `datasets/processed/rexai_training_dataset.parquet`.
 - Corridas sintéticas utilizadas para depurar el pipeline en
   `datasets/processed/ml/synthetic_runs.parquet`.
+- Dataset procesado en `data/processed/rexai_training_dataset.parquet`.
 - Pipeline RandomForest multi-salida (`data/models/rexai_regressor.joblib`) con
   estimación de incertidumbre (desvío entre árboles + residuales de validación).
 - Ensemble de modelos de "wow effect":
@@ -163,6 +164,23 @@ metadata y los pipelines recién entrenados.
 > detecta automáticamente si `ax-platform` y `botorch` están instalados; en caso
 > contrario utiliza el optimizador heurístico integrado. Para habilitarla basta con
 > `pip install ax-platform botorch` antes de ejecutar la app.
+
+### Logs generados en runtime
+
+Los módulos que escriben métricas o telemetría crean sus rutas dinámicamente en
+runtime. Por ejemplo, `app/modules/impact.py` y `app/modules/logging_utils.py`
+invocan `LOGS_DIR.mkdir(parents=True, exist_ok=True)` antes de guardar archivos
+Parquet/JSON. Gracias a esto no es necesario versionar `data/logs/`; la carpeta
+se materializa automáticamente cuando se ejecutan los tests o la app y se
+elimina limpiando los artefactos generados. Para verificar este flujo, ejecutá:
+
+```bash
+pytest tests/test_impact_logging.py
+```
+
+La prueba crea un directorio temporal, persiste entradas de impacto y feedback
+utilizando los módulos anteriores y confirma que los Parquet aparecen sin
+requerir un placeholder en Git.
 
 Los binarios (`.joblib`, `.pt`, `.parquet`) permanecen ignorados por Git para
 mantener el repo liviano. Cuando existen localmente, la app reemplaza las
