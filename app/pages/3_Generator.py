@@ -23,7 +23,13 @@ from app.modules.ui_blocks import (
     minimal_button,
     pill,
 )
-from app.modules.luxe_components import MetricSpec, RankingCockpit
+from app.modules.luxe_components import (
+    ChipRow,
+    MetricGalaxy,
+    MetricItem,
+    MetricSpec,
+    RankingCockpit,
+)
 from app.modules.visualizations import ConvergenceScene
 
 st.set_page_config(page_title="Rex-AI • Generador", page_icon="🤖", layout="wide")
@@ -157,6 +163,65 @@ def render_safety_indicator(candidate: dict[str, Any]) -> dict[str, Any]:
     pill(f"{icon} Seguridad · {level}", kind=kind)
     if level == "Riesgo" and detail:
         st.warning(detail)
+
+    with st.container():
+        st.markdown("**🚥 Semáforo PFAS & microplásticos**")
+        signal_chips = [
+            {
+                "label": "PFAS controlados" if not badge.get("pfas") else "PFAS en vigilancia",
+                "icon": "🧪",
+                "tone": "positive" if not badge.get("pfas") else "danger",
+            },
+            {
+                "label": "Microplásticos mitigados"
+                if not badge.get("microplastics")
+                else "Microplásticos en riesgo",
+                "icon": "🧴",
+                "tone": "positive" if not badge.get("microplastics") else "warning",
+            },
+        ]
+        ChipRow(signal_chips, size="sm", gap="0.25rem")
+
+        mitigation_actions: list[dict[str, str]] = []
+        if badge.get("pfas"):
+            mitigation_actions.append(
+                {
+                    "label": "Aislar compuestos fluorados y monitorear filtrado",
+                    "icon": "🛡️",
+                    "tone": "warning",
+                }
+            )
+        else:
+            mitigation_actions.append(
+                {
+                    "label": "Receta sin PFAS identificados",
+                    "icon": "✅",
+                    "tone": "positive",
+                }
+            )
+        if badge.get("microplastics"):
+            mitigation_actions.append(
+                {
+                    "label": "Encapsular shredder y sellar descarga",
+                    "icon": "🧯",
+                    "tone": "warning",
+                }
+            )
+        else:
+            mitigation_actions.append(
+                {
+                    "label": "Liberación de microplásticos contenida",
+                    "icon": "🧬",
+                    "tone": "positive",
+                }
+            )
+        ChipRow(mitigation_actions, size="sm", gap="0.25rem")
+
+        detail_note = str(detail).strip()
+        microcopy = "Esta receta evita PFAS y reusa calor residual."
+        if detail_note:
+            microcopy = f"{microcopy} {detail_note}"
+        st.caption(microcopy)
 
     return badge
 
@@ -353,6 +418,35 @@ def render_candidate_card(
                 for column, (label, kind) in zip(badge_columns, highlight_badges):
                     with column:
                         pill(label, kind=kind)
+            logistics_metrics: list[MetricItem] = []
+            if logistics_reuse is not None:
+                logistics_metrics.append(
+                    MetricItem(
+                        label="Reuso logístico",
+                        value=_format_number(logistics_reuse),
+                        caption="Logistics-to-Living",
+                        icon="🔁",
+                        tone="positive",
+                    )
+                )
+            if gas_recovery is not None:
+                logistics_metrics.append(
+                    MetricItem(
+                        label="Recupero gas",
+                        value=_format_number(gas_recovery),
+                        caption="Logistics-to-Living",
+                        icon="🧪",
+                        tone="positive",
+                    )
+                )
+            if logistics_metrics:
+                st.markdown("**Logistics-to-Living · métricas clave**")
+                MetricGalaxy(
+                    metrics=logistics_metrics,
+                    density="compact",
+                    glow=False,
+                    min_width="11rem",
+                ).render()
             scenario_label = str((target_data or {}).get("scenario") or "").strip()
             scenario_casefold = scenario_label.casefold()
             if scenario_casefold == "daring discoveries":
@@ -390,23 +484,6 @@ def render_candidate_card(
                     st.dataframe(pen_df, hide_index=True, use_container_width=True)
 
         badge = render_safety_indicator(candidate)
-
-        mitigation_chips = [
-            (
-                "PFAS evitados ✅" if not badge.get("pfas") else "PFAS evitados ⚠️",
-                "ok" if not badge.get("pfas") else "risk",
-            ),
-            (
-                "Microplásticos mitigados ✅"
-                if not badge.get("microplastics")
-                else "Microplásticos mitigados ⚠️",
-                "ok" if not badge.get("microplastics") else "risk",
-            ),
-        ]
-        chip_columns = st.columns(len(mitigation_chips))
-        for column, (label, kind) in zip(chip_columns, mitigation_chips):
-            with column:
-                pill(label, kind=kind)
 
         if st.button(f"✅ Seleccionar Opción {idx}", key=f"pick_{idx}"):
             st.session_state["selected"] = {"data": candidate, "safety": badge}
