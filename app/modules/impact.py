@@ -16,7 +16,9 @@ except Exception:  # pragma: no cover - pyarrow is optional at runtime
     pa = None  # type: ignore[assignment]
     pq = None  # type: ignore[assignment]
 
-from .paths import LOGS_DIR
+from .paths import DATA_ROOT, LOGS_DIR
+
+DATA_DIR = DATA_ROOT
 
 
 @dataclass
@@ -173,7 +175,10 @@ def append_impact(entry: ImpactEntry) -> str:
 
 
 def append_feedback(entry: FeedbackEntry) -> str:
-    payload = _prepare_payload(asdict(entry))
+    entry_dict = asdict(entry)
+    if not entry_dict.get("scenario"):
+        entry_dict["scenario"] = "-"
+    payload = _prepare_payload(entry_dict)
     date_str = _entry_date(entry.ts_iso)
     _append_record(f"feedback_{date_str}.parquet", payload)
     return payload["run_id"]
