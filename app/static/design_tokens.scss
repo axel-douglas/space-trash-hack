@@ -75,6 +75,52 @@ $theme-dark-high-contrast: map-merge(
   )
 );
 
+$theme-mars-minimal: map-merge(
+  $theme-dark,
+  (
+    color-scheme: dark,
+    bg: #14090a,
+    surface-panel: #1c0d0f,
+    surface-card: #201113,
+    card: #201113,
+    surface-ghost: #2a1417,
+    stroke: #402325,
+    bd: #512c2f,
+    border-soft: #512c2f,
+    border-strong: #ff8a50,
+    accent: #ff6a3d,
+    accent-soft: #ff9d7a,
+    ink: #fff5ed,
+    muted: #f5b79f,
+    hero-background: unquote("#1d0c0e"),
+    hero-border: #ff6a3d,
+    chip-bg: #2d1417,
+    chip-border: #633233,
+    chip-ink: #ffe8dc,
+    step-bg: #1b0b0d,
+    step-border: #633233,
+    step-icon-bg: rgba(255, 106, 61, 0.24),
+    metric-bg: #1b0b0d,
+    metric-border: #633233,
+    metric-shadow: none,
+    shadow-card: none,
+    shadow-flat: none,
+    tone-ok-bg: #11271f,
+    tone-ok-fg: #7fffc2,
+    tone-ok-border: #2dd4bf,
+    tone-warn-bg: #2b160a,
+    tone-warn-fg: #ffdd99,
+    tone-warn-border: #ff8a3d,
+    tone-risk-bg: #301013,
+    tone-risk-fg: #ff9da5,
+    tone-risk-border: #ff5e72,
+    badge-ok: #31d0aa,
+    badge-warn: #ff8a3d,
+    badge-risk: #ff5e72,
+    pill-bg: transparent
+  )
+);
+
 $theme-light: (
   color-scheme: light,
   bg: #f4f7fb,
@@ -199,11 +245,9 @@ $theme-solarized: (
 );
 
 $themes: (
+  "mars-minimal": $theme-mars-minimal,
   dark: $theme-dark,
-  "dark-high-contrast": $theme-dark-high-contrast,
-  light: $theme-light,
-  "light-high-contrast": $theme-light-high-contrast,
-  solarized: $theme-solarized
+  "dark-high-contrast": $theme-dark-high-contrast
 );
 
 $font-scales: (
@@ -272,7 +316,7 @@ $home-minimal: (
 }
 
 :root {
-  @include emit-token-map(map-get($themes, dark));
+  @include emit-token-map(map-get($themes, "mars-minimal"));
   @include emit-home-map($home-minimal);
 }
 
