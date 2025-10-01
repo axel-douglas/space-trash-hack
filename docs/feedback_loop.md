@@ -3,6 +3,12 @@
 Este documento describe el flujo operativo para cerrar el lazo entre la app,
 los ensayos físicos/simulador y el reentrenamiento incremental del modelo.
 
+> **Nota**: el flujo detallado para registrar experimentos permanece como
+> propuesta externa mientras el equipo confirma su implementación. Consultar
+> [`docs/proposals/experiments_feedback_flow.md`](proposals/experiments_feedback_flow.md)
+> para la versión pendiente y mantener este documento como referencia activa
+> para el feedback disponible.
+
 ## 1. Registro de feedback
 
 1. Los operadores exportan resultados de cada receta validada al archivo
@@ -27,6 +33,8 @@ El comando:
   `datasets/gold/labels.parquet`, preservando la última medición por
   `(recipe_id, process_id)`.
 * Añade una marca `ingested_at` para auditar cuándo se incorporó cada fila.
+* Crea el directorio de destino (`datasets/gold/` por defecto) si todavía no
+  existe.
 
 Para verificar el impacto sin escribir resultados usar `--dry-run`.
 
@@ -60,3 +68,5 @@ estrategias:
 
 Integrar las sugerencias en la UI o en un cuaderno de planificación permite
 concentrar ensayos en recetas que maximizan aprendizaje por etiqueta añadida.
+Cuando el flujo de experimentos se active, las corridas documentadas en la
+propuesta externa podrán alimentar este mismo circuito de realimentación.
