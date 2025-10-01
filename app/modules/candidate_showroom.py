@@ -73,6 +73,101 @@ def render_candidate_showroom(
         help="Oculta recetas con bandera de riesgo en seguridad.",
     )
 
+    resource_limits: dict[str, float] = {}
+    resource_labels: list[str] = []
+
+    energy_target = _extract_target_limit(target, "max_energy_kwh")
+    water_target = _extract_target_limit(target, "max_water_l")
+    crew_target = _extract_target_limit(target, "max_crew_min")
+
+    available_resources: list[tuple[str, float | None]] = [
+        ("energy", energy_target),
+        ("water", water_target),
+        ("crew", crew_target),
+    ]
+
+    resource_keys = [res for res, default in available_resources if default is not None]
+    if resource_keys:
+        st.caption("Límites de recursos")
+        cols = st.columns(len(resource_keys), gap="small")
+        col_idx = 0
+
+        energy_values = [
+            _safe_number(getattr((cand.get("props") or {}), "energy_kwh", None))
+            for cand in candidates
+        ]
+        water_values = [
+            _safe_number(getattr((cand.get("props") or {}), "water_l", None))
+            for cand in candidates
+        ]
+        crew_values = [
+            _safe_number(getattr((cand.get("props") or {}), "crew_min", None))
+            for cand in candidates
+        ]
+
+        for resource in resource_keys:
+            col = cols[col_idx]
+            col_idx += 1
+
+            if resource == "energy" and energy_target is not None:
+                with col:
+                    if st.checkbox(
+                        "Respetar energía",
+                        value=True,
+                        key="showroom_limit_energy",
+                        help="Descarta recetas que superen el objetivo de energía.",
+                    ):
+                        limit = _render_float_limit_slider(
+                            "Energía máxima (kWh)",
+                            default=energy_target,
+                            values=energy_values,
+                            step=0.05,
+                            key="showroom_energy_limit_value",
+                        )
+                        resource_limits["energy"] = limit
+                        resource_labels.append(f"Energía ≤ {limit:.2f} kWh")
+                    else:
+                        st.session_state.pop("showroom_energy_limit_value", None)
+
+            if resource == "water" and water_target is not None:
+                with col:
+                    if st.checkbox(
+                        "Respetar agua",
+                        value=True,
+                        key="showroom_limit_water",
+                        help="Descarta recetas que usen más agua que la meta.",
+                    ):
+                        limit = _render_float_limit_slider(
+                            "Agua máxima (L)",
+                            default=water_target,
+                            values=water_values,
+                            step=0.01,
+                            key="showroom_water_limit_value",
+                        )
+                        resource_limits["water"] = limit
+                        resource_labels.append(f"Agua ≤ {limit:.2f} L")
+                    else:
+                        st.session_state.pop("showroom_water_limit_value", None)
+
+            if resource == "crew" and crew_target is not None:
+                with col:
+                    if st.checkbox(
+                        "Respetar crew",
+                        value=True,
+                        key="showroom_limit_crew",
+                        help="Descarta recetas que requieran más crew que la meta.",
+                    ):
+                        limit = _render_int_limit_slider(
+                            "Crew máximo",
+                            default=crew_target,
+                            values=crew_values,
+                            key="showroom_crew_limit_value",
+                        )
+                        resource_limits["crew"] = float(limit)
+                        resource_labels.append(f"Crew ≤ {int(limit)}")
+                    else:
+                        st.session_state.pop("showroom_crew_limit_value", None)
+
     threshold_active = score_threshold > score_min + 1e-6
 
     rows = _prepare_rows(
@@ -80,6 +175,7 @@ def render_candidate_showroom(
         score_threshold=score_threshold,
         only_safe=only_safe,
         threshold_active=threshold_active,
+        resource_limits=resource_limits,
     )
 
     if not rows:
@@ -92,6 +188,7 @@ def render_candidate_showroom(
         score_threshold,
         only_safe,
         threshold_active,
+        resource_labels,
     )
 
     return [row["candidate"] for row in rows]
@@ -103,8 +200,13 @@ def _prepare_rows(
     score_threshold: float,
     only_safe: bool,
     threshold_active: bool,
+    resource_limits: dict[str, float] | None = None,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    resource_limits = resource_limits or {}
+    energy_limit = resource_limits.get("energy")
+    water_limit = resource_limits.get("water")
+    crew_limit = resource_limits.get("crew")
 
     for idx, cand in enumerate(candidates):
         props = cand.get("props")
@@ -113,6 +215,8 @@ def _prepare_rows(
 
         rigidity = _safe_number(getattr(props, "rigidity", None))
         water = _safe_number(getattr(props, "water_l", None))
+        energy = _safe_number(getattr(props, "energy_kwh", None))
+        crew = _safe_number(getattr(props, "crew_min", None))
         score = _safe_number(cand.get("score"), default=0.0)
 
         safety_flags = check_safety(materials, cand.get("process_name", ""), cand.get("process_id", ""))
@@ -122,6 +226,12 @@ def _prepare_rows(
 
         if score < score_threshold or (only_safe and not is_safe):
             continue
+        if energy_limit is not None and energy > energy_limit + 1e-9:
+            continue
+        if water_limit is not None and water > water_limit + 1e-9:
+            continue
+        if crew_limit is not None and crew > crew_limit + 1e-9:
+            continue
 
         badge_sources: list[str] = []
         badge_sources.extend(str(b) for b in cand.get("timeline_badges", []))
@@ -130,6 +240,12 @@ def _prepare_rows(
             badge_sources.append("🛡️ Filtro: seguros")
         if threshold_active:
             badge_sources.append(f"🎯 Score ≥ {score_threshold:.2f}")
+        if energy_limit is not None:
+            badge_sources.append("⚡ Dentro de límite de energía")
+        if water_limit is not None:
+            badge_sources.append("💧 Dentro de límite de agua")
+        if crew_limit is not None:
+            badge_sources.append("👥 Dentro de límite de crew")
 
         seen: set[str] = set()
         unique_badges: list[str] = []
@@ -144,6 +260,8 @@ def _prepare_rows(
                 "score": score,
                 "rigidity": rigidity,
                 "water": water,
+                "energy": energy,
+                "crew": crew,
                 "safety": badge,
                 "is_safe": is_safe,
                 "badges": unique_badges,
@@ -163,6 +281,7 @@ def _render_candidate_table(
     score_threshold: float,
     only_safe: bool,
     threshold_active: bool,
+    resource_labels: Sequence[str],
 ) -> None:
     st.markdown("#### Ranking de candidatos por score")
 
@@ -171,6 +290,7 @@ def _render_candidate_table(
         active_filters.append("Sólo seguros")
     if threshold_active and rows:
         active_filters.append(f"Score ≥ {score_threshold:.2f}")
+    active_filters.extend(resource_labels)
 
     if active_filters:
         st.caption("Filtros activos: " + ", ".join(active_filters))
@@ -465,3 +585,69 @@ def _inject_css() -> None:
     st.session_state[_CSS_KEY] = True
 
 
+
+def _extract_target_limit(target: dict, key: str) -> float | None:
+    try:
+        value = target.get(key)
+    except AttributeError:
+        return None
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _render_float_limit_slider(
+    label: str,
+    *,
+    default: float,
+    values: Sequence[float],
+    step: float,
+    key: str,
+) -> float:
+    numbers = [default]
+    numbers.extend(v for v in values if v is not None)
+    slider_max = max(numbers)
+    if slider_max <= default:
+        slider_max = default + max(step, abs(default) * 0.1 or step)
+    if slider_max <= 0:
+        slider_max = max(default + step, step)
+    return float(
+        st.slider(
+            label,
+            min_value=0.0,
+            max_value=float(slider_max),
+            value=float(default),
+            step=step,
+            key=key,
+        )
+    )
+
+
+def _render_int_limit_slider(
+    label: str,
+    *,
+    default: float,
+    values: Sequence[float],
+    key: str,
+) -> int:
+    default_int = int(round(default))
+    numbers = [default_int]
+    numbers.extend(int(round(v)) for v in values if v is not None)
+    slider_max = max(numbers)
+    if slider_max <= default_int:
+        slider_max = default_int + 1
+    if slider_max <= 0:
+        slider_max = max(default_int + 1, 1)
+    return int(
+        st.slider(
+            label,
+            min_value=0,
+            max_value=int(slider_max),
+            value=int(default_int),
+            step=1,
+            key=key,
+        )
+    )
