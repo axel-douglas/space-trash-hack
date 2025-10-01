@@ -75,7 +75,6 @@ resolve_dataset_path = ds.resolve_dataset_path
 slugify = ds.slugify
 _load_regolith_vector = ds._load_regolith_vector
 from app.modules import logging_utils
-from app.modules.logging_utils import append_inference_log
 from app.modules.data_sources import (
     _CATEGORY_SYNONYMS,
     DATASETS_ROOT,
@@ -196,6 +195,7 @@ def append_inference_log(
 ) -> None:
     """Proxy :func:`logging_utils.append_inference_log` for backward compatibility."""
 
+    # Wrapper retained to preserve legacy imports during the refactor.
     logging_utils.append_inference_log(
         input_features=input_features,
         prediction=prediction,
