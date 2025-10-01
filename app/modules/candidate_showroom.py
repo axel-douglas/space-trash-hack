@@ -314,8 +314,13 @@ def _render_candidate_table(
     st.markdown("<hr class='candidate-table__divider' />", unsafe_allow_html=True)
 
     for rank, row in enumerate(rows, start=1):
-        _render_candidate_row(rank, row, success_data, column_weights)
-        _render_candidate_row(rank, row, success_data, scenario=scenario)
+        _render_candidate_row(
+            rank,
+            row,
+            success_data,
+            column_weights,
+            scenario=scenario,
+        )
 
     st.markdown("</div>", unsafe_allow_html=True)
 
