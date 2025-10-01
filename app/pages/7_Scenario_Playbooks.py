@@ -16,6 +16,28 @@ load_theme()
 
 render_breadcrumbs("playbooks")
 
+FEATURED_PLAYBOOKS = ("Residence Renovations", "Daring Discoveries")
+GENERATOR_FILTER_PRESETS: dict[str, dict[str, bool]] = {
+    "Residence Renovations": {
+        "showroom_only_safe": True,
+        "showroom_limit_energy": True,
+        "showroom_limit_water": True,
+        "showroom_limit_crew": True,
+    },
+    "Cosmic Celebrations": {
+        "showroom_only_safe": True,
+        "showroom_limit_energy": False,
+        "showroom_limit_water": True,
+        "showroom_limit_crew": False,
+    },
+    "Daring Discoveries": {
+        "showroom_only_safe": False,
+        "showroom_limit_energy": True,
+        "showroom_limit_water": False,
+        "showroom_limit_crew": True,
+    },
+}
+
 # ======== Estado compartido ========
 target      = st.session_state.get("target", None)
 state_sel   = st.session_state.get("selected", None)
@@ -30,6 +52,10 @@ st.markdown(
     .step{border:1px dashed var(--bd); border-radius:14px; padding:14px; margin-bottom:12px;}
     .step h4{margin:0 0 6px 0;}
     .mono{font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;}
+    .why-panel{border:1px solid var(--bd); border-radius:16px; padding:16px; background:linear-gradient(135deg, rgba(59,130,246,0.12), rgba(13,148,136,0.10)); box-shadow:0 16px 28px rgba(15,23,42,0.22);}
+    .why-panel h4{margin:0 0 8px 0; font-size:1.05rem;}
+    .why-panel p{margin:0 0 10px 0; font-size:0.92rem; line-height:1.45;}
+    .why-panel ul{margin:0; padding-left:18px; font-size:0.88rem; line-height:1.5;}
     </style>
     """,
     unsafe_allow_html=True,
@@ -61,15 +87,40 @@ if not target:
 
 scenario_default = target.get("scenario", next(iter(PLAYBOOKS.keys())))
 scenarios = list(PLAYBOOKS.keys())
+ordered_scenarios = [s for s in FEATURED_PLAYBOOKS if s in scenarios]
+ordered_scenarios.extend([s for s in scenarios if s not in ordered_scenarios])
+
+if scenario_default not in ordered_scenarios:
+    scenario_default = ordered_scenarios[0]
 
 col_sel, col_help = st.columns([1.5, 1.0])
 with col_sel:
-    query = st.text_input("Buscar escenario", value=scenario_default)
-    # Simple “filtro por contiene”
-    matches = [s for s in scenarios if query.lower() in s.lower()] or scenarios
-    scenario = st.selectbox("Elegí un playbook", matches, index=0)
+    st.caption("Seleccioná un playbook destacado o cambiá a otro escenario de misión.")
+    scenario = st.segmented_control(
+        "Playbooks disponibles",
+        options=ordered_scenarios,
+        default=scenario_default,
+        key="playbook_selector",
+    )
+
+pb = PLAYBOOKS.get(scenario)
 
 with col_help:
+    if pb:
+        highlights = "".join(
+            f"<li><strong>{step.title}</strong>: {step.detail}</li>"
+            for step in pb.steps[:3]
+        ) or ""
+        st.markdown(
+            f"""
+<div class="block why-panel">
+  <h4>🏆 Por qué gana</h4>
+  <p>{pb.summary}</p>
+  <ul>{highlights}</ul>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
     st.markdown("""
 <div class="block">
 <b>¿Qué es un playbook?</b><br/>
@@ -77,11 +128,23 @@ Un <i>procedimiento de laboratorio</i> curado para un contexto concreto. Trae pa
 checklist y pistas de seguridad. Ideal para entrenar aprendices y estandarizar corridas.
 </div>
 """, unsafe_allow_html=True)
-
-pb = PLAYBOOKS.get(scenario)
 if not pb:
     st.warning("No encontré el playbook seleccionado.")
     st.stop()
+
+filters_payload = GENERATOR_FILTER_PRESETS.get(pb.name, {})
+
+with col_sel:
+    if st.button(
+        f"⚡ Abrir generador con filtros de {pb.name}",
+        use_container_width=True,
+    ):
+        st.session_state["_playbook_generator_filters"] = {
+            "scenario": pb.name,
+            "filters": filters_payload,
+        }
+        st.experimental_set_query_params(page="3_Generator")
+        st.experimental_rerun()
 
 # ======== Brief del Playbook + Estado de datos ========
 st.markdown("### 🧪 Brief del escenario")
