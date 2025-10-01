@@ -5,22 +5,20 @@ import io
 import json
 from datetime import datetime
 
-import streamlit as st
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import streamlit as st
 from plotly.colors import sample_colorscale
 
 from app.modules.analytics import pareto_front
 from app.modules.explain import compare_table
-from app.modules.exporters import candidate_to_json, candidate_to_csv
-from app.modules.safety import check_safety, safety_badge  # recalcular badge al seleccionar
+from app.modules.exporters import candidate_to_csv, candidate_to_json
+from app.modules.luxe_components import MetricGalaxy, MetricItem, TeslaHero
 from app.modules.navigation import render_breadcrumbs, set_active_step
-from app.modules.safety import check_safety  # recalcular badge al seleccionar
-from app.modules.ui_blocks import load_theme, futuristic_button
-from app.modules.ui_blocks import load_theme
-from app.modules.luxe_components import TeslaHero, MetricGalaxy, MetricItem
+from app.modules.safety import check_safety, safety_badge  # recalcular badge al seleccionar
+from app.modules.ui_blocks import futuristic_button, load_theme
 
 # ⚠️ PRIMERA llamada
 st.set_page_config(page_title="Pareto & Export", page_icon="📤", layout="wide")
