@@ -75,7 +75,7 @@ def _build_editable_df(source: pd.DataFrame) -> pd.DataFrame:
             "flags": (source[flags_col].astype(str) if flags_col else ""),
         }
     )
-    editable["_problematic"] = editable.apply(_is_problematic_row, axis=1)
+    editable["_problematic"] = problematic_mask(editable)
     return editable
 
 
