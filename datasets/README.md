@@ -20,6 +20,49 @@ The raw CSVs under `datasets/raw/` contain the literal values transcribed from
 the NASA PDFs and slide decks so the preprocessing logic below remains
 reproducible.
 
+## Polymer composite supplier data
+
+| Processed file | Source asset | Notes |
+| -------------- | ------------ | ----- |
+| `polymer_composite_thermal.csv` | `raw/external_polymer_composites/PC-Analisis Termico Composito.opj` | Differential scanning calorimetry traces exported from Origin. Metadata columns preserve the heating ramp, purge atmosphere and units (°C, W/g). |
+| `polymer_composite_density.csv` | `raw/external_polymer_composites/PC-Densidad.opj` | Specific gravity measurements (ASTM D792) with explicit density units and ambient conditions. |
+| `polymer_composite_mechanics.csv` | `raw/external_polymer_composites/PC-Propiedades Mecanicas Composito Pastico NMF.opj` | Tensile/flexural property table with stress/strain units and specimen descriptors pulled from the Origin workbook. |
+| `polymer_composite_ignition.csv` | `raw/external_polymer_composites/PC-Ignicion.xlsx` | Parsed UL-94 style ignition test replicates. The script normalises the mixed time/temperature annotations and expands the replicate columns into tidy rows. |
+
+The OriginLab projects must be opened on Windows. To regenerate the open
+derivatives launch Origin (2023 or later), ensure `pywin32` and `originpro`
+are installed in the same environment and run:
+
+```bash
+python -m scripts.convert_polymer_composites --origin-exe "C:\\Program Files\\OriginLab\\Origin2023b\\Origin96.exe"
+```
+
+When the automation layer is not available (e.g. on CI) export each worksheet to
+CSV manually from Origin using the same stem name and re-run the command with
+`--skip-origin`. The module will still enrich the tables with metadata and write
+the CSV/Parquet outputs described above. Parsing the ignition workbook only
+requires `pandas` + `openpyxl`.
+
+> Licensing note: these composites were supplied by the challenge organisers for
+> audit purposes. Redistribution should remain limited to the hackathon jury –
+> the raw files therefore live under `datasets/raw/external_polymer_composites/`
+> and the processed CSV/Parquet exports can be regenerated locally when needed.
+
+## Aluminium alloy reference
+
+| Processed file | Source asset | Notes |
+| -------------- | ------------ | ----- |
+| `aluminium_alloys.csv` | `raw/external_aluminium/al_data.csv` | Composition/strength dataset originally shared on Kaggle (“Aluminium Alloys”) and compiled from MatWeb/ALCOA datasheets. The script renames elements to `element_<symbol>_mass_fraction` and tags the mechanical units. |
+
+Regenerate the alloy table with:
+
+```bash
+python -m scripts.convert_aluminium_alloys
+```
+
+`convert_aluminium_alloys.py` depends on `pandas` (already bundled) and writes
+both CSV and Parquet to keep the processing pipeline portable.
+
 ## Regeneration steps
 
 Use the following Python snippet to rebuild the processed CSVs from the raw
