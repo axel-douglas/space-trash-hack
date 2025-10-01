@@ -9,12 +9,18 @@ the UI remains functional.
 Reference dataset loading and inference logging responsibilities now live
 in :mod:`app.modules.data_sources` and :mod:`app.modules.logging_utils`
 respectively so that this file focuses on feature engineering and
-candidate assembly.
+candidate assembly.  Optional heavy dependencies (:mod:`jax`,
+:mod:`torch`, :mod:`pyarrow`) are accessed through small adapters that
+attempt to import the libraries only when their functionality is needed,
+keeping cold starts lightweight while still enabling accelerated paths
+in environments where the extras are installed.
 """
 
 from __future__ import annotations
 
 import atexit
+import importlib
+import importlib.util
 import itertools
 import json
 import logging
@@ -25,18 +31,9 @@ import re
 import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from functools import lru_cache
-from typing import Any, Dict, Iterable, Mapping, NamedTuple, Sequence, Tuple
-
-try:
-    import jax.numpy as jnp
-    from jax import jit
-except Exception:  # pragma: no cover - JAX is optional during inference
-    jnp = None  # type: ignore[assignment]
-
-    def jit(fn):  # type: ignore[override]
-        return fn
+from pathlib import Path
+from typing import Any, Callable, Dict, Iterable, Mapping, NamedTuple, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -51,50 +48,108 @@ if sparse is not None:
 else:
     empty_reference = np.zeros((0, 0), dtype=np.float64)
 
-try:  # Torch tensors may appear when the caller works in PyTorch land.
-    import torch
-except Exception:  # pragma: no cover - torch is optional
-    torch = None  # type: ignore[assignment]
-
 from app.modules import data_sources as ds
+from app.modules import logging_utils
+
+
+class _JaxNamespace(NamedTuple):
+    jnp: Any
+    jit: Callable[[Callable[..., Any]], Callable[..., Any]]
+
+
+class _PyArrowNamespace(NamedTuple):
+    pa: Any
+    pq: Any
+
+
+@lru_cache(maxsize=1)
+def _load_jax_namespace() -> _JaxNamespace | None:
+    """Return the imported :mod:`jax` namespace when available."""
+
+    if importlib.util.find_spec("jax") is None:
+        return None
+
+    try:
+        jax_module = importlib.import_module("jax")
+        jnp_module = importlib.import_module("jax.numpy")
+    except Exception:
+        return None
+
+    jit_impl = getattr(jax_module, "jit", None)
+    if not callable(jit_impl):
+
+        def _identity(fn: Callable[..., Any]) -> Callable[..., Any]:
+            return fn
+
+        jit_impl = _identity
+
+    return _JaxNamespace(jnp=jnp_module, jit=jit_impl)
+
+
+@lru_cache(maxsize=1)
+def _load_torch_module() -> Any | None:
+    """Return the :mod:`torch` module if it can be imported."""
+
+    if importlib.util.find_spec("torch") is None:
+        return None
+
+    try:
+        return importlib.import_module("torch")
+    except Exception:
+        return None
+
+
+@lru_cache(maxsize=1)
+def _load_pyarrow_namespace() -> _PyArrowNamespace | None:
+    """Return the :mod:`pyarrow` namespace when present."""
+
+    pa_mod = getattr(logging_utils, "pa", None)
+    pq_mod = getattr(logging_utils, "pq", None)
+    if pa_mod is not None and pq_mod is not None:
+        return _PyArrowNamespace(pa=pa_mod, pq=pq_mod)
+
+    if importlib.util.find_spec("pyarrow") is None:
+        return None
+
+    try:
+        pa_mod = importlib.import_module("pyarrow")
+        pq_mod = importlib.import_module("pyarrow.parquet")
+    except Exception:
+        return None
+
+    return _PyArrowNamespace(pa=pa_mod, pq=pq_mod)
+
+
+def _optional_jnp() -> Any | None:
+    namespace = _load_jax_namespace()
+    return None if namespace is None else namespace.jnp
+
+
+def _optional_jit() -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    namespace = _load_jax_namespace()
+    if namespace is None:
+        return lambda fn: fn
+    return namespace.jit
+
 
 _CATEGORY_SYNONYMS = ds._CATEGORY_SYNONYMS
 DATASETS_ROOT = ds.DATASETS_ROOT
 GAS_MEAN_YIELD = ds.GAS_MEAN_YIELD
 MEAN_REUSE = ds.MEAN_REUSE
 REGOLITH_VECTOR = ds.REGOLITH_VECTOR
+RegolithCharacterization = ds.RegolithCharacterization
 _L2LParameters = ds.L2LParameters
 _load_l2l_parameters = ds.load_l2l_parameters
 _load_official_features_bundle = ds.official_features_bundle
+_load_regolith_characterization = ds.load_regolith_characterization
+_load_regolith_vector = ds._load_regolith_vector
+from_lazy_frame = ds.from_lazy_frame
 normalize_category = ds.normalize_category
 normalize_item = ds.normalize_item
-token_set = ds.token_set
-to_lazy_frame = ds.to_lazy_frame
-from_lazy_frame = ds.from_lazy_frame
 resolve_dataset_path = ds.resolve_dataset_path
 slugify = ds.slugify
-_load_regolith_vector = ds._load_regolith_vector
-from app.modules import logging_utils
-from app.modules.data_sources import (
-    _CATEGORY_SYNONYMS,
-    DATASETS_ROOT,
-    GAS_MEAN_YIELD,
-    MEAN_REUSE,
-    REGOLITH_VECTOR,
-    L2LParameters as _L2LParameters,
-    RegolithCharacterization,
-    from_lazy_frame,
-    load_l2l_parameters as _load_l2l_parameters,
-    load_regolith_characterization as _load_regolith_characterization,
-    normalize_category,
-    normalize_item,
-    official_features_bundle as _load_official_features_bundle,
-    resolve_dataset_path,
-    slugify,
-    to_lazy_frame,
-    token_set,
-)
-import app.modules.logging_utils as logging_utils
+to_lazy_frame = ds.to_lazy_frame
+token_set = ds.token_set
 
 logger = logging.getLogger(__name__)
 
@@ -129,12 +184,9 @@ _CATEGORY_FAMILY_FALLBACKS: Dict[str, tuple[str, ...]] = {
     "gloves": ("gloves", "other packaging", "packaging"),
     "other packaging glove": ("other packaging", "gloves", "packaging"),
 }
-try:  # Optional heavy dependencies; used for fast vectorization
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-except Exception:  # pragma: no cover - pyarrow is expected in production
-    pa = None  # type: ignore[assignment]
-    pq = None  # type: ignore[assignment]
+_PYARROW_NAMESPACE = _load_pyarrow_namespace()
+pa = _PYARROW_NAMESPACE.pa if _PYARROW_NAMESPACE is not None else None
+pq = _PYARROW_NAMESPACE.pq if _PYARROW_NAMESPACE is not None else None
 
 from app.modules.execution import (
     DEFAULT_PARALLEL_THRESHOLD,
@@ -205,7 +257,7 @@ def _close_inference_log_writer() -> None:
     logging_utils._INFERENCE_LOG_MANAGER.close()
 
 
-if logging_utils.pq is not None:  # pragma: no branch - guard for optional dependency
+if _load_pyarrow_namespace() is not None:  # pragma: no branch - guard for optional dependency
     atexit.register(logging_utils._INFERENCE_LOG_MANAGER.close)
 
 _COMPOSITION_DENSITY_MAP = {
@@ -433,16 +485,29 @@ _OfficialFeaturesBundle._field_defaults = {
 _ORIGINAL_OFFICIAL_BUNDLE_NEW = _OfficialFeaturesBundle.__new__
 
 
+_OFFICIAL_BUNDLE_DEFAULT_FACTORIES: Dict[str, Callable[[], Any]] = {
+    "mission_totals_vector": lambda: np.asarray([], dtype=np.float64),
+    "processing_metrics": dict,
+    "leo_mass_savings": dict,
+    "propellant_benefits": dict,
+    "reference_metrics": dict,
+    "l2l_constants": dict,
+    "l2l_category_features": dict,
+    "l2l_item_features": dict,
+    "l2l_hints": dict,
+    "mission_reference_dense": lambda: np.zeros((0, 0), dtype=np.float64),
+}
+
+
 def _official_features_bundle_new(cls, *args, **kwargs):
-    if "mission_reference_dense" not in kwargs:
-        if len(args) == len(_OfficialFeaturesBundle._fields) - 1:
-            args = (
-                *args[:11],
-                np.zeros((0, 0), dtype=np.float64),
-                *args[11:],
-            )
-        elif len(args) < len(_OfficialFeaturesBundle._fields):
-            kwargs["mission_reference_dense"] = np.zeros((0, 0), dtype=np.float64)
+    field_names = _OfficialFeaturesBundle._fields
+    for name, factory in _OFFICIAL_BUNDLE_DEFAULT_FACTORIES.items():
+        if name in kwargs:
+            continue
+        index = field_names.index(name)
+        if len(args) > index:
+            continue
+        kwargs[name] = factory() if callable(factory) else factory
     return _ORIGINAL_OFFICIAL_BUNDLE_NEW(cls, *args, **kwargs)
 
 
@@ -1569,14 +1634,17 @@ def _coerce_feature_tensor_batch_like(
 def _coerce_weight_array(values: Iterable[float] | Any) -> np.ndarray:
     if isinstance(values, np.ndarray):
         array = values.astype(float, copy=False)
-    elif torch is not None and isinstance(values, torch.Tensor):  # type: ignore[arg-type]
-        array = values.detach().cpu().numpy().astype(float, copy=False)
-    elif jnp is not None and hasattr(jnp, "ndarray") and isinstance(values, jnp.ndarray):  # type: ignore[attr-defined]
-        array = np.asarray(values, dtype=float)
-    elif isinstance(values, pd.Series):
-        array = values.to_numpy(dtype=float, copy=False)
     else:
-        array = np.asarray(list(values), dtype=float)
+        torch_module = _load_torch_module()
+        jnp_module = _optional_jnp()
+        if torch_module is not None and isinstance(values, torch_module.Tensor):  # type: ignore[arg-type]
+            array = values.detach().cpu().numpy().astype(float, copy=False)
+        elif jnp_module is not None and hasattr(jnp_module, "ndarray") and isinstance(values, jnp_module.ndarray):  # type: ignore[attr-defined]
+            array = np.asarray(values, dtype=float)
+        elif isinstance(values, pd.Series):
+            array = values.to_numpy(dtype=float, copy=False)
+        else:
+            array = np.asarray(list(values), dtype=float)
 
     if array.ndim == 0:
         array = np.asarray([float(array)], dtype=float)
@@ -1817,8 +1885,10 @@ def _contexts_to_tensor_batch(
     logistics_ratio = float(l2l_constants.get("l2l_logistics_packaging_per_goods_ratio", float("nan")))
 
     def _to_backend_array(array: np.ndarray) -> Any:
-        if backend == "jax" and jnp is not None:
-            return jnp.asarray(array)
+        if backend == "jax":
+            jnp_module = _optional_jnp()
+            if jnp_module is not None:
+                return jnp_module.asarray(array)
         return array
 
     return FeatureTensorBatch(
@@ -1984,9 +2054,12 @@ def _feature_kernel_body(
     }
 
 
-if jnp is not None:
+if _load_jax_namespace() is not None:
 
-    @jit
+    _JAX_NS = _load_jax_namespace()
+    assert _JAX_NS is not None
+
+    @_optional_jit()
     def _feature_kernel(
         weights: Any,
         densities: Any,
@@ -2005,7 +2078,7 @@ if jnp is not None:
         logistics_ratio: float,
     ) -> Dict[str, Any]:
         return _feature_kernel_body(
-            jnp,
+            _JAX_NS.jnp,
             weights,
             densities,
             moisture,
