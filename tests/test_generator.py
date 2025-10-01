@@ -538,6 +538,135 @@ def test_official_features_bundle_polars_pipeline(tmp_path, monkeypatch):
     generator._official_features_bundle.cache_clear()
 
 
+def test_official_features_bundle_material_metrics(tmp_path, monkeypatch):
+    official_path = tmp_path / "official.csv"
+    official_path.write_text(
+        "\n".join(
+            [
+                "category,subitem",
+                "Fabrics,Composite Panel",
+                "Structural Elements,Aluminium Panel",
+            ]
+        )
+        + "\n"
+    )
+
+    summary_path = tmp_path / "nasa_waste_summary.csv"
+    summary_path.write_text(
+        "\n".join(
+            [
+                "category,subitem,total_mass_kg",
+                "Fabrics,Composite Panel,10",
+                "Structural Elements,Aluminium Panel,5",
+            ]
+        )
+        + "\n"
+    )
+
+    processing_path = tmp_path / "nasa_waste_processing_products.csv"
+    processing_path.write_text("category,subitem,output_kg\nFabrics,Composite Panel,2\n")
+
+    leo_path = tmp_path / "nasa_leo_mass_savings.csv"
+    leo_path.write_text("category,subitem,savings_pct\nFabrics,Composite Panel,5\n")
+
+    propellant_path = tmp_path / "nasa_propellant_benefits.csv"
+    propellant_path.write_text("category,subitem,benefit\nFabrics,Composite Panel,1\n")
+
+    density_path = tmp_path / "polymer_composite_density.csv"
+    density_path.write_text(
+        "category,subitem,sample_label,density_g_per_cm3\n"
+        "Fabrics,Composite Panel,Original 0 %,1.3\n"
+    )
+
+    mechanics_path = tmp_path / "polymer_composite_mechanics.csv"
+    mechanics_path.write_text(
+        "category,subitem,sample_label,stress_mpa,modulus_gpa\n"
+        "Fabrics,Composite Panel,Original 0 %,420,32\n"
+    )
+
+    thermal_path = tmp_path / "polymer_composite_thermal.csv"
+    thermal_path.write_text(
+        "category,subitem,sample_label,glass_transition_c\n"
+        "Fabrics,Composite Panel,Original 0 %,125\n"
+    )
+
+    ignition_path = tmp_path / "polymer_composite_ignition.csv"
+    ignition_path.write_text(
+        "category,subitem,sample_label,ignition_temperature_c,burn_time_min\n"
+        "Fabrics,Composite Panel,Original 0 %,780,4.5\n"
+    )
+
+    aluminium_path = tmp_path / "aluminium_alloys.csv"
+    aluminium_path.write_text(
+        "category,subitem,processing_route,class_id,tensile_strength_mpa,yield_strength_mpa,elongation_pct\n"
+        "Structural Elements,Aluminium Panel,Solutionised + Artificially peak aged,2,650,580,15\n"
+    )
+
+    file_map = {
+        "nasa_waste_summary.csv": summary_path,
+        "nasa_waste_processing_products.csv": processing_path,
+        "nasa_leo_mass_savings.csv": leo_path,
+        "nasa_propellant_benefits.csv": propellant_path,
+        "polymer_composite_density.csv": density_path,
+        "polymer_composite_mechanics.csv": mechanics_path,
+        "polymer_composite_thermal.csv": thermal_path,
+        "polymer_composite_ignition.csv": ignition_path,
+        "aluminium_alloys.csv": aluminium_path,
+    }
+
+    monkeypatch.setattr(data_sources, "_OFFICIAL_FEATURES_PATH", official_path)
+    monkeypatch.setattr(data_sources, "resolve_dataset_path", lambda name: file_map.get(name))
+    data_sources.official_features_bundle.cache_clear()
+
+    bundle = data_sources.official_features_bundle()
+
+    assert "pc_density_density_g_per_cm3" in bundle.value_columns
+    assert "pc_mechanics_modulus_gpa" in bundle.value_columns
+    assert "pc_thermal_glass_transition_c" in bundle.value_columns
+    assert "pc_ignition_ignition_temperature_c" in bundle.value_columns
+    assert "aluminium_tensile_strength_mpa" in bundle.value_columns
+
+    assert "pc_density_original_0" in bundle.reference_metrics
+    assert bundle.reference_metrics["pc_density_original_0"]["pc_density_density_g_per_cm3"] == pytest.approx(1.3)
+
+    generator._official_features_bundle.cache_clear()
+    monkeypatch.setattr(generator, "_load_official_features_bundle", data_sources.official_features_bundle)
+    generator._official_features_bundle.cache_clear()
+
+    polymer_row = pd.Series(
+        {
+            "category": "Fabrics",
+            "material": "Composite Panel",
+            "material_family": "",
+            "key_materials": "",
+        }
+    )
+
+    payload, match_key = generator._lookup_official_feature_values(polymer_row)
+    assert match_key == "fabric|composite panel"
+    assert payload["official_density_kg_m3"] == pytest.approx(1300.0)
+    assert payload["official_tensile_strength_mpa"] == pytest.approx(420.0)
+    assert payload["official_modulus_gpa"] == pytest.approx(32.0)
+    assert payload["official_ignition_temperature_c"] == pytest.approx(780.0)
+
+    aluminium_row = pd.Series(
+        {
+            "category": "Structural Elements",
+            "material": "Aluminium Panel",
+            "material_family": "",
+            "key_materials": "",
+        }
+    )
+
+    payload_al, key_al = generator._lookup_official_feature_values(aluminium_row)
+    assert key_al == "structural elements|aluminium panel"
+    assert payload_al["official_tensile_strength_mpa"] == pytest.approx(650.0)
+    assert payload_al["official_yield_strength_mpa"] == pytest.approx(580.0)
+    assert payload_al["official_elongation_pct"] == pytest.approx(15.0)
+
+    data_sources.official_features_bundle.cache_clear()
+    generator._official_features_bundle.cache_clear()
+
 def test_vectorized_feature_map_benchmark():
     rows = 4000
     categories = ["Packaging" if idx % 2 == 0 else "Food Packaging" for idx in range(rows)]

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import pandas as pd
 import pytest
+
+from app.modules import data_sources
 
 from app.modules.data_sources import (
     RegolithCharacterization,
@@ -94,3 +97,51 @@ def test_regolith_characterization_bundle_is_cached() -> None:
         REGOLITH_CHARACTERIZATION.thermogravimetry.shape
         == bundle.thermogravimetry.shape
     )
+
+
+def test_lookup_official_feature_values_maps_material_metrics(tmp_path, monkeypatch):
+    official_path = tmp_path / "official.csv"
+    official_path.write_text("category,subitem\nFabrics,Composite Panel\n")
+
+    summary_path = tmp_path / "nasa_waste_summary.csv"
+    summary_path.write_text("category,subitem,total_mass_kg\nFabrics,Composite Panel,5\n")
+
+    density_path = tmp_path / "polymer_composite_density.csv"
+    density_path.write_text(
+        "category,subitem,sample_label,density_g_per_cm3\n"
+        "Fabrics,Composite Panel,Original 0 %,1.25\n"
+    )
+
+    mechanics_path = tmp_path / "polymer_composite_mechanics.csv"
+    mechanics_path.write_text(
+        "category,subitem,sample_label,stress_mpa,modulus_gpa\n"
+        "Fabrics,Composite Panel,Original 0 %,410,31\n"
+    )
+
+    ignition_path = tmp_path / "polymer_composite_ignition.csv"
+    ignition_path.write_text(
+        "category,subitem,sample_label,ignition_temperature_c\n"
+        "Fabrics,Composite Panel,Original 0 %,770\n"
+    )
+
+    file_map = {
+        "nasa_waste_summary.csv": summary_path,
+        "polymer_composite_density.csv": density_path,
+        "polymer_composite_mechanics.csv": mechanics_path,
+        "polymer_composite_ignition.csv": ignition_path,
+    }
+
+    monkeypatch.setattr(data_sources, "_OFFICIAL_FEATURES_PATH", official_path)
+    monkeypatch.setattr(data_sources, "resolve_dataset_path", lambda name: file_map.get(name))
+    data_sources.official_features_bundle.cache_clear()
+
+    row = pd.Series({"category": "Fabrics", "material": "Composite Panel"})
+    payload, key = data_sources.lookup_official_feature_values(row)
+
+    assert key == "fabric|composite panel"
+    assert payload["official_density_kg_m3"] == pytest.approx(1250.0)
+    assert payload["official_tensile_strength_mpa"] == pytest.approx(410.0)
+    assert payload["official_modulus_gpa"] == pytest.approx(31.0)
+    assert payload["official_ignition_temperature_c"] == pytest.approx(770.0)
+
+    data_sources.official_features_bundle.cache_clear()

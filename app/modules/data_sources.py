@@ -45,6 +45,7 @@ __all__ = [
     "token_set",
     "merge_reference_dataset",
     "extract_grouped_metrics",
+    "extract_reference_metrics",
     "load_regolith_particle_size",
     "load_regolith_spectra",
     "load_regolith_thermogravimetry",
@@ -1013,6 +1014,200 @@ def load_l2l_parameters() -> L2LParameters:
     return L2LParameters(constants, category_features, item_features, hints)
 
 
+@dataclass(frozen=True)
+class ReferenceMetricSpec:
+    filename: str
+    prefix: str
+    group_columns: tuple[str, ...]
+    value_columns: tuple[str, ...]
+
+
+def extract_reference_metrics(spec: ReferenceMetricSpec) -> Dict[str, Dict[str, float]]:
+    path = resolve_dataset_path(spec.filename)
+    if path is None:
+        return {}
+
+    table = pl.scan_csv(path)
+
+    missing_groups = [column for column in spec.group_columns if column not in table.columns]
+    if missing_groups:
+        return {}
+
+    numeric_columns = [column for column in spec.value_columns if column in table.columns]
+    if not numeric_columns:
+        return {}
+
+    aggregations = [
+        pl.col(column).cast(pl.Float64, strict=False).mean().alias(column)
+        for column in numeric_columns
+    ]
+
+    grouped = (
+        table.group_by(list(spec.group_columns)).agg(aggregations).collect().to_dicts()
+    )
+
+    metrics: Dict[str, Dict[str, float]] = {}
+    for row in grouped:
+        slug_parts = [spec.prefix]
+        for column in spec.group_columns:
+            value = row.get(column)
+            if value is None:
+                continue
+            slug_parts.append(slugify(value))
+        slug = _feature_name_from_parts(*slug_parts)
+        if not slug:
+            continue
+
+        payload: Dict[str, float] = {}
+        for column in numeric_columns:
+            value = row.get(column)
+            if value is None:
+                continue
+            if isinstance(value, float) and math.isnan(value):
+                continue
+            try:
+                payload[f"{spec.prefix}_{slugify(column)}"] = float(value)
+            except (TypeError, ValueError):
+                continue
+
+        if payload:
+            metrics[slug] = payload
+
+    return metrics
+
+
+_REFERENCE_METRIC_SPECS: tuple[ReferenceMetricSpec, ...] = (
+    ReferenceMetricSpec(
+        filename="polymer_composite_density.csv",
+        prefix="pc_density",
+        group_columns=("sample_label",),
+        value_columns=("density_g_per_cm3",),
+    ),
+    ReferenceMetricSpec(
+        filename="polymer_composite_mechanics.csv",
+        prefix="pc_mechanics",
+        group_columns=("sample_label",),
+        value_columns=("stress_mpa", "modulus_gpa", "strain_pct", "tensile_strength_mpa", "yield_strength_mpa"),
+    ),
+    ReferenceMetricSpec(
+        filename="polymer_composite_thermal.csv",
+        prefix="pc_thermal",
+        group_columns=("sample_label",),
+        value_columns=("glass_transition_c", "onset_temperature_c", "heat_capacity_j_per_g_k", "heat_flow_w_per_g"),
+    ),
+    ReferenceMetricSpec(
+        filename="polymer_composite_ignition.csv",
+        prefix="pc_ignition",
+        group_columns=("sample_label",),
+        value_columns=("ignition_temperature_c", "burn_time_min"),
+    ),
+    ReferenceMetricSpec(
+        filename="aluminium_alloys.csv",
+        prefix="aluminium",
+        group_columns=("processing_route",),
+        value_columns=("tensile_strength_mpa", "yield_strength_mpa", "elongation_pct"),
+    ),
+)
+
+
+def _coerce_metric_value(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        numeric = float(value)
+        if not math.isfinite(numeric):
+            return None
+        return numeric
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numeric):
+        return None
+    return numeric
+
+
+def _translate_reference_metrics(
+    payload: Mapping[str, Any],
+    bundle: OfficialFeaturesBundle,
+    match_key: str,
+) -> Dict[str, float]:
+    translated: Dict[str, float] = {}
+
+    def _apply(column: str, raw_value: Any) -> None:
+        numeric = _coerce_metric_value(raw_value)
+        if numeric is None:
+            return
+        for source_column, target_name, transform in _MATERIAL_METRIC_COLUMNS:
+            if column != source_column or target_name in translated:
+                continue
+            try:
+                translated[target_name] = float(transform(numeric))
+            except (TypeError, ValueError):
+                continue
+            return
+
+    for column, value in payload.items():
+        _apply(column, value)
+
+    reference_metrics = getattr(bundle, "reference_metrics", {}) or {}
+    if not reference_metrics:
+        return translated
+
+    candidates: list[str] = []
+    if match_key:
+        candidates.append(str(match_key))
+
+    for prefix, columns in _REFERENCE_METRIC_LOOKUPS.items():
+        values = []
+        for column in columns:
+            candidate = payload.get(column)
+            if candidate is None or candidate == "":
+                continue
+            if isinstance(candidate, float) and not math.isfinite(candidate):
+                continue
+            values.append(candidate)
+        if not values:
+            continue
+        slug = _feature_name_from_parts(prefix, *values)
+        if slug:
+            candidates.append(slug)
+
+    for slug in candidates:
+        metrics = reference_metrics.get(slug)
+        if not metrics:
+            continue
+        for column, value in metrics.items():
+            _apply(column, value)
+
+    return translated
+
+_MATERIAL_METRIC_COLUMNS: tuple[tuple[str, str, Any], ...] = (
+    ("pc_density_density_g_per_cm3", "official_density_kg_m3", lambda value: float(value) * 1000.0),
+    ("pc_density_density_kg_m3", "official_density_kg_m3", float),
+    ("pc_mechanics_tensile_strength_mpa", "official_tensile_strength_mpa", float),
+    ("pc_mechanics_stress_mpa", "official_tensile_strength_mpa", float),
+    ("pc_mechanics_yield_strength_mpa", "official_yield_strength_mpa", float),
+    ("pc_mechanics_modulus_gpa", "official_modulus_gpa", float),
+    ("pc_mechanics_strain_pct", "official_strain_pct", float),
+    ("pc_thermal_glass_transition_c", "official_glass_transition_c", float),
+    ("pc_thermal_onset_temperature_c", "official_decomposition_onset_c", float),
+    ("pc_ignition_ignition_temperature_c", "official_ignition_temperature_c", float),
+    ("pc_ignition_burn_time_min", "official_burn_time_min", float),
+    ("aluminium_tensile_strength_mpa", "official_tensile_strength_mpa", float),
+    ("aluminium_yield_strength_mpa", "official_yield_strength_mpa", float),
+    ("aluminium_elongation_pct", "official_elongation_pct", float),
+)
+
+_REFERENCE_METRIC_LOOKUPS: Dict[str, tuple[str, ...]] = {
+    "pc_density": ("pc_density_sample_label",),
+    "pc_mechanics": ("pc_mechanics_sample_label",),
+    "pc_thermal": ("pc_thermal_sample_label",),
+    "pc_ignition": ("pc_ignition_sample_label",),
+    "aluminium": ("aluminium_processing_route", "aluminium_class_id"),
+}
+
+
 class OfficialFeaturesBundle(NamedTuple):
     value_columns: tuple[str, ...]
     composition_columns: tuple[str, ...]
@@ -1024,6 +1219,7 @@ class OfficialFeaturesBundle(NamedTuple):
     processing_metrics: Dict[str, Dict[str, float]]
     leo_mass_savings: Dict[str, Dict[str, float]]
     propellant_benefits: Dict[str, Dict[str, float]]
+    reference_metrics: Dict[str, Dict[str, float]]
     l2l_constants: Dict[str, float]
     l2l_category_features: Dict[str, Dict[str, float]]
     l2l_item_features: Dict[str, Dict[str, float]]
@@ -1059,6 +1255,7 @@ def official_features_bundle() -> OfficialFeaturesBundle:
         {},
         {},
         {},
+        {},
         l2l.constants,
         l2l.category_features,
         l2l.item_features,
@@ -1077,6 +1274,11 @@ def official_features_bundle() -> OfficialFeaturesBundle:
     table_lazy = merge_reference_dataset(table_lazy, "nasa_waste_processing_products.csv", "processing")
     table_lazy = merge_reference_dataset(table_lazy, "nasa_leo_mass_savings.csv", "leo")
     table_lazy = merge_reference_dataset(table_lazy, "nasa_propellant_benefits.csv", "propellant")
+    table_lazy = merge_reference_dataset(table_lazy, "polymer_composite_density.csv", "pc_density")
+    table_lazy = merge_reference_dataset(table_lazy, "polymer_composite_mechanics.csv", "pc_mechanics")
+    table_lazy = merge_reference_dataset(table_lazy, "polymer_composite_thermal.csv", "pc_thermal")
+    table_lazy = merge_reference_dataset(table_lazy, "polymer_composite_ignition.csv", "pc_ignition")
+    table_lazy = merge_reference_dataset(table_lazy, "aluminium_alloys.csv", "aluminium")
 
     table_lazy = table_lazy.with_columns(
         [
@@ -1149,6 +1351,12 @@ def official_features_bundle() -> OfficialFeaturesBundle:
     leo_savings = extract_grouped_metrics("nasa_leo_mass_savings.csv", "leo")
     propellant_metrics = extract_grouped_metrics("nasa_propellant_benefits.csv", "propellant")
 
+    reference_metrics: Dict[str, Dict[str, float]] = {}
+    for spec in _REFERENCE_METRIC_SPECS:
+        metrics = extract_reference_metrics(spec)
+        if metrics:
+            reference_metrics.update(metrics)
+
     table_join = table_df.select(
         ["category_norm", "subitem_norm", *value_columns]
     ).unique(subset=["category_norm", "subitem_norm"], maintain_order=True)
@@ -1164,6 +1372,7 @@ def official_features_bundle() -> OfficialFeaturesBundle:
         processing_metrics,
         leo_savings,
         propellant_metrics,
+        reference_metrics,
         l2l.constants,
         l2l.category_features,
         l2l.item_features,
@@ -1201,6 +1410,10 @@ def lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], st
         key = f"{category}|{normalized}"
         payload = bundle.direct_map.get(key)
         if payload:
+            metrics = _translate_reference_metrics(payload, bundle, key)
+            if metrics:
+                payload = dict(payload)
+                payload.update(metrics)
             return payload, key
 
     token_candidates = [value for value in candidates if value]
@@ -1217,6 +1430,10 @@ def lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], st
             continue
         for reference_tokens, payload, match_key in matches:
             if tokens.issubset(reference_tokens):
+                metrics = _translate_reference_metrics(payload, bundle, str(match_key))
+                if metrics:
+                    payload = dict(payload)
+                    payload.update(metrics)
                 return payload, match_key
 
     return {}, ""
