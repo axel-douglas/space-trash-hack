@@ -104,6 +104,69 @@ def _safe_float(value: object) -> float | None:
     return number
 
 
+def _format_polymer_profile(row: pd.Series) -> str:
+    parts: list[str] = []
+
+    for column in POLYMER_SAMPLE_COLUMNS:
+        label = str(row.get(column) or "").strip()
+        if label:
+            parts.append(f"Ref {label}")
+            break
+
+    density = _safe_float(row.get("pc_density_density_g_per_cm3"))
+    if density:
+        parts.append(f"ρ {density:.2f} g/cm³")
+
+    tensile = _safe_float(row.get("pc_mechanics_tensile_strength_mpa"))
+    if tensile:
+        parts.append(f"σₜ {tensile:.0f} MPa")
+
+    modulus = _safe_float(row.get("pc_mechanics_modulus_gpa"))
+    if modulus:
+        parts.append(f"E {modulus:.1f} GPa")
+
+    glass_transition = _safe_float(row.get("pc_thermal_glass_transition_c"))
+    if glass_transition:
+        parts.append(f"Tg {glass_transition:.0f} °C")
+
+    ignition = _safe_float(row.get("pc_ignition_ignition_temperature_c"))
+    if ignition:
+        parts.append(f"Ign. {ignition:.0f} °C")
+
+    burn_time = _safe_float(row.get("pc_ignition_burn_time_min"))
+    if burn_time:
+        parts.append(f"Burn {burn_time:.1f} min")
+
+    return "||".join(parts)
+
+
+def _format_aluminium_profile(row: pd.Series) -> str:
+    parts: list[str] = []
+
+    route = str(row.get("aluminium_processing_route") or "").strip()
+    class_id = str(row.get("aluminium_class_id") or "").strip()
+    if route and class_id:
+        parts.append(f"{route} · Clase {class_id}")
+    elif route:
+        parts.append(route)
+    elif class_id:
+        parts.append(f"Clase {class_id}")
+
+    tensile = _safe_float(row.get("aluminium_tensile_strength_mpa"))
+    if tensile:
+        parts.append(f"σₜ {tensile:.0f} MPa")
+
+    yield_strength = _safe_float(row.get("aluminium_yield_strength_mpa"))
+    if yield_strength:
+        parts.append(f"σᵧ {yield_strength:.0f} MPa")
+
+    elongation = _safe_float(row.get("aluminium_elongation_pct"))
+    if elongation:
+        parts.append(f"ε {elongation:.0f}%")
+
+    return "||".join(parts)
+
+
 @st.cache_data
 def _load_processing_products() -> pd.DataFrame:
     try:
@@ -247,69 +310,6 @@ else:
 
 df["polymer_profile"] = df.apply(_format_polymer_profile, axis=1)
 df["aluminium_profile"] = df.apply(_format_aluminium_profile, axis=1)
-
-
-def _format_polymer_profile(row: pd.Series) -> str:
-    parts: list[str] = []
-
-    for column in POLYMER_SAMPLE_COLUMNS:
-        label = str(row.get(column) or "").strip()
-        if label:
-            parts.append(f"Ref {label}")
-            break
-
-    density = _safe_float(row.get("pc_density_density_g_per_cm3"))
-    if density:
-        parts.append(f"ρ {density:.2f} g/cm³")
-
-    tensile = _safe_float(row.get("pc_mechanics_tensile_strength_mpa"))
-    if tensile:
-        parts.append(f"σₜ {tensile:.0f} MPa")
-
-    modulus = _safe_float(row.get("pc_mechanics_modulus_gpa"))
-    if modulus:
-        parts.append(f"E {modulus:.1f} GPa")
-
-    glass_transition = _safe_float(row.get("pc_thermal_glass_transition_c"))
-    if glass_transition:
-        parts.append(f"Tg {glass_transition:.0f} °C")
-
-    ignition = _safe_float(row.get("pc_ignition_ignition_temperature_c"))
-    if ignition:
-        parts.append(f"Ign. {ignition:.0f} °C")
-
-    burn_time = _safe_float(row.get("pc_ignition_burn_time_min"))
-    if burn_time:
-        parts.append(f"Burn {burn_time:.1f} min")
-
-    return "||".join(parts)
-
-
-def _format_aluminium_profile(row: pd.Series) -> str:
-    parts: list[str] = []
-
-    route = str(row.get("aluminium_processing_route") or "").strip()
-    class_id = str(row.get("aluminium_class_id") or "").strip()
-    if route and class_id:
-        parts.append(f"{route} · Clase {class_id}")
-    elif route:
-        parts.append(route)
-    elif class_id:
-        parts.append(f"Clase {class_id}")
-
-    tensile = _safe_float(row.get("aluminium_tensile_strength_mpa"))
-    if tensile:
-        parts.append(f"σₜ {tensile:.0f} MPa")
-
-    yield_strength = _safe_float(row.get("aluminium_yield_strength_mpa"))
-    if yield_strength:
-        parts.append(f"σᵧ {yield_strength:.0f} MPa")
-
-    elongation = _safe_float(row.get("aluminium_elongation_pct"))
-    if elongation:
-        parts.append(f"ε {elongation:.0f}%")
-
-    return "||".join(parts)
 
 mission_columns = [column for column in df.columns if column.startswith("summary_")]
 mission_labels = {
