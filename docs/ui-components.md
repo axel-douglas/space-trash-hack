@@ -2,6 +2,8 @@
 
 La librería `app.modules.luxe_components` concentra los bloques visuales premium que usamos en la demo de Rex-AI. Cada componente inyecta automáticamente estilos (parallax, glassmorphism, brillo dinámico) y expone parámetros declarativos para adaptar el branding sin duplicar CSS.
 
+> **Copy minimalista**: cuando documentes o agregues componentes, alineá los textos con la [Guía de copy minimalista](./ux-copy-minimal.md). Usá títulos cortos, verbos de acción y evita metáforas para mantener una narrativa consistente en toda la interfaz.
+
 ## Componentes disponibles
 
 ### `TeslaHero`
