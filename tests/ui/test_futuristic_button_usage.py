@@ -65,7 +65,8 @@ def test_futuristic_button_transitions(monkeypatch) -> None:
     app = runner.run()
 
     html_block = app.session_state["__fx_markup__"]
-    assert "rexai-fx-line" in html_block
+    assert "rexai-minimal-line" in html_block
+    assert 'data-fx="minimal"' in html_block
     assert _extract_state_markup(html_block) == "idle"
 
     app = app.button(key="demo_fx_loading").click().run()
@@ -75,3 +76,30 @@ def test_futuristic_button_transitions(monkeypatch) -> None:
     app = app.button(key="demo_fx_success").click().run()
     html_block = app.session_state["__fx_markup__"]
     assert _extract_state_markup(html_block) == "success"
+
+
+def test_futuristic_button_cinematic_mode(monkeypatch) -> None:
+    ui_blocks = import_module("app.modules.ui_blocks")
+
+    def _capture_html(markup: str, **kwargs: object) -> dict[str, object]:
+        import streamlit as st
+
+        st.session_state["__fx_markup__"] = markup
+        return {}
+
+    monkeypatch.setattr(ui_blocks, "components_html", _capture_html)
+
+    def _cinematic_app() -> None:
+        import streamlit as st
+
+        from app.modules.ui_blocks import futuristic_button
+
+        futuristic_button("Demo", key="cinematic_demo", mode="cinematic")
+
+    runner = StreamlitRunner(_cinematic_app)
+    app = runner.run()
+
+    html_block = app.session_state["__fx_markup__"]
+    assert "rexai-fx-wrapper" in html_block
+    assert 'data-fx="cinematic"' in html_block
+    assert "rexai-fx-particles" in html_block

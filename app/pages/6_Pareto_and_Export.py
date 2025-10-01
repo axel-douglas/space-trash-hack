@@ -577,6 +577,7 @@ La capa “Pareto” marca los que no pueden mejorarse en un eje sin empeorar ot
                 "success": "Disponible en Export Center",
                 "error": "Revisá la opción seleccionada",
             },
+            mode="cinematic",
         ):
             st.session_state[select_state_key] = "loading"
             st.session_state[select_trigger_key] = True

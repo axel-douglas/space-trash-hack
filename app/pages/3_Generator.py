@@ -15,10 +15,10 @@ from app.modules.process_planner import choose_process
 from app.modules.safety import check_safety, safety_badge
 from app.modules.ui_blocks import (
     badge_group,
-    futuristic_button,
     layout_block,
     load_theme,
     micro_divider,
+    minimal_button,
 )
 from app.modules.luxe_components import ChipRow, MetricSpec, RankingCockpit, TeslaHero
 from app.modules.visualizations import ConvergenceScene
@@ -148,7 +148,7 @@ with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None
         crew_low = target.get("crew_time_low", False)
         control.caption("Los resultados privilegian %s" % ("tiempo de tripulación" if crew_low else "un balance general"))
         with control:
-            run = futuristic_button(
+            run = minimal_button(
                 "Generar recomendaciones",
                 key="generator_run_button",
                 state=button_state,
@@ -157,7 +157,6 @@ with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None
                 loading_label="Generando…",
                 success_label="Candidatos listos",
                 error_label="Reintentar",
-                enable_vibration=True,
                 status_hints={
                     "idle": "",
                     "loading": "Corriendo optimizador",
