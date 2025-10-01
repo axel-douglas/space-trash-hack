@@ -11,6 +11,12 @@ from app.modules.io import load_waste_df, save_waste_df
 from app.modules.navigation import set_active_step
 from app.modules.ui_blocks import load_theme, minimal_button
 from app.modules.problematic import problematic_mask
+from app.modules.schema import (
+    ALUMINIUM_NUMERIC_COLUMNS,
+    ALUMINIUM_SAMPLE_COLUMNS,
+    POLYMER_NUMERIC_COLUMNS,
+    POLYMER_SAMPLE_COLUMNS,
+)
 
 _SAVE_SUCCESS_FLAG = "_inventory_save_success"
 
@@ -41,40 +47,6 @@ st.caption(
 )
 
 # --------------------- helpers robustos de columnas ---------------------
-POLYMER_SAMPLE_COLUMNS = (
-    "pc_density_sample_label",
-    "pc_mechanics_sample_label",
-    "pc_thermal_sample_label",
-    "pc_ignition_sample_label",
-)
-
-POLYMER_NUMERIC_COLUMNS = (
-    "pc_density_density_g_per_cm3",
-    "pc_density_density_kg_m3",
-    "pc_mechanics_tensile_strength_mpa",
-    "pc_mechanics_stress_mpa",
-    "pc_mechanics_yield_strength_mpa",
-    "pc_mechanics_modulus_gpa",
-    "pc_mechanics_strain_pct",
-    "pc_thermal_glass_transition_c",
-    "pc_thermal_onset_temperature_c",
-    "pc_thermal_heat_capacity_j_per_g_k",
-    "pc_thermal_heat_flow_w_per_g",
-    "pc_ignition_ignition_temperature_c",
-    "pc_ignition_burn_time_min",
-)
-
-ALUMINIUM_SAMPLE_COLUMNS = (
-    "aluminium_processing_route",
-    "aluminium_class_id",
-)
-
-ALUMINIUM_NUMERIC_COLUMNS = (
-    "aluminium_tensile_strength_mpa",
-    "aluminium_yield_strength_mpa",
-    "aluminium_elongation_pct",
-)
-
 EXTERNAL_STRING_COLUMNS = POLYMER_SAMPLE_COLUMNS + ALUMINIUM_SAMPLE_COLUMNS
 EXTERNAL_NUMERIC_COLUMNS = POLYMER_NUMERIC_COLUMNS + ALUMINIUM_NUMERIC_COLUMNS
 EXTERNAL_COLUMNS = EXTERNAL_STRING_COLUMNS + EXTERNAL_NUMERIC_COLUMNS
