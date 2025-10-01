@@ -10,6 +10,12 @@
   --glow-3: rgba(45, 212, 191, 0.3);
   --shine-rotation: 18deg;
   --animation-duration: 680ms;
+  --mission-hud-radius: 18px;
+  --mission-hud-gap: 16px;
+  --mission-hud-stack: clamp(0.8rem, 1vw + 0.4rem, 1.35rem);
+  --mission-hud-bg: color-mix(in srgb, var(--surface-panel) 95%, transparent);
+  --mission-hud-border: color-mix(in srgb, var(--border-soft) 78%, transparent);
+  --mission-hud-shadow: 0 18px 38px rgba(8, 18, 36, 0.28);
 }
 
 .layout-stack {
@@ -465,4 +471,13 @@
   .depth-stack {
     padding: 1.25rem 1.35rem;
   }
+}
+
+.mission-hud--compact {
+  isolation: isolate;
+}
+
+.mission-hud--compact .mission-hud__details-content {
+  background: color-mix(in srgb, var(--surface-panel) 98%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border-soft) 78%, transparent);
 }

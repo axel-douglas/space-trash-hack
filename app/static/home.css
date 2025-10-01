@@ -1,6 +1,32 @@
 /* Home page minimal layout styles */
 
 @layer pages {
+  :root {
+    --mission-hud-stack: clamp(0.75rem, 0.55rem + 1vw, 1.35rem);
+  }
+
+  .mission-hud--compact {
+    margin-bottom: var(--mission-hud-stack);
+  }
+
+  .mission-hud--compact .mission-hud__actions {
+    gap: 0.75rem;
+  }
+
+  .mission-hud--compact .mission-hud__action strong {
+    font-weight: 600;
+  }
+
+  .mission-hud--compact .mission-hud__meta {
+    gap: 0.85rem;
+  }
+
+  @media (max-width: 60rem) {
+    .mission-hud--compact .mission-hud__meta {
+      flex-wrap: wrap;
+    }
+  }
+
   .main > div {
     padding-top: var(--home-stack-gap);
   }
