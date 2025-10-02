@@ -38,8 +38,17 @@ def test_render_breadcrumbs_is_plain_text(monkeypatch: pytest.MonkeyPatch) -> No
     step = navigation.get_step("results")
     labels = navigation.render_breadcrumbs(step, extra=["Detalle"])
 
-    assert labels == ["Home", "Brief", "Inventario", "Target", "Generador", "Resultados", "Detalle"]
-    assert rendered and rendered[-1] == "Home › Brief › Inventario › Target › Generador › Resultados › Detalle"
+    assert labels == [
+        "Home",
+        "Overview",
+        "Target (legacy)",
+        "Generador (legacy)",
+        "Resultados (legacy)",
+        "Detalle",
+    ]
+    assert rendered and rendered[-1] == (
+        "Home › Overview › Target (legacy) › Generador (legacy) › Resultados (legacy) › Detalle"
+    )
 
 
 def test_render_stepper_returns_summary(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -56,5 +65,5 @@ def test_render_stepper_returns_summary(monkeypatch: pytest.MonkeyPatch) -> None
     step = navigation.get_step("playbooks")
     summary = navigation.render_stepper(step)
 
-    assert summary == "Paso 8 de 10 · Playbooks"
+    assert summary == "Paso 7 de 9 · Playbooks (legacy)"
     assert captured[-1] == summary
