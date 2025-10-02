@@ -1,5 +1,9 @@
 """Simplified scenario playbooks with actionable summaries."""
 
+from app.bootstrap import ensure_project_root
+
+ensure_project_root()
+
 from typing import Iterable
 
 import pandas as pd

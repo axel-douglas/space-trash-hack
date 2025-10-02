@@ -1,3 +1,7 @@
+from app.bootstrap import ensure_project_root
+
+ensure_project_root()
+
 import numpy as np
 import streamlit as st
 import pandas as pd

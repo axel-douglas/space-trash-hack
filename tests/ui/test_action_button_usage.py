@@ -9,9 +9,19 @@ from typing import Any
 import pytest
 
 
-for _missing in ("joblib", "plotly"):
-    sys.modules.setdefault(_missing, types.ModuleType(_missing))
-sys.modules.setdefault("plotly.graph_objects", types.ModuleType("plotly.graph_objects"))
+sys.modules.setdefault("joblib", types.ModuleType("joblib"))
+
+try:  # prefer the real dependency when available
+    import plotly  # type: ignore[import]
+
+    # Ensure the submodules used in the UI helpers are importable during the test
+    import plotly.graph_objects  # noqa: F401  # type: ignore[import]
+    import plotly.io  # noqa: F401  # type: ignore[import]
+except ModuleNotFoundError:  # pragma: no cover - fallback for minimal environments
+    stub = types.ModuleType("plotly")
+    sys.modules.setdefault("plotly", stub)
+    sys.modules.setdefault("plotly.graph_objects", types.ModuleType("plotly.graph_objects"))
+    sys.modules.setdefault("plotly.io", types.ModuleType("plotly.io"))
 
 _polars = types.ModuleType("polars")
 

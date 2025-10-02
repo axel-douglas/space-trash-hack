@@ -1,5 +1,9 @@
 """Lightweight capacity simulator driven by shared helpers."""
 
+from app.bootstrap import ensure_project_root
+
+ensure_project_root()
+
 import pandas as pd
 import streamlit as st
 
