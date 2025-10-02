@@ -11,27 +11,6 @@ from streamlit.delta_generator import DeltaGenerator
 
 from app.modules.visual_theme import apply_global_visual_theme
 
-_SPACE_TOKEN_MAP: dict[str, str] = {
-    "xs": "var(--lab-space-1)",
-    "sm": "var(--lab-space-2)",
-    "md": "var(--lab-space-3)",
-    "lg": "var(--lab-space-4)",
-    "xl": "var(--lab-space-5)",
-    "xxl": "var(--lab-space-6)",
-}
-
-_SURFACE_BACKGROUNDS: dict[str, str] = {
-    "base": "var(--lab-color-surface)",
-    "sunken": "var(--lab-color-layer-soft)",
-    "raised": "var(--lab-color-surface)",
-}
-
-_SURFACE_BORDERS: dict[str, str] = {
-    "base": "var(--lab-color-border)",
-    "sunken": "var(--lab-color-border)",
-    "raised": "var(--lab-color-border-strong)",
-}
-
 _LAYOUT_STYLE_MAP: dict[str, str] = {
     "layout-stack": "display:flex; flex-direction:column; gap: var(--lab-space-4);",
     "layout-grid": (
@@ -63,7 +42,6 @@ _LAYOUT_STYLE_MAP: dict[str, str] = {
     "fade-in-delayed": "",
 }
 _THEME_HASH_KEY = "__rexai_theme_hash__"
-_REVEAL_FLAG_KEY = "__rexai_reveal_flag__"
 
 def _static_path(filename: str | Path) -> Path:
     return Path(__file__).resolve().parents[1] / "static" / Path(filename)
@@ -112,23 +90,6 @@ def initialise_frontend() -> None:
     apply_global_visual_theme()
 
 
-def enable_reveal_animation() -> None:
-    """Signal the front-end to activate scroll-based reveal animations."""
-
-    if st.session_state.get(_THEME_HASH_KEY):
-        load_theme(show_hud=False)
-    else:
-        load_theme()
-    if st.session_state.get(_REVEAL_FLAG_KEY):
-        return
-
-    st.markdown(
-        '<span data-rexai-interactions="reveal" style="display:none"></span>',
-        unsafe_allow_html=True,
-    )
-    st.session_state[_REVEAL_FLAG_KEY] = True
-
-
 def inject_css(show_hud: bool = False) -> None:
     """Backward-compatible alias for legacy code paths."""
 
@@ -144,95 +105,6 @@ def use_token(name: str, fallback: Optional[str] = None) -> str:
     if fallback is not None:
         return f"var({css_var}, {fallback})"
     return f"var({css_var})"
-
-
-def _space_value(token: str | None) -> str | None:
-    if token is None:
-        return None
-    sanitized = token.strip().lower()
-    return _SPACE_TOKEN_MAP.get(sanitized, token)
-
-
-def _surface_markup(
-    *,
-    tone: str,
-    padding: Optional[str],
-    shadow: Optional[str],
-    radius: Optional[str],
-    background: str | None = None,
-) -> str:
-    del shadow  # Shadows are intentionally omitted in the minimal lab theme.
-
-    tone_key = tone if tone in _SURFACE_BACKGROUNDS else "base"
-    background_color = background or _SURFACE_BACKGROUNDS[tone_key]
-    border_color = _SURFACE_BORDERS.get(tone_key, "var(--lab-color-border)")
-
-    padding_value = _space_value(padding)
-    radius_value = radius or "var(--lab-radius-2)"
-
-    style_bits = [
-        f"background-color: {background_color};",
-        f"border: var(--lab-line-weight) solid {border_color};",
-        "color: var(--lab-color-text);",
-        f"border-radius: {radius_value};",
-    ]
-
-    if padding_value:
-        style_bits.append(f"padding: {padding_value};")
-    else:
-        style_bits.append("padding: var(--lab-space-5);")
-
-    style_attr = " ".join(style_bits)
-    return f'<div data-surface-tone="{tone_key}" style="{style_attr}">'  # noqa: S702
-
-
-@contextmanager
-def surface(
-    *,
-    tone: Literal["base", "sunken", "raised"] = "base",
-    padding: str | None = "lg",
-    shadow: Literal["soft", "lift", "float"] | None = "soft",
-    radius: str | None = None,
-) -> Iterator[DeltaGenerator]:
-    """Render content inside a themed surface wrapper."""
-
-    load_theme(show_hud=False)
-    container = st.container()
-    opener = _surface_markup(tone=tone, padding=padding, shadow=shadow, radius=radius)
-    container.markdown(opener, unsafe_allow_html=True)
-    inner = container.container()
-    try:
-        with inner:
-            yield inner
-    finally:
-        container.markdown("</div>", unsafe_allow_html=True)
-
-
-@contextmanager
-def glass_card(
-    *,
-    padding: str | None = "lg",
-    shadow: Literal["soft", "lift", "float"] | None = "float",
-    radius: str | None = None,
-) -> Iterator[DeltaGenerator]:
-    """Render content inside a frosted glass style surface."""
-
-    load_theme(show_hud=False)
-    container = st.container()
-    opener = _surface_markup(
-        tone="sunken",
-        padding=padding,
-        shadow=shadow,
-        radius=radius,
-        background="var(--lab-color-layer-strong)",
-    )
-    container.markdown(opener, unsafe_allow_html=True)
-    inner = container.container()
-    try:
-        with inner:
-            yield inner
-    finally:
-        container.markdown("</div>", unsafe_allow_html=True)
 
 
 def card(title: str, body: str = "", *, render: bool = True) -> str:

@@ -7,7 +7,7 @@ ops). Esta guía resume qué preparar antes de un recorrido y cómo adaptar la
 experiencia.
 
 ## 1. Brief operativo
-- **Componente**: combinación de `surface`, `chipline` y `minimal_button`.
+- **Componente**: combinación de `layout_stack`, `chipline` y `minimal_button`.
 - **Narrativa**: enfocá el mensaje en la misión del turno (ej. "Validar receta
   EVA sin PFAS"). Evitá metáforas y usa verbos de acción.
 - **Assets**: las imágenes o GIFs deben ir en `app/static/media`. Mantener peso
@@ -24,7 +24,7 @@ experiencia.
 - **Activación**: `minimal_button` con `key="guided_demo"` que setea
   `st.session_state["demo_active"]`.
 - **Progresión**: usa `st_autorefresh` o callbacks livianos para avanzar cada
-  6-8 segundos. La animación `enable_reveal_animation()` suaviza la transición.
+  6-8 segundos y mantené las transiciones limpias.
 - **Copy de pasos**: declaralo en un JSON (`data/onboarding_steps.json`) con
   `title`, `body` y `icon`. Así podemos traducir rápido o ajustar mensajes.
 

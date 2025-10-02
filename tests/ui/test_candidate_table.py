@@ -47,28 +47,60 @@ def test_candidate_table_orders_by_score() -> None:
     runner = StreamlitRunner(_candidate_table_app)
     app = runner.run()
 
-    markup = "".join(_collect_markup(app))
-    assert "#01 · Proceso Seguro" in markup
-    assert markup.index("Proceso Seguro") < markup.index("Proceso Riesgoso")
+    table_df = app.dataframe[0].value
+    assert table_df.iloc[0]["Proceso"].startswith("Proceso Seguro")
+    assert table_df["Score"].is_monotonic_decreasing
 
 
-def test_candidate_table_filters_and_feedback() -> None:
+def test_candidate_table_filters_and_feedback(monkeypatch) -> None:
     runner = StreamlitRunner(_candidate_table_app)
     app = runner.run()
 
     app = app.checkbox(key="showroom_only_safe").check().run()
-    filtered_html = "".join(_collect_markup(app))
-    assert "Proceso Riesgoso" not in filtered_html
-    assert "🛡️ Filtro: seguros" in filtered_html
-    assert "💧 Dentro de límite de agua" in filtered_html
+    table_df = app.dataframe[0].value
+    assert not table_df["Proceso"].str.contains("Riesgoso").any()
+
+    tags_series = table_df.get("Etiquetas")
+    flattened_tags: list[str] = []
+    if tags_series is not None:
+        for tags in tags_series:
+            if tags is None:
+                continue
+            if isinstance(tags, str):
+                flattened_tags.append(tags)
+                continue
+            try:
+                for tag in tags:
+                    if tag:
+                        flattened_tags.append(str(tag))
+            except TypeError:
+                flattened_tags.append(str(tags))
+    assert "🛡️ Filtro: seguros" in flattened_tags
+    assert "💧 Dentro de límite de agua" in flattened_tags
 
     from app.modules import candidate_showroom as showroom
+    from app.modules import ui_blocks
+
+    class _StatusStub:
+        def __init__(self, label: str, state: str | None = None) -> None:
+            self.label = label
+            self.state = state
+
+        def update(self, *, label: str | None = None, state: str | None = None, **_: object) -> None:
+            if label is not None:
+                self.label = label
+            if state is not None:
+                self.state = state
+
+    def _status_factory(label: str, state: str | None = None, **_: object) -> _StatusStub:
+        return _StatusStub(label, state)
+
+    monkeypatch.setattr(ui_blocks.st, "status", _status_factory)
 
     app.session_state[showroom._SUCCESS_KEY] = {
         "message": "Proceso Seguro confirmado. Revisá pestañas.",
         "candidate_key": "1",
     }
     app = app.run()
-    success_html = "".join(_collect_markup(app))
-    assert "inline-success" in success_html
-    assert "Proceso Seguro confirmado. Revisá pestañas." in success_html
+    success_messages = [msg.body for msg in app.success]
+    assert any("Proceso Seguro confirmado" in body for body in success_messages)

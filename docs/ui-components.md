@@ -12,19 +12,17 @@ controles y estados informativos sin depender del antiguo paquete `luxe`.
 ## Inicializar tema base
 
 ```python
-from app.modules.ui_blocks import load_theme, surface, enable_reveal_animation
+from app.modules.ui_blocks import load_theme, layout_stack
 
 load_theme()  # inyecta CSS base NASA e iconografía compartida
 
-with surface(tone="raised"):
-    st.subheader("Panel de control Rex-AI")
-    st.write("Agrupá métricas clave dentro del contexto del laboratorio.")
-
-enable_reveal_animation()  # mantiene compatibilidad con animaciones suaves
+with layout_stack() as stack:
+    stack.subheader("Panel de control Rex-AI")
+    stack.write("Agrupá métricas clave dentro del contexto del laboratorio.")
 ```
 
-- `surface` y `glass_card` generan contenedores temáticos con paddings y
-  sombras coherentes.
+- `layout_stack` y `layout_block` permiten orquestar columnas y agrupaciones
+  sin escribir HTML manual.
 - El tema global mantiene contraste AA sin depender de toggles en pantalla.
 
 ## Layouts operativos
