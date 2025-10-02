@@ -7,6 +7,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from app.modules.io import load_waste_df
 from app.modules.ml_models import get_model_registry
 from app.modules.navigation import set_active_step
 from app.modules.ui_blocks import load_theme
@@ -25,13 +26,19 @@ model_registry = get_model_registry()
 
 @st.cache_data
 def load_inventory_sample() -> pd.DataFrame | None:
-    sample_path = Path("data") / "waste_inventory_sample.csv"
-    if not sample_path.exists():
-        return None
+    """Return the official sample inventory using the shared loader."""
+
     try:
-        return pd.read_csv(sample_path)
+        df = load_waste_df()
+    except FileNotFoundError:
+        return None
     except Exception:
         return None
+
+    if df is None or df.empty:
+        return None
+
+    return df
 
 
 @st.cache_data
@@ -92,6 +99,14 @@ def format_energy(value: float | None) -> str:
     if value >= 1000:
         return f"{value/1000:.2f} MWh"
     return f"{value:.0f} kWh"
+
+
+def format_volume(value: float | None) -> str:
+    if value is None:
+        return "—"
+    if value >= 1:
+        return f"{value:.2f} m³"
+    return f"{value * 1000:.0f} L"
 
 
 def training_health_summary(
@@ -206,7 +221,16 @@ def compute_inventory_totals(df: pd.DataFrame | None) -> dict[str, float]:
     if df is None or df.empty:
         return {}
 
-    mass = pd.to_numeric(df.get("mass_kg"), errors="coerce").fillna(0.0)
+    if "kg" in df.columns:
+        mass = pd.Series(df["kg"], dtype="float64").fillna(0.0)
+    else:
+        mass = pd.to_numeric(df.get("mass_kg"), errors="coerce").fillna(0.0)
+
+    if "volume_l" in df.columns:
+        volume_l = pd.Series(df["volume_l"], dtype="float64").fillna(0.0)
+    else:
+        volume_l = pd.to_numeric(df.get("volume_l"), errors="coerce").fillna(0.0)
+
     moisture = pd.to_numeric(df.get("moisture_pct"), errors="coerce").fillna(0.0) / 100.0
     difficulty = (
         pd.to_numeric(df.get("difficulty_factor"), errors="coerce")
@@ -222,6 +246,7 @@ def compute_inventory_totals(df: pd.DataFrame | None) -> dict[str, float]:
         "mass_kg": float(mass.sum()),
         "water_l": float((mass * moisture).sum()),
         "energy_kwh": float((mass * energy_per_kg).sum()),
+        "volume_m3": float(volume_l.sum()) / 1000.0,
     }
     return totals
 
@@ -348,6 +373,19 @@ feedback_metric_value = (
     else "Sin registros"
 )
 
+if isinstance(inventory_reference_df, pd.DataFrame) and not inventory_reference_df.empty:
+    problematic_count = int(
+        inventory_reference_df.get("_problematic", pd.Series(dtype=bool))
+        .astype(bool)
+        .sum()
+    )
+    inventory_metric_delta_display = f"Problemáticos: {problematic_count}"
+else:
+    problematic_count = 0
+    inventory_metric_delta_display = None
+
+inventory_origin_label = "Fuente: sesión actual" if inventory_loaded else "Fuente: muestra NASA"
+
 st.title("Panel operativo Rex-AI")
 st.caption(
     "Monitoreá el estado del modelo, verificá tu inventario normalizado y seguí los últimos "
@@ -370,8 +408,9 @@ with col_inventory:
     st.metric(
         label="Inventario normalizado",
         value=inventory_metric_value,
-        delta=inventory_metric_delta,
+        delta=inventory_metric_delta_display or inventory_metric_delta,
     )
+    st.caption(inventory_origin_label)
     st.caption(describe_baseline_caption(baseline_state))
 
 with col_feedback:
@@ -398,18 +437,33 @@ if inventory_totals:
     energy_delta, energy_detail = compute_delta_strings(
         "energy_kwh", inventory_totals.get("energy_kwh", 0.0), baseline_totals, " kWh"
     )
+    volume_delta, volume_detail = compute_delta_strings(
+        "volume_m3",
+        inventory_totals.get("volume_m3", 0.0),
+        baseline_totals,
+        " m³",
+        precision=2,
+    )
 
     tot_mass = inventory_totals.get("mass_kg")
     tot_water = inventory_totals.get("water_l")
     tot_energy = inventory_totals.get("energy_kwh")
+    tot_volume = inventory_totals.get("volume_m3")
 
-    col_mass, col_water, col_energy = st.columns(3)
+    col_mass, col_volume, col_water, col_energy = st.columns(4)
     col_mass.metric(
         "Masa total",
         format_mass(tot_mass),
         delta=mass_delta if mass_delta is not None else None,
     )
     col_mass.caption(mass_detail)
+
+    col_volume.metric(
+        "Volumen total",
+        format_volume(tot_volume),
+        delta=volume_delta if volume_delta is not None else None,
+    )
+    col_volume.caption(volume_detail)
 
     col_water.metric(
         "Agua estimada",
@@ -431,23 +485,74 @@ with st.expander(
     "Ver inventario normalizado", expanded=inventory_reference_df is not None and not inventory_reference_df.empty
 ):
     if inventory_reference_df is not None and not inventory_reference_df.empty:
-        display_columns = [
-            column
-            for column in [
-                "id",
-                "category",
-                "material",
-                "mass_kg",
-                "difficulty_factor",
-                "flags",
-            ]
-            if column in inventory_reference_df.columns
-        ]
+        table_data: dict[str, pd.Series] = {}
+
+        if "material_display" in inventory_reference_df.columns:
+            table_data["Material"] = inventory_reference_df["material_display"].astype(str)
+        elif "material" in inventory_reference_df.columns:
+            table_data["Material"] = inventory_reference_df["material"].astype(str)
+
+        if "category" in inventory_reference_df.columns:
+            table_data["Categoría"] = inventory_reference_df["category"].astype(str)
+
+        if "kg" in inventory_reference_df.columns:
+            table_data["Masa (kg)"] = pd.Series(
+                inventory_reference_df["kg"], dtype="float64"
+            ).fillna(0.0)
+        elif "mass_kg" in inventory_reference_df.columns:
+            table_data["Masa (kg)"] = pd.to_numeric(
+                inventory_reference_df["mass_kg"], errors="coerce"
+            ).fillna(0.0)
+
+        if "volume_l" in inventory_reference_df.columns:
+            table_data["Volumen (m³)"] = (
+                pd.to_numeric(inventory_reference_df["volume_l"], errors="coerce").fillna(0.0)
+                / 1000.0
+            )
+
+        if "_problematic" in inventory_reference_df.columns:
+            table_data["Problemático"] = inventory_reference_df["_problematic"].astype(bool)
+
+        if "propellant_mission" in inventory_reference_df.columns:
+            mission_series = inventory_reference_df["propellant_mission"].astype(str).str.strip()
+            if mission_series.replace("", pd.NA).notna().any():
+                table_data["Misión (referencia)"] = mission_series
+
+        table_df = pd.DataFrame(table_data)
+
+        column_config: dict[str, object] = {}
+        if "Masa (kg)" in table_df.columns:
+            column_config["Masa (kg)"] = st.column_config.NumberColumn("Masa (kg)", format="%.0f")
+        if "Volumen (m³)" in table_df.columns:
+            column_config["Volumen (m³)"] = st.column_config.NumberColumn("Volumen (m³)", format="%.2f")
+        if "Problemático" in table_df.columns:
+            column_config["Problemático"] = st.column_config.CheckboxColumn(
+                "Problemático", disabled=True
+            )
+
         st.dataframe(
-            inventory_reference_df[display_columns],
+            table_df,
             use_container_width=True,
             hide_index=True,
+            column_config=column_config,
         )
+
+        if "category" in inventory_reference_df.columns:
+            categories = sorted(
+                {
+                    str(category).strip()
+                    for category in inventory_reference_df["category"].dropna()
+                    if str(category).strip()
+                }
+            )
+            if categories:
+                top_categories = categories[:5]
+                label = ", ".join(top_categories)
+                if len(categories) > len(top_categories):
+                    label += ", …"
+                st.caption(f"Categorías: {label}")
+
+        st.caption(f"Problemáticos detectados: {problematic_count}")
     else:
         st.info("No hay inventario disponible todavía.")
 
