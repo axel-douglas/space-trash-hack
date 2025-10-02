@@ -19,7 +19,7 @@ from streamlit_sortables import sort_items
 
 from app.modules.explain import compare_table, score_breakdown
 from app.modules.navigation import render_breadcrumbs, set_active_step
-from app.modules.ui_blocks import initialise_frontend, load_theme
+from app.modules.ui_blocks import initialise_frontend, load_theme, pill
 from app.modules.io import load_waste_df
 
 
@@ -200,22 +200,10 @@ if not cands or not target:
 
 inventory_df = load_waste_df()
 
-# ======== estilo visual ========
-st.markdown(
-    """
-    <style>
-    .kpi {border-color: rgba(128,128,128,0.25); margin-bottom:12px;}
-    .kpi .v {font-weight:700;}
-    .pill {font-weight:600; font-size:0.85rem;}
-    h2 span.sub {font-size:0.95rem; font-weight:500; opacity:0.7; margin-left:8px;}
-    .small {font-size:0.9rem; opacity:0.85;}
-    </style>
-    """,
-    unsafe_allow_html=True,
+st.title("🧪 Compare & Explain")
+st.caption(
+    "Compará candidatos como en un *design review*: qué rinde más, dónde gasta menos, y por qué elige la IA esa receta."
 )
-
-st.markdown("# 🧪 Compare & Explain")
-st.caption("Compará candidatos como en un *design review*: qué rinde más, dónde gasta menos, y por qué elige la IA esa receta.")
 
 # ======== tabla comparativa base ========
 df_base = compare_table(cands, target, crew_time_low=target.get("crew_time_low", False))
@@ -254,6 +242,11 @@ for idx, candidate in enumerate(cands, start=1):
             **{ALUMINIUM_LABEL_MAP.get(key, key): value for key, value in aluminium_metrics.items()},
         })
 
+# ======== tabla comparativa base ========
+st.subheader("📊 Tabla comparativa de candidatos")
+st.caption("Visualizá el score junto a recursos y propiedades clave.")
+st.dataframe(df_base.set_index("Opción"), use_container_width=True)
+
 # Sección de métricas externas
 if reference_rows:
     st.markdown("### 🔬 Métricas externas por candidato")
@@ -286,15 +279,19 @@ if reference_rows:
         st.plotly_chart(fig_alu, use_container_width=True)
 
 # KPIs generales
-colA, colB, colC, colD = st.columns(4)
-with colA:
-    st.markdown(f'<div class="kpi"><h3>Opciones generadas</h3><div class="v">{len(cands)}</div><div class="hint">Muestra suficiente para comparar</div></div>', unsafe_allow_html=True)
-with colB:
-    st.markdown(f'<div class="kpi"><h3>Mejor Score</h3><div class="v">{df_base["Score"].max():.2f}</div><div class="hint">Top actual</div></div>', unsafe_allow_html=True)
-with colC:
-    st.markdown(f'<div class="kpi"><h3>Consumo mínimo de agua</h3><div class="v">{df_base["Agua (L)"].min():.2f} L</div><div class="hint">Entre todas las opciones</div></div>', unsafe_allow_html=True)
-with colD:
-    st.markdown(f'<div class="kpi"><h3>Energía mínima</h3><div class="v">{df_base["Energía (kWh)"].min():.2f} kWh</div><div class="hint">Entre todas las opciones</div></div>', unsafe_allow_html=True)
+kpi_cols = st.columns(4)
+with kpi_cols[0]:
+    st.metric("Opciones generadas", len(cands))
+    st.caption("Muestra suficiente para comparar")
+with kpi_cols[1]:
+    st.metric("Mejor Score", f"{df_base['Score'].max():.2f}")
+    st.caption("Top actual")
+with kpi_cols[2]:
+    st.metric("Consumo mínimo de agua", f"{df_base['Agua (L)'].min():.2f} L")
+    st.caption("Entre todas las opciones")
+with kpi_cols[3]:
+    st.metric("Energía mínima", f"{df_base['Energía (kWh)'].min():.2f} kWh")
+    st.caption("Entre todas las opciones")
 
 # ======== Panel Comparómetro interactivo ========
 st.markdown("## 🧭 Comparómetro side-by-side")
@@ -518,7 +515,8 @@ tab1, tab2, tab3 = st.tabs(["🔍 Inspector de candidato", "⚔️ Duelo (A vs B
 
 # --- TAB 1: Inspector de candidato ---
 with tab1:
-    st.markdown("## 🔍 Inspector de candidato <span class='sub'>(ver detalle y desglose del score)</span>", unsafe_allow_html=True)
+    st.subheader("🔍 Inspector de candidato")
+    st.caption("Ver detalle y desglose del score para cada opción.")
     pick = st.number_input("Elegí la Opción #", min_value=1, max_value=len(cands), value=1, step=1)
     c = cands[int(pick)-1]
 
@@ -533,16 +531,26 @@ with tab1:
         st.markdown(f"**Predicción** → Rigidez {p.rigidity:.2f} | Estanqueidad {p.tightness:.2f} | Masa {p.mass_final_kg:.2f} kg")
         st.markdown(f"**Recursos** → Energía {p.energy_kwh:.2f} kWh | Agua {p.water_l:.2f} L | Crew {p.crew_min:.0f} min")
         # Pills de ajuste a límites
-        def _pill(val, limit, reverse=False, label="ok"):
-            ok = (val <= limit) if not reverse else (val >= limit)
-            cls = "ok" if ok else "bad"
-            return f'<span class="pill {cls}">{label}: {"OK" if ok else "Fuera de límite"}</span>'
-        st.markdown(
-            _pill(p.energy_kwh, float(target["max_energy_kwh"]), label="Energía") + " " +
-            _pill(p.water_l,   float(target["max_water_l"]),   label="Agua") + " " +
-            _pill(p.crew_min,  float(target["max_crew_min"]),  label="Crew"),
-            unsafe_allow_html=True
-        )
+        pill_markup: list[str] = []
+        limits = [
+            ("Energía", p.energy_kwh, float(target.get("max_energy_kwh", 0) or 0), "kWh"),
+            ("Agua", p.water_l, float(target.get("max_water_l", 0) or 0), "L"),
+            ("Crew", p.crew_min, float(target.get("max_crew_min", 0) or 0), "min"),
+        ]
+        for label, value, limit, unit in limits:
+            if limit <= 0:
+                continue
+            within_limit = value <= limit
+            kind = "ok" if within_limit else "risk"
+            pill_markup.append(
+                pill(
+                    f"{label}: {value:.2f}/{limit:.2f} {unit}",
+                    kind=kind,
+                    render=False,
+                )
+            )
+        if pill_markup:
+            st.markdown(" ".join(pill_markup), unsafe_allow_html=True)
 
         # Traza NASA (si está disponible)
         ids = c.get("source_ids", [])
