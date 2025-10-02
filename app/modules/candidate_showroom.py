@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
+import pandas as pd
 import streamlit as st
 
 from app.modules.safety import check_safety, safety_badge
 from app.modules.ui_blocks import action_button
 
-
-_CSS_KEY = "__candidate_showroom_css__"
 _SUCCESS_KEY = "__candidate_showroom_success__"
 _MODAL_KEY = "showroom_modal"
 
@@ -46,8 +45,6 @@ def render_candidate_showroom(
     if not candidates:
         st.info("Todavía no hay recetas para mostrar en el showroom.")
         return []
-
-    _inject_css()
 
     success_data = _normalize_success(st.session_state.get(_SUCCESS_KEY))
 
@@ -288,118 +285,108 @@ def _render_candidate_table(
     *,
     scenario: str | None = None,
 ) -> None:
-    st.markdown("#### Ranking de candidatos por score")
+    st.subheader("Ranking de candidatos por score")
+
+    metrics_cols = st.columns(3)
+    metrics_cols[0].metric("Candidatos visibles", len(rows))
+    metrics_cols[1].metric("Score mínimo", f"{score_threshold:.2f}")
+    metrics_cols[2].metric("Sólo seguros", "Sí" if only_safe else "No")
 
     active_filters: list[str] = []
-    if only_safe:
-        active_filters.append("Sólo seguros")
     if threshold_active and rows:
         active_filters.append(f"Score ≥ {score_threshold:.2f}")
     active_filters.extend(resource_labels)
 
-    if active_filters:
-        st.caption("Filtros activos: " + ", ".join(active_filters))
+    if only_safe or active_filters:
+        captions: list[str] = []
+        if only_safe:
+            captions.append("Filtro de seguridad activo")
+        if active_filters:
+            captions.append("; ".join(active_filters))
+        st.caption(" · ".join(captions))
 
-    st.markdown("<div class='candidate-table'>", unsafe_allow_html=True)
-    column_weights = [0.24, 0.1, 0.1, 0.12, 0.12, 0.12, 0.1, 0.1]
-    header_cols = st.columns(column_weights, gap="small")
-    header_cols[0].markdown("**Proceso**")
-    header_cols[1].markdown("**Score**")
-    header_cols[2].markdown("**Rigidez**")
-    header_cols[3].markdown("**Agua (L)**")
-    header_cols[4].markdown("**Energía (kWh)**")
-    header_cols[5].markdown("**Crew (min)**")
-    header_cols[6].markdown("**Seguridad**")
-    header_cols[7].markdown("**Acción**")
-    st.markdown("<hr class='candidate-table__divider' />", unsafe_allow_html=True)
+    table_payload: list[dict[str, Any]] = []
+    for rank, row in enumerate(rows, start=1):
+        table_payload.append(
+            {
+                "Ranking": rank,
+                "Proceso": f"{row['process_name']} (ID {row['process_id']})",
+                "Score": float(row["score"]),
+                "Rigidez": float(row["rigidity"]),
+                "Agua (L)": float(row["water"]),
+                "Energía (kWh)": float(row["energy"]),
+                "Crew (min)": float(row["crew"]),
+                "Seguridad": str(row["safety"].get("level", "—")),
+                "Detalle seguridad": str(row["safety"].get("detail", "")),
+                "Etiquetas": list(row.get("badges", [])),
+            }
+        )
+
+    dataframe = pd.DataFrame(table_payload)
+    st.dataframe(
+        dataframe,
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "Ranking": st.column_config.NumberColumn("Ranking", format="%02d", width="small"),
+            "Score": st.column_config.NumberColumn("Score", format="%.3f"),
+            "Rigidez": st.column_config.NumberColumn("Rigidez", format="%.2f"),
+            "Agua (L)": st.column_config.NumberColumn("Agua (L)", format="%.2f"),
+            "Energía (kWh)": st.column_config.NumberColumn("Energía (kWh)", format="%.2f"),
+            "Crew (min)": st.column_config.NumberColumn("Crew (min)", format="%.1f"),
+            "Detalle seguridad": st.column_config.TextColumn("Detalle seguridad", width="medium"),
+            "Etiquetas": st.column_config.ListColumn("Etiquetas", width="large"),
+        },
+    )
 
     for rank, row in enumerate(rows, start=1):
-        _render_candidate_row(
+        _render_candidate_actions(
             rank,
             row,
             success_data,
-            column_weights,
             scenario=scenario,
         )
 
-    st.markdown("</div>", unsafe_allow_html=True)
 
-
-def _render_candidate_row(
+def _render_candidate_actions(
     rank: int,
     row: dict[str, Any],
     success_data: dict[str, Any],
-    column_weights: Sequence[float],
     *,
     scenario: str | None = None,
 ) -> None:
-    (
-        process_col,
-        score_col,
-        rigidity_col,
-        water_col,
-        energy_col,
-        crew_col,
-        safety_col,
-        action_col,
-    ) = st.columns(column_weights, gap="small")
-
     process_name = row["process_name"]
     process_id = row["process_id"]
-    badges_html = "".join(
-        f"<span class='showroom-badge'>{badge}</span>" for badge in row.get("badges", [])
-    )
-    process_col.markdown(
-        f"<div class='candidate-proc'><strong>#{rank:02d} · {process_name}</strong><span>ID {process_id}</span></div>",
-        unsafe_allow_html=True,
-    )
-    if badges_html:
-        process_col.markdown(
-            f"<div class='showroom-badges'>{badges_html}</div>",
-            unsafe_allow_html=True,
-        )
-
-    score_col.markdown(f"<div class='metric-cell'>{row['score']:.3f}</div>", unsafe_allow_html=True)
-    rigidity_col.markdown(
-        f"<div class='metric-cell'>{row['rigidity']:.2f}</div>",
-        unsafe_allow_html=True,
-    )
-    water_col.markdown(
-        f"<div class='metric-cell'>{row['water']:.2f}</div>",
-        unsafe_allow_html=True,
-    )
-    energy_col.markdown(
-        f"<div class='metric-cell'>{row['energy']:.2f}</div>",
-        unsafe_allow_html=True,
-    )
-    crew_col.markdown(
-        f"<div class='metric-cell'>{row['crew']:.1f}</div>",
-        unsafe_allow_html=True,
-    )
-
     badge = row["safety"]
-    level = str(badge.get("level", "—"))
-    detail = str(badge.get("detail", ""))
-    level_class = "ok" if row["is_safe"] else "risk"
 
-    safety_col.markdown(
-        "<div class='safety-pill safety-pill--"
-        f"{level_class}'><strong>{level}</strong><span>{detail}</span></div>",
-        unsafe_allow_html=True,
-    )
+    with st.expander(f"#{rank:02d} · {process_name} — ID {process_id}", expanded=False):
+        badge_cols = st.columns(3)
+        badge_cols[0].metric("Score", f"{row['score']:.3f}")
+        badge_cols[1].metric("Rigidez", f"{row['rigidity']:.2f}")
+        badge_cols[2].metric("Consumo", f"{row['energy']:.2f} kWh")
 
-    candidate_key = row["key"]
-    modal_key = st.session_state.get(_MODAL_KEY)
-    success_key = success_data.get("candidate_key")
+        detail_cols = st.columns(3)
+        detail_cols[0].metric("Agua", f"{row['water']:.2f} L")
+        detail_cols[1].metric("Crew", f"{row['crew']:.1f} min")
+        safety_label = "Seguro" if row["is_safe"] else "Riesgo"
+        detail_cols[2].metric("Seguridad", safety_label)
+        st.caption(badge.get("detail", ""))
 
-    if modal_key == candidate_key and success_key != candidate_key:
-        btn_state = "loading"
-    elif success_key == candidate_key:
-        btn_state = "success"
-    else:
-        btn_state = "idle"
+        badges = row.get("badges", [])
+        if badges:
+            st.caption("Etiquetas: " + " · ".join(badges))
 
-    with action_col:
+        candidate_key = row["key"]
+        modal_key = st.session_state.get(_MODAL_KEY)
+        success_key = success_data.get("candidate_key")
+
+        if modal_key == candidate_key and success_key != candidate_key:
+            btn_state = "loading"
+        elif success_key == candidate_key:
+            btn_state = "success"
+        else:
+            btn_state = "idle"
+
         if action_button(
             "✨ Seleccionar",
             key=f"showroom_select_{candidate_key}",
@@ -420,56 +407,50 @@ def _render_candidate_row(
             if current.get("candidate_key") != candidate_key:
                 st.session_state.pop(_SUCCESS_KEY, None)
 
-    if st.session_state.get(_MODAL_KEY) == candidate_key:
-        with st.modal("Confirmación holográfica", key=f"modal_{candidate_key}"):
-            st.markdown(
-                _modal_html(row["candidate"], badge, scenario=scenario),
-                unsafe_allow_html=True,
-            )
-            col_ok, col_cancel = st.columns(2)
-            with col_ok:
-                confirm_label = _scenario_result_cta(scenario)
-                if action_button(
-                    f"✅ {confirm_label}",
-                    key=f"confirm_{candidate_key}",
-                    state="idle",
-                    width="full",
-                    loading_label="Sincronizando…",
-                    success_label="Receta confirmada",
-                    status_hints={
-                        "idle": "",
-                        "loading": "Sincronizando selección",
-                        "success": "Receta confirmada",
-                        "error": "No se pudo confirmar",
-                    },
-                    button_type="primary",
-                ):
-                    st.session_state["selected"] = {
-                        "data": row["candidate"],
-                        "safety": badge,
-                    }
-                    st.session_state[_SUCCESS_KEY] = {
-                        "message": (
-                            f"{process_name} confirmado. Revisá **4) Resultados**, "
-                            "**5) Comparar** o **6) Pareto**."
-                        ),
-                        "candidate_key": candidate_key,
-                    }
-                    st.session_state.pop(_MODAL_KEY, None)
-            with col_cancel:
-                if action_button(
-                    "Cancelar",
-                    key=f"cancel_{candidate_key}",
-                    state="idle",
-                    width="full",
-                ):
-                    st.session_state.pop(_MODAL_KEY, None)
+        if st.session_state.get(_MODAL_KEY) == candidate_key:
+            with st.modal("Confirmación holográfica", key=f"modal_{candidate_key}"):
+                _render_modal_content(row["candidate"], badge, scenario=scenario)
+                col_ok, col_cancel = st.columns(2)
+                with col_ok:
+                    confirm_label = _scenario_result_cta(scenario)
+                    if action_button(
+                        f"✅ {confirm_label}",
+                        key=f"confirm_{candidate_key}",
+                        state="idle",
+                        width="full",
+                        loading_label="Sincronizando…",
+                        success_label="Receta confirmada",
+                        status_hints={
+                            "idle": "",
+                            "loading": "Sincronizando selección",
+                            "success": "Receta confirmada",
+                            "error": "No se pudo confirmar",
+                        },
+                        button_type="primary",
+                    ):
+                        st.session_state["selected"] = {
+                            "data": row["candidate"],
+                            "safety": badge,
+                        }
+                        st.session_state[_SUCCESS_KEY] = {
+                            "message": (
+                                f"{process_name} confirmado. Revisá 4) Resultados, "
+                                "5) Comparar o 6) Pareto."
+                            ),
+                            "candidate_key": candidate_key,
+                        }
+                        st.session_state.pop(_MODAL_KEY, None)
+                with col_cancel:
+                    if action_button(
+                        "Cancelar",
+                        key=f"cancel_{candidate_key}",
+                        state="idle",
+                        width="full",
+                    ):
+                        st.session_state.pop(_MODAL_KEY, None)
 
-    if success_key == candidate_key and success_data.get("message"):
-        action_col.markdown(
-            f"<div class='inline-success'>✅ {success_data['message']}</div>",
-            unsafe_allow_html=True,
-        )
+        if success_key == candidate_key and success_data.get("message"):
+            st.success(success_data["message"])
 
 
 def _scenario_result_cta(scenario: str | None) -> str:
@@ -522,23 +503,21 @@ def _safety_reminders(badge: dict) -> list[str]:
     return reminders
 
 
-def _modal_html(cand: dict, badge: dict, *, scenario: str | None = None) -> str:
+def _render_modal_content(cand: dict, badge: dict, *, scenario: str | None = None) -> None:
     process = f"{cand.get('process_id', '')} · {cand.get('process_name', '')}".strip()
     score = _safe_number(cand.get("score"))
-    steps_html = "".join(f"<li>{step}</li>" for step in _scenario_steps(scenario))
-    reminders = _safety_reminders(badge)
-    reminders_html = "".join(f"<p class='modal-reminder'>{text}</p>" for text in reminders)
-    return f"""
-    <div class='modal-holo'>
-      <h2>Confirmar receta seleccionada</h2>
-      <p>Proceso <strong>{process or 'Proceso'}</strong> con score <strong>{score:.3f}</strong>.</p>
-      <ol>
-        {steps_html}
-      </ol>
-      <div class='modal-badge'>Seguridad {badge['level']} · {badge['detail']}</div>
-      {reminders_html}
-    </div>
-    """
+
+    st.subheader("Confirmar receta seleccionada")
+    st.write(f"Proceso **{process or 'Proceso'}** con score {score:.3f}.")
+
+    st.write("Pasos sugeridos:")
+    for step in _scenario_steps(scenario):
+        st.write(f"- {step}")
+
+    st.info(f"Seguridad {badge['level']}: {badge['detail']}")
+
+    for reminder in _safety_reminders(badge):
+        st.warning(reminder)
 
 
 def _collect_badges(cand: dict, aux: dict) -> list[str]:
@@ -572,141 +551,6 @@ def _get_prop_value(props: object, key: str) -> Any:
     return getattr(props, key, None)
 
 
-def _inject_css() -> None:
-    if st.session_state.get(_CSS_KEY):
-        return
-
-    st.markdown(
-        """
-        <style>
-        .candidate-table {
-            position: relative;
-            background: linear-gradient(155deg, rgba(15,23,42,0.92), rgba(30,41,59,0.88));
-            border-radius: 26px;
-            padding: 26px 30px;
-            border: 1px solid rgba(148,163,184,0.2);
-            box-shadow: 12px 18px 40px rgba(2,6,23,0.5);
-            overflow-x: auto;
-        }
-        .candidate-table [data-testid="stHorizontalBlock"] {
-            min-width: 780px;
-        }
-        .candidate-table [data-testid="column"] {
-            min-width: 110px;
-        }
-        .candidate-table [data-testid="column"]:first-child {
-            min-width: 220px;
-        }
-        .candidate-table__divider {
-            border: none;
-            border-top: 1px solid rgba(148,163,184,0.2);
-            margin: 12px 0 24px;
-        }
-        .candidate-proc {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-        }
-        .candidate-proc strong {
-            font-size: 1rem;
-            letter-spacing: 0.04em;
-        }
-        .candidate-proc span {
-            font-size: 0.78rem;
-            opacity: 0.7;
-        }
-        .showroom-badges {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin-top: 10px;
-        }
-        .showroom-badge {
-            border-radius: 999px;
-            padding: 6px 12px;
-            font-size: 0.78rem;
-            background: rgba(59,130,246,0.18);
-            border: 1px solid rgba(148,163,184,0.26);
-            backdrop-filter: blur(12px);
-        }
-        .metric-cell {
-            font-size: 0.95rem;
-            font-variant-numeric: tabular-nums;
-            padding: 8px 0;
-            white-space: nowrap;
-        }
-        .metric-cell {
-            text-align: center;
-        }
-        .metric-cell::after {
-            content: "";
-        }
-        .safety-pill {
-            border-radius: 16px;
-            padding: 10px 14px;
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-            font-size: 0.8rem;
-            border: 1px solid rgba(148,163,184,0.22);
-        }
-        .safety-pill strong {
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-            font-size: 0.75rem;
-        }
-        .safety-pill span {
-            font-size: 0.74rem;
-            opacity: 0.8;
-        }
-        .safety-pill--ok {
-            background: rgba(45,212,191,0.16);
-            border-color: rgba(16,185,129,0.45);
-            color: #ccfbf1;
-        }
-        .safety-pill--risk {
-            background: rgba(248,113,113,0.14);
-            border-color: rgba(248,113,113,0.35);
-            color: #fecaca;
-        }
-        .inline-success {
-            margin-top: 10px;
-            font-size: 0.78rem;
-            color: #bbf7d0;
-        }
-        .modal-holo {
-            background: radial-gradient(circle at top, rgba(59,130,246,0.3), rgba(15,23,42,0.92));
-            border:1px solid rgba(148,163,184,0.3);
-            border-radius:24px;
-            padding:24px 28px;
-            box-shadow: 0 0 50px rgba(59,130,246,0.45);
-        }
-        .modal-holo h2 {margin-top:0;}
-        .modal-holo ol {padding-left:20px;}
-        .modal-badge {
-            margin-top:18px;
-            padding:8px 12px;
-            border-radius:12px;
-            background:rgba(45,212,191,0.16);
-            border:1px solid rgba(94,234,212,0.35);
-            display:inline-block;
-        }
-        @media (max-width: 960px) {
-            .candidate-table {
-                padding: 24px 20px 28px;
-            }
-            .candidate-table [data-testid="stHorizontalBlock"] {
-                min-width: 720px;
-            }
-            .candidate-table [data-testid="column"]:first-child {
-                min-width: 200px;
-            }
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.session_state[_CSS_KEY] = True
 
 
 
