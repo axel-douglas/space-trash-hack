@@ -7,7 +7,7 @@ from typing import Any, Mapping, Sequence
 import streamlit as st
 
 from app.modules.safety import check_safety, safety_badge
-from app.modules.ui_blocks import futuristic_button
+from app.modules.ui_blocks import action_button
 
 
 _CSS_KEY = "__candidate_showroom_css__"
@@ -400,15 +400,20 @@ def _render_candidate_row(
         btn_state = "idle"
 
     with action_col:
-        if futuristic_button(
-            "Seleccionar",
+        if action_button(
+            "✨ Seleccionar",
             key=f"showroom_select_{candidate_key}",
             state=btn_state,
             width="full",
             loading_label="Abriendo holograma…",
             success_label="Receta seleccionada",
             help_text="Confirmá la receta desde la ventana emergente.",
-            mode="cinematic",
+            status_hints={
+                "idle": "",
+                "loading": "Mostrando holograma",
+                "success": "Receta lista para confirmar",
+                "error": "Reintentá la selección",
+            },
         ):
             st.session_state[_MODAL_KEY] = candidate_key
             current = _normalize_success(st.session_state.get(_SUCCESS_KEY))
@@ -424,14 +429,20 @@ def _render_candidate_row(
             col_ok, col_cancel = st.columns(2)
             with col_ok:
                 confirm_label = _scenario_result_cta(scenario)
-                if futuristic_button(
-                    confirm_label,
+                if action_button(
+                    f"✅ {confirm_label}",
                     key=f"confirm_{candidate_key}",
                     state="idle",
                     width="full",
                     loading_label="Sincronizando…",
                     success_label="Receta confirmada",
-                    mode="cinematic",
+                    status_hints={
+                        "idle": "",
+                        "loading": "Sincronizando selección",
+                        "success": "Receta confirmada",
+                        "error": "No se pudo confirmar",
+                    },
+                    button_type="primary",
                 ):
                     st.session_state["selected"] = {
                         "data": row["candidate"],
@@ -446,13 +457,11 @@ def _render_candidate_row(
                     }
                     st.session_state.pop(_MODAL_KEY, None)
             with col_cancel:
-                if futuristic_button(
+                if action_button(
                     "Cancelar",
                     key=f"cancel_{candidate_key}",
                     state="idle",
                     width="full",
-                    sound=False,
-                    mode="cinematic",
                 ):
                     st.session_state.pop(_MODAL_KEY, None)
 

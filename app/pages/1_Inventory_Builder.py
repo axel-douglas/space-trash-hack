@@ -14,7 +14,7 @@ from app.modules.io import (
     save_waste_df,
 )
 from app.modules.navigation import set_active_step
-from app.modules.ui_blocks import load_theme, minimal_button
+from app.modules.ui_blocks import action_button, load_theme
 from app.modules.problematic import problematic_mask
 from app.modules.schema import (
     ALUMINIUM_NUMERIC_COLUMNS,
@@ -877,7 +877,7 @@ with preview_col:
 colA, colB = st.columns(2)
 with colA:
     button_state = "success" if save_success else "idle"
-    if minimal_button(
+    if action_button(
         "💾 Guardar inventario",
         key="inventory_save",
         state=button_state,
