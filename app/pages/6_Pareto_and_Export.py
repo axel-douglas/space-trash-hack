@@ -1,5 +1,9 @@
 """Streamlined Pareto exploration and export centre."""
 
+from app.bootstrap import ensure_project_root
+
+ensure_project_root()
+
 import math
 from typing import Iterable
 

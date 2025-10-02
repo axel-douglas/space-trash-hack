@@ -1,3 +1,7 @@
+from app.bootstrap import ensure_project_root
+
+ensure_project_root()
+
 from typing import Any, Mapping
 
 import math

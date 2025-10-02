@@ -1,5 +1,9 @@
 """Consolidated feedback capture and mission impact tracking."""
 
+from app.bootstrap import ensure_project_root
+
+ensure_project_root()
+
 from datetime import datetime
 
 import pandas as pd

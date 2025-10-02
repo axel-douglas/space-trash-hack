@@ -1,3 +1,7 @@
+from app.bootstrap import ensure_project_root
+
+ensure_project_root()
+
 import streamlit as st
 
 from app.modules.io import load_targets
