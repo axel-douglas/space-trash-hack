@@ -235,3 +235,275 @@ def build_export_kpi_table(df_plot: pd.DataFrame) -> pd.DataFrame:
 
     return pd.DataFrame(rows)
 
+
+_POLYMER_METRIC_ALIAS = {
+    "pc_density_density_g_per_cm3": "density_g_cm3",
+    "pc_mechanics_tensile_strength_mpa": "tensile_mpa",
+    "pc_mechanics_modulus_gpa": "modulus_gpa",
+    "pc_thermal_glass_transition_c": "glass_c",
+    "pc_ignition_ignition_temperature_c": "ignition_c",
+    "pc_ignition_burn_time_min": "burn_min",
+}
+
+_ALUMINIUM_METRIC_ALIAS = {
+    "aluminium_tensile_strength_mpa": "tensile_mpa",
+    "aluminium_yield_strength_mpa": "yield_mpa",
+    "aluminium_elongation_pct": "elongation_pct",
+}
+
+_POLYMER_REFERENCE_LABELS = {
+    "density_g_cm3": "ρ ref (g/cm³)",
+    "tensile_mpa": "σₜ ref (MPa)",
+    "modulus_gpa": "E ref (GPa)",
+    "glass_c": "Tg (°C)",
+    "ignition_c": "Ignición (°C)",
+    "burn_min": "Burn (min)",
+}
+
+_ALUMINIUM_REFERENCE_LABELS = {
+    "tensile_mpa": "σₜ Al (MPa)",
+    "yield_mpa": "σᵧ Al (MPa)",
+    "elongation_pct": "ε Al (%)",
+}
+
+_FEEDBACK_LABELS = {
+    "feedback_overall": "Satisfacción general",
+    "feedback_rigidity": "Rigidez percibida",
+    "feedback_porosity": "Porosidad",
+    "feedback_surface": "Acabado superficial",
+    "feedback_bonding": "Union / bonding",
+    "feedback_ease": "Facilidad operativa",
+}
+
+
+def collect_reference_profiles(candidate: Mapping[str, object] | None, inventory: pd.DataFrame | None) -> dict[str, dict[str, object]]:
+    """Return averaged external reference metrics for ``candidate``.
+
+    The resulting mapping contains one entry per material family (``polymer``
+    and ``aluminium``) with two keys:
+
+    - ``metrics``: Dict[str, float] – averaged numeric attributes.
+    - ``labels``: list[str] – distinct label fields found in the inventory.
+    """
+
+    if not candidate or not isinstance(candidate, Mapping):
+        return {}
+    if not isinstance(inventory, pd.DataFrame) or inventory.empty:
+        return {}
+
+    raw_ids = candidate.get("source_ids") or []
+    ids = {str(value).strip() for value in raw_ids if str(value).strip()}
+    if not ids:
+        return {}
+
+    mask = pd.Series(False, index=inventory.index)
+    if "id" in inventory.columns:
+        mask |= inventory["id"].astype(str).isin(ids)
+    if "_source_id" in inventory.columns:
+        mask |= inventory["_source_id"].astype(str).isin(ids)
+
+    subset = inventory.loc[mask].copy()
+    if subset.empty:
+        return {}
+
+    payload: dict[str, dict[str, object]] = {}
+
+    def _section(
+        metric_alias: Mapping[str, str],
+        label_columns: Sequence[str],
+    ) -> dict[str, object] | None:
+        metrics: dict[str, float] = {}
+        for column, alias in metric_alias.items():
+            if column not in subset.columns:
+                continue
+            series = pd.to_numeric(subset[column], errors="coerce").dropna()
+            if series.empty:
+                continue
+            metrics[alias] = float(series.mean())
+
+        labels: list[str] = []
+        for column in label_columns:
+            if column not in subset.columns:
+                continue
+            series = subset[column].dropna().astype(str).str.strip()
+            labels.extend(value for value in series if value)
+
+        if not metrics and not labels:
+            return None
+
+        return {"metrics": metrics, "labels": sorted(dict.fromkeys(labels))}
+
+    polymer_section = _section(
+        _POLYMER_METRIC_ALIAS,
+        (
+            "pc_density_sample_label",
+            "pc_mechanics_sample_label",
+            "pc_thermal_sample_label",
+            "pc_ignition_sample_label",
+        ),
+    )
+    if polymer_section:
+        payload["polymer"] = polymer_section
+
+    aluminium_section = _section(
+        _ALUMINIUM_METRIC_ALIAS,
+        (
+            "aluminium_processing_route",
+            "aluminium_class_id",
+        ),
+    )
+    if aluminium_section:
+        payload["aluminium"] = aluminium_section
+
+    return payload
+
+
+def build_candidate_export_table(
+    candidates: Iterable[Mapping[str, object]],
+    inventory: pd.DataFrame | None,
+) -> pd.DataFrame:
+    """Return a normalised dataframe used across export-related pages."""
+
+    rows: list[dict[str, object]] = []
+    inventory = inventory if isinstance(inventory, pd.DataFrame) else None
+
+    for idx, candidate in enumerate(candidates, start=1):
+        props = candidate.get("props") if isinstance(candidate, Mapping) else None
+        profiles = collect_reference_profiles(candidate, inventory)
+
+        materials = []
+        if isinstance(candidate, Mapping):
+            for material in candidate.get("materials", []) or []:
+                text = str(material).strip()
+                if text:
+                    materials.append(text)
+
+        row = {
+            "Opción": idx,
+            "Proceso": (
+                f"{candidate.get('process_id', '')} · {candidate.get('process_name', '')}".strip(" ·")
+                if isinstance(candidate, Mapping)
+                else ""
+            ),
+            "Score": _safe_float(candidate.get("score")) if isinstance(candidate, Mapping) else None,
+            "Energía (kWh)": _value_from(props, "energy_kwh"),
+            "Agua (L)": _value_from(props, "water_l"),
+            "Crew (min)": _value_from(props, "crew_min"),
+            "Masa (kg)": _value_from(props, "mass_final_kg"),
+            "Rigidez": _value_from(props, "rigidity"),
+            "Estanqueidad": _value_from(props, "tightness"),
+            "Materiales": ", ".join(materials),
+        }
+
+        for family, section in profiles.items():
+            metrics = section.get("metrics", {}) if isinstance(section, Mapping) else {}
+            for key, value in metrics.items():
+                if family == "aluminium":
+                    label_map = _ALUMINIUM_REFERENCE_LABELS
+                else:
+                    label_map = _POLYMER_REFERENCE_LABELS
+                label = label_map.get(key)
+                if not label:
+                    continue
+                row[label] = float(value)
+
+        rows.append(row)
+
+    if not rows:
+        return pd.DataFrame(
+            columns=[
+                "Opción",
+                "Proceso",
+                "Score",
+                "Energía (kWh)",
+                "Agua (L)",
+                "Crew (min)",
+                "Masa (kg)",
+                "Rigidez",
+                "Estanqueidad",
+                "Materiales",
+            ]
+        )
+
+    df = pd.DataFrame(rows)
+    numeric_columns = [
+        "Score",
+        "Energía (kWh)",
+        "Agua (L)",
+        "Crew (min)",
+        "Masa (kg)",
+        "Rigidez",
+        "Estanqueidad",
+    ]
+    reference_columns = list(_POLYMER_REFERENCE_LABELS.values()) + list(_ALUMINIUM_REFERENCE_LABELS.values())
+    numeric_columns.extend(column for column in reference_columns if column in df.columns)
+    for column in numeric_columns:
+        df[column] = pd.to_numeric(df[column], errors="coerce")
+
+    return df
+
+
+def build_material_summary_table(
+    candidates: Iterable[Mapping[str, object]],
+    *,
+    top_n: int = 5,
+) -> pd.DataFrame:
+    """Aggregate material usage across generated candidates."""
+
+    rows: list[dict[str, object]] = []
+    for idx, candidate in enumerate(candidates, start=1):
+        if not isinstance(candidate, Mapping):
+            continue
+        materials = candidate.get("materials") or []
+        weights = candidate.get("weights") or []
+        for material, weight in zip(materials, weights):
+            amount = _safe_float(weight)
+            if amount is None:
+                continue
+            rows.append({
+                "Material": str(material),
+                "Peso": amount,
+                "Opción": idx,
+            })
+
+    if not rows:
+        return pd.DataFrame(columns=["Material", "Peso total", "Participaciones", "Peso promedio", "% sobre total"])
+
+    df = pd.DataFrame(rows)
+    grouped = df.groupby("Material", as_index=False).agg(
+        Peso_total=("Peso", "sum"),
+        Participaciones=("Opción", "nunique"),
+        Peso_promedio=("Peso", "mean"),
+    )
+    total_weight = grouped["Peso_total"].sum()
+    grouped["% sobre total"] = grouped["Peso_total"].apply(
+        lambda value: float(value) / total_weight * 100 if total_weight else float("nan")
+    )
+    grouped.sort_values("Peso_total", ascending=False, inplace=True)
+    grouped.rename(columns={"Peso_total": "Peso total", "Peso_promedio": "Peso promedio"}, inplace=True)
+    return grouped.head(top_n).reset_index(drop=True)
+
+
+def build_feedback_summary_table(feedback_df: pd.DataFrame) -> pd.DataFrame:
+    """Return aggregated feedback scores for decision making."""
+
+    if not isinstance(feedback_df, pd.DataFrame) or feedback_df.empty:
+        return pd.DataFrame(columns=["Métrica", "Promedio", "Observaciones"])
+
+    rows: list[dict[str, object]] = []
+    for column, label in _FEEDBACK_LABELS.items():
+        if column not in feedback_df.columns:
+            continue
+        numeric = pd.to_numeric(feedback_df[column], errors="coerce").dropna()
+        if numeric.empty:
+            continue
+        rows.append(
+            {
+                "Métrica": label,
+                "Promedio": float(numeric.mean()),
+                "Observaciones": int(numeric.count()),
+            }
+        )
+
+    return pd.DataFrame(rows)
+
