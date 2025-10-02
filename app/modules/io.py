@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 from functools import lru_cache
 from pathlib import Path
+from typing import Mapping, Sequence
 
 import pandas as pd
 import polars as pl
@@ -13,6 +15,7 @@ from .generator import prepare_waste_frame
 from .data_sources import official_features_bundle
 from .paths import DATA_ROOT
 from .problematic import problematic_mask
+from .schema import ALUMINIUM_SAMPLE_COLUMNS, POLYMER_SAMPLE_COLUMNS
 
 DATA_DIR = DATA_ROOT
 
@@ -242,6 +245,116 @@ def save_waste_df(df: pd.DataFrame | pl.DataFrame) -> None:
     out.write_csv(WASTE_CSV, include_header=True)
     invalidate_waste_cache()
 
+
+def _safe_float(value: object) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(number):
+        return None
+    return number
+
+
+def format_polymer_profile(row: pd.Series) -> str:
+    """Compact textual description for external polymer properties."""
+
+    parts: list[str] = []
+
+    for column in POLYMER_SAMPLE_COLUMNS:
+        label = str(row.get(column) or "").strip()
+        if label:
+            parts.append(f"Ref {label}")
+            break
+
+    density = _safe_float(row.get("pc_density_density_g_per_cm3"))
+    if density:
+        parts.append(f"ρ {density:.2f} g/cm³")
+
+    tensile = _safe_float(row.get("pc_mechanics_tensile_strength_mpa"))
+    if tensile:
+        parts.append(f"σₜ {tensile:.0f} MPa")
+
+    modulus = _safe_float(row.get("pc_mechanics_modulus_gpa"))
+    if modulus:
+        parts.append(f"E {modulus:.1f} GPa")
+
+    glass_transition = _safe_float(row.get("pc_thermal_glass_transition_c"))
+    if glass_transition:
+        parts.append(f"Tg {glass_transition:.0f} °C")
+
+    ignition = _safe_float(row.get("pc_ignition_ignition_temperature_c"))
+    if ignition:
+        parts.append(f"Ign. {ignition:.0f} °C")
+
+    burn_time = _safe_float(row.get("pc_ignition_burn_time_min"))
+    if burn_time:
+        parts.append(f"Burn {burn_time:.1f} min")
+
+    return " · ".join(parts)
+
+
+def format_aluminium_profile(row: pd.Series) -> str:
+    """Compact textual description for aluminium properties."""
+
+    parts: list[str] = []
+
+    route = str(row.get("aluminium_processing_route") or "").strip()
+    class_id = str(row.get("aluminium_class_id") or "").strip()
+    if route and class_id:
+        parts.append(f"{route} · Clase {class_id}")
+    elif route:
+        parts.append(route)
+    elif class_id:
+        parts.append(f"Clase {class_id}")
+
+    tensile = _safe_float(row.get("aluminium_tensile_strength_mpa"))
+    if tensile:
+        parts.append(f"σₜ {tensile:.0f} MPa")
+
+    yield_strength = _safe_float(row.get("aluminium_yield_strength_mpa"))
+    if yield_strength:
+        parts.append(f"σᵧ {yield_strength:.0f} MPa")
+
+    elongation = _safe_float(row.get("aluminium_elongation_pct"))
+    if elongation:
+        parts.append(f"ε {elongation:.0f}%")
+
+    return " · ".join(parts)
+
+
+def format_composition_summary(row: pd.Series, columns: Sequence[str]) -> str:
+    """Return a short composition summary using NASA percentage columns."""
+
+    parts: list[str] = []
+    for column in columns:
+        value = _safe_float(row.get(column))
+        if value is None or value <= 0:
+            continue
+        label = column.replace("_pct", "").replace("_", " ")
+        parts.append(f"{label} {value:.0f}%")
+    return ", ".join(parts)
+
+
+def format_mission_bundle(
+    row: pd.Series,
+    columns: Sequence[str],
+    labels: Mapping[str, str] | None = None,
+) -> str:
+    """Return a joined mission mass summary for the provided row."""
+
+    parts: list[str] = []
+    for column in columns:
+        value = _safe_float(row.get(column))
+        if value is None or value <= 0:
+            continue
+        if labels and column in labels:
+            label = labels[column]
+        else:
+            label = column.replace("summary_", "").replace("_", " ")
+        parts.append(f"{label}: {value:.1f} kg")
+    return " · ".join(parts)
+
 @lru_cache(maxsize=1)
 def _load_process_df_cached() -> pd.DataFrame:
     _ensure_exists()
@@ -282,3 +395,17 @@ def invalidate_all_io_caches() -> None:
     invalidate_waste_cache()
     invalidate_process_cache()
     invalidate_targets_cache()
+
+
+__all__ = [
+    "load_waste_df",
+    "save_waste_df",
+    "load_process_df",
+    "load_process_catalog",
+    "load_targets",
+    "invalidate_all_io_caches",
+    "format_polymer_profile",
+    "format_aluminium_profile",
+    "format_composition_summary",
+    "format_mission_bundle",
+]
