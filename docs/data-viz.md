@@ -7,9 +7,9 @@ paletas y configuraciones disponibles para Altair y Plotly.
 
 ## Activación
 
-* La app registra los temas automáticamente desde `_bootstrap.py` mediante
-  `apply_global_visual_theme`. Las páginas solo deben importar `_bootstrap`
-  (ya ocurre en todos los módulos de `app/`).
+* La app registra los temas automáticamente llamando a
+  `initialise_frontend()` (expuesta por `app.modules.ui_blocks`) inmediatamente
+  después de `st.set_page_config()`.
 * El modo por defecto es `dark`. Puede forzarse otra variante definiendo la
   variable de entorno `REXAI_THEME_MODE=light` o `REXAI_THEME_MODE=dark`.
 * Ambos motores (Altair y Plotly) comparten tokens cromáticos a través del

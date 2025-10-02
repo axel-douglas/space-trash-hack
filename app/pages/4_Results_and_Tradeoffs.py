@@ -1,13 +1,10 @@
-import _bootstrap  # noqa: F401
-
 import altair as alt
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-
-from app.modules.ui_blocks import load_theme, layout_block
 from app.modules.navigation import render_breadcrumbs, set_active_step
+from app.modules.ui_blocks import initialise_frontend, layout_block, load_theme
 
 from app.modules.data_sources import (
     load_regolith_granulometry,
@@ -25,6 +22,7 @@ from app.modules.schema import (
 from app.modules.page_data import build_candidate_metric_table, build_resource_table
 
 st.set_page_config(page_title="Rex-AI • Resultados", page_icon="📊", layout="wide")
+initialise_frontend()
 
 current_step = set_active_step("results")
 

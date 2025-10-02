@@ -1,5 +1,3 @@
-import _bootstrap  # noqa: F401
-
 from typing import Any, Mapping
 
 import math
@@ -17,6 +15,7 @@ from app.modules.process_planner import choose_process
 from app.modules.safety import check_safety, safety_badge
 from app.modules.ui_blocks import (
     action_button,
+    initialise_frontend,
     chipline,
     layout_block,
     layout_stack,
@@ -34,6 +33,7 @@ from app.modules.schema import (
 from app.modules.page_data import build_ranking_table
 
 st.set_page_config(page_title="Rex-AI • Generador", page_icon="🤖", layout="wide")
+initialise_frontend()
 
 current_step = set_active_step("generator")
 

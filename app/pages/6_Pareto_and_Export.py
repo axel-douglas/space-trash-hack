@@ -1,7 +1,5 @@
 """Streamlined Pareto exploration and export centre."""
 
-import _bootstrap  # noqa: F401
-
 import math
 from typing import Iterable
 
@@ -17,10 +15,11 @@ from app.modules.page_data import (
     build_material_summary_table,
 )
 from app.modules.safety import check_safety, safety_badge
-from app.modules.ui_blocks import layout_stack, load_theme
+from app.modules.ui_blocks import initialise_frontend, layout_stack, load_theme
 
 
 st.set_page_config(page_title="Pareto & Export", page_icon="📤", layout="wide")
+initialise_frontend()
 
 current_step = set_active_step("export")
 

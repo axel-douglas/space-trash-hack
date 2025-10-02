@@ -55,7 +55,6 @@ def _mission_overview_app() -> None:
         mission_overview.load_inventory_overview = load_waste_df  # type: ignore[assignment]
 
         sys.modules.pop("app.pages.0_Mission_Overview", None)
-        sys.modules.pop("_bootstrap", None)
         importlib.import_module("app.pages.0_Mission_Overview")
     finally:
         ml_models.get_model_registry = original_registry  # type: ignore[assignment]

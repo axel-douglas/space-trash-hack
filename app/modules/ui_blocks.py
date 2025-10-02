@@ -9,6 +9,7 @@ from typing import Any, Generator, Iterable, Iterator, Literal, Mapping, Optiona
 import streamlit as st
 from streamlit.delta_generator import DeltaGenerator
 
+from app.modules.visual_theme import apply_global_visual_theme
 _THEME_HASH_KEY = "__rexai_theme_hash__"
 _REVEAL_FLAG_KEY = "__rexai_reveal_flag__"
 
@@ -50,6 +51,13 @@ def load_theme(*, show_hud: bool = True) -> None:
 
     del show_hud  # compatibility no-op
     _inject_css_once()
+
+
+def initialise_frontend() -> None:
+    """Prepare the visual styling for Streamlit pages."""
+
+    load_theme()
+    apply_global_visual_theme()
 
 
 def enable_reveal_animation() -> None:

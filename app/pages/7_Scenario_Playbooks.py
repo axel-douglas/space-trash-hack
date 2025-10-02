@@ -1,7 +1,5 @@
 """Simplified scenario playbooks with actionable summaries."""
 
-import _bootstrap  # noqa: F401
-
 from typing import Iterable
 
 import pandas as pd
@@ -9,10 +7,11 @@ import streamlit as st
 
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.scenarios import PLAYBOOKS
-from app.modules.ui_blocks import layout_stack, load_theme
+from app.modules.ui_blocks import initialise_frontend, layout_stack, load_theme
 
 
 st.set_page_config(page_title="Scenario Playbooks", page_icon="📚", layout="wide")
+initialise_frontend()
 
 current_step = set_active_step("playbooks")
 

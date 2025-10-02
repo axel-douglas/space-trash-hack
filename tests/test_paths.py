@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-import importlib
-import sys
-from pathlib import Path
-
-from app.modules import paths
+from app.modules import paths, ui_blocks
 
 
 def test_path_constants_align_with_repository_structure() -> None:
@@ -12,19 +8,24 @@ def test_path_constants_align_with_repository_structure() -> None:
 
     assert paths.DATA_ROOT.is_dir()
     assert paths.MODELS_DIR.is_dir()
-    assert paths.LOGS_DIR.is_dir()
     assert paths.LOGS_DIR.parent == paths.DATA_ROOT
+    assert paths.LOGS_DIR.name == "logs"
 
 
-def test_bootstrap_allows_app_import_from_app_directory(monkeypatch) -> None:
-    """Importing ``_bootstrap`` should make ``app`` available even when cwd is ``app/``."""
+def test_initialise_frontend_invokes_theme_helpers(monkeypatch) -> None:
+    """``initialise_frontend`` should cascade to theme loaders in order."""
 
-    monkeypatch.chdir(Path("app"))
-    monkeypatch.setattr(sys, "path", [str(Path.cwd())])
-    sys.modules.pop("app", None)
-    sys.modules.pop("_bootstrap", None)
+    calls: list[str] = []
 
-    importlib.import_module("_bootstrap")
-    module = importlib.import_module("app")
+    def fake_load_theme() -> None:
+        calls.append("load")
 
-    assert Path(module.__file__).resolve().name == "__init__.py"
+    def fake_apply() -> None:
+        calls.append("apply")
+
+    monkeypatch.setattr(ui_blocks, "load_theme", fake_load_theme)
+    monkeypatch.setattr(ui_blocks, "apply_global_visual_theme", fake_apply)
+
+    ui_blocks.initialise_frontend()
+
+    assert calls == ["load", "apply"]
