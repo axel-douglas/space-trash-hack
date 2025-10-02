@@ -1,9 +1,0 @@
-<div class='luxe-hero luxe-hero--minimal' style='--hero-padding: 3.1rem 3.4rem; --hero-gradient: linear-gradient(135deg, rgba(59,130,246,0.28), rgba(14,165,233,0.08)); --hero-glow: rgba(96,165,250,0.45)'>
-          <div class='luxe-hero__content'>
-            <div class='luxe-hero__icon'>🛰️</div>
-            <h1>Rex-AI orquesta el reciclaje orbital y marciano</h1>
-            <p>Un loop autónomo que mezcla regolito MGS-1, polímeros EVA y residuos de carga para fabricar piezas listas para misión.</p>
-            <div class='luxe-chip-row' style='--chip-padding: 0.38rem 0.9rem; --chip-size: 0.82rem'><span class='luxe-chip' data-tone='accent'><span>RandomForest multisalida</span></span><span class='luxe-chip' data-tone='info'><span>Comparadores heurísticos</span></span><span class='luxe-chip' data-tone='accent'><span>Crew telemetry ready</span></span></div>
-            <div class='luxe-hero__kpis'><article class='luxe-hero__kpi' data-tone='accent'><span class='luxe-hero__kpi-icon'>🛰️</span><div><span class='luxe-hero__kpi-value'>✅ Modelo listo</span><span class='luxe-hero__kpi-label'>Estado</span><span class='luxe-hero__kpi-caption'>Nombre: rexai-rf-ensemble</span></div></article><article class='luxe-hero__kpi' data-tone='info'><span class='luxe-hero__kpi-icon'>🧪</span><div><span class='luxe-hero__kpi-value'>12 May 2045 10:00 UTC</span><span class='luxe-hero__kpi-label'>Entrenamiento</span><span class='luxe-hero__kpi-caption'>Procedencia: NASA · Muestras: 128</span></div></article></div>
-          </div>
-        </div>

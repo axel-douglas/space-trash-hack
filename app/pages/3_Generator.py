@@ -16,6 +16,7 @@ from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.process_planner import choose_process
 from app.modules.safety import check_safety, safety_badge
 from app.modules.ui_blocks import (
+    chipline,
     layout_block,
     layout_stack,
     load_theme,
@@ -23,7 +24,6 @@ from app.modules.ui_blocks import (
     minimal_button,
     pill,
 )
-from app.modules.luxe_components import ChipRow
 from app.modules.visualizations import ConvergenceScene
 from app.modules.schema import (
     ALUMINIUM_LABEL_COLUMNS,
@@ -323,7 +323,7 @@ def render_safety_indicator(candidate: dict[str, Any]) -> dict[str, Any]:
                 "tone": "positive" if not badge.get("microplastics") else "warning",
             },
         ]
-        ChipRow(signal_chips, size="sm", gap="0.25rem")
+        chipline(signal_chips, render=True)
 
         mitigation_actions: list[dict[str, str]] = []
         if badge.get("pfas"):
@@ -358,7 +358,7 @@ def render_safety_indicator(candidate: dict[str, Any]) -> dict[str, Any]:
                     "tone": "positive",
                 }
             )
-        ChipRow(mitigation_actions, size="sm", gap="0.25rem")
+        chipline(mitigation_actions, render=True)
 
         detail_note = str(detail).strip()
         microcopy = "Esta receta evita PFAS y reusa calor residual."

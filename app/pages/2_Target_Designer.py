@@ -6,8 +6,8 @@ import streamlit as st
 st.set_page_config(page_title="Objetivo", page_icon="🎯", layout="wide")
 
 from app.modules.io import load_targets
-from app.modules.luxe_components import _compute_target_limits
 from app.modules.navigation import render_breadcrumbs, set_active_step
+from app.modules.target_limits import compute_target_limits
 from app.modules.ui_blocks import load_theme
 
 current_step = set_active_step("target")
@@ -41,7 +41,7 @@ default_index = preset_names.index(default_name) if default_name in preset_names
 selected_name = st.selectbox("Preset objetivo", preset_names, index=default_index)
 selected_preset = next(p for p in presets if p.get("name") == selected_name)
 
-slider_limits = _compute_target_limits(presets)
+slider_limits = compute_target_limits(presets)
 
 default_scenario = scenario_options[0] if scenario_options else ""
 scenario = stored_target.get("scenario", default_scenario)
