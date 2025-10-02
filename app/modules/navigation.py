@@ -19,16 +19,20 @@ class MissionStep:
 
 
 MISSION_STEPS: tuple[MissionStep, ...] = (
-    MissionStep("brief", "Brief", "Home", "Resumen y preparación"),
-    MissionStep("inventory", "Inventario", "1_Inventory_Builder", "Normalizar residuos"),
-    MissionStep("target", "Target", "2_Target_Designer", "Definir objetivos"),
-    MissionStep("generator", "Generador", "3_Generator", "Recetas asistidas"),
-    MissionStep("results", "Resultados", "4_Results_and_Tradeoffs", "Trade-offs y métricas"),
-    MissionStep("compare", "Comparar", "5_Compare_and_Explain", "Explicabilidad"),
-    MissionStep("export", "Export", "6_Pareto_and_Export", "Pareto y export"),
-    MissionStep("playbooks", "Playbooks", "7_Scenario_Playbooks", "Escenarios"),
-    MissionStep("feedback", "Feedback", "8_Feedback_and_Impact", "Impacto y retraining"),
-    MissionStep("capacity", "Capacidad", "9_Capacity_Simulator", "Simulación"),
+    MissionStep("overview", "Overview", "0_Mission_Overview", "Panorama general de la misión"),
+    MissionStep("target", "Target (legacy)", "2_Target_Designer", "Definir objetivos (legacy)"),
+    MissionStep("generator", "Generador (legacy)", "3_Generator", "Recetas asistidas (legacy)"),
+    MissionStep(
+        "results",
+        "Resultados (legacy)",
+        "4_Results_and_Tradeoffs",
+        "Trade-offs y métricas (legacy)",
+    ),
+    MissionStep("compare", "Comparar (legacy)", "5_Compare_and_Explain", "Explicabilidad (legacy)"),
+    MissionStep("export", "Export (legacy)", "6_Pareto_and_Export", "Pareto y export (legacy)"),
+    MissionStep("playbooks", "Playbooks (legacy)", "7_Scenario_Playbooks", "Escenarios (legacy)"),
+    MissionStep("feedback", "Feedback (legacy)", "8_Feedback_and_Impact", "Impacto y retraining (legacy)"),
+    MissionStep("capacity", "Capacidad (legacy)", "9_Capacity_Simulator", "Simulación (legacy)"),
 )
 
 _STEP_LOOKUP = {step.key: step for step in MISSION_STEPS}
