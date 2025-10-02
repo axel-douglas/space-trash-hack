@@ -19,7 +19,7 @@ class MissionStep:
 
 
 MISSION_STEPS: tuple[MissionStep, ...] = (
-    MissionStep("overview", "Overview", "0_Mission_Overview", "Panorama general de la misión"),
+    MissionStep("overview", "Overview", "Home", "Panorama general de la misión"),
     MissionStep("target", "Target (legacy)", "2_Target_Designer", "Definir objetivos (legacy)"),
     MissionStep("generator", "Generador (legacy)", "3_Generator", "Recetas asistidas (legacy)"),
     MissionStep(

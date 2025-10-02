@@ -16,6 +16,10 @@ streamlit run app/Home.py
 
 No se requieren variables de entorno adicionales para el arranque interactivo.
 
+El script `app/Home.py` renderiza la misma vista de *Mission Overview* que la
+entrada multipágina `app/pages/0_Mission_Overview.py`, de modo que la pantalla
+principal y el paso "Overview" permanecen sincronizados.
+
 ## Módulos principales
 
 La refactorización de 2025 separó responsabilidades clave para mantener el
