@@ -16,12 +16,12 @@ from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.process_planner import choose_process
 from app.modules.safety import check_safety, safety_badge
 from app.modules.ui_blocks import (
+    action_button,
     chipline,
     layout_block,
     layout_stack,
     load_theme,
     micro_divider,
-    minimal_button,
     pill,
 )
 from app.modules.visualizations import ConvergenceScene
@@ -951,8 +951,8 @@ with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None
             )
 
             with control:
-                run = minimal_button(
-                    "Generar lote",
+                run = action_button(
+                    "⚙️ Generar lote",
                     key="generator_run_button",
                     state=button_state,
                     width="full",

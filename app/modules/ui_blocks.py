@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from contextlib import contextmanager
 from html import escape
 from pathlib import Path
 from typing import Any, Generator, Iterable, Iterator, Literal, Mapping, Optional
-from uuid import uuid4
 
 import streamlit as st
-from streamlit.components.v1 import html as components_html
 from streamlit.delta_generator import DeltaGenerator
 
 _THEME_HASH_KEY = "__rexai_theme_hash__"
@@ -43,58 +40,9 @@ def _inject_css_once() -> None:
     st.session_state[_THEME_HASH_KEY] = css_hash
 
 
-_BUTTON_STYLES = """
-.rexai-fx-wrapper{position:relative;display:flex;flex-direction:column;gap:6px;}
-.rexai-fx-wrapper[data-width="full"]{width:100%;}
-.rexai-fx-wrapper[data-width="auto"]{display:inline-flex;}
-.rexai-fx-button{position:relative;border:none;border-radius:14px;padding:14px 18px;font-weight:600;font-size:1rem;color:#0f172a;background:#dbe6ff;box-shadow:0 10px 22px rgba(14,40,80,0.15);transition:transform 0.16s ease,box-shadow 0.2s ease,filter 0.2s ease;cursor:pointer;overflow:hidden;min-height:52px;}
-.rexai-fx-wrapper[data-width="full"] .rexai-fx-button{width:100%;}
-.rexai-fx-button:disabled{cursor:not-allowed;opacity:0.7;filter:grayscale(0.2);}
-.rexai-fx-button:hover{transform:translateY(-1px);box-shadow:0 14px 26px rgba(14,40,80,0.2);}
-.rexai-fx-button:active{transform:scale(0.985);}
-.rexai-fx-wrapper[data-state="loading"] .rexai-fx-button{background:#c5d7fb;box-shadow:0 10px 20px rgba(14,40,80,0.18);cursor:progress;}
-.rexai-fx-wrapper[data-state="success"] .rexai-fx-button{background:#c8f5df;}
-.rexai-fx-wrapper[data-state="error"] .rexai-fx-button{background:#ffd7dc;}
-.rexai-fx-label{position:relative;z-index:2;display:flex;align-items:center;justify-content:center;gap:10px;text-align:center;letter-spacing:0.01em;flex-wrap:wrap;}
-.rexai-fx-label[data-layout="stack"]{flex-direction:column;gap:6px;}
-.rexai-fx-icon{font-size:1.25rem;line-height:1;}
-.rexai-fx-text{display:flex;flex-direction:column;gap:2px;line-height:1.2;align-items:center;text-align:center;}
-.rexai-fx-line{display:block;}
-.rexai-fx-status{font-size:0.78rem;letter-spacing:0.04em;text-transform:uppercase;color:rgba(60,79,102,0.9);text-align:center;transition:opacity 0.18s ease;opacity:0;height:0;}
-.rexai-fx-status[data-active="true"]{opacity:1;height:auto;}
-.rexai-fx-particles{display:none;}
-.rexai-fx-wrapper[data-state="loading"] .rexai-fx-button::after{content:"";position:absolute;inset:12px;width:28px;height:28px;margin:auto;border-radius:999px;border:3px solid rgba(15,23,42,0.2);border-top-color:rgba(15,23,42,0.6);animation:rexai-spin 0.8s linear infinite;z-index:1;}
-.rexai-fx-wrapper[data-state="loading"] .rexai-fx-label{opacity:0.6;}
-.rexai-fx-help{font-size:0.82rem;color:rgba(71,85,105,0.85);margin:0 4px;}
-@keyframes rexai-spin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
-"""
 
-_MINIMAL_BUTTON_STYLES = """
-.rexai-minimal-wrapper{display:flex;flex-direction:column;gap:6px;}
-.rexai-minimal-wrapper[data-width="full"]{width:100%;}
-.rexai-minimal-wrapper[data-width="auto"]{display:inline-flex;}
-.rexai-minimal-button{border:1px solid rgba(148,163,184,0.32);border-radius:14px;padding:14px 18px;font-weight:600;font-size:1rem;color:var(--rexai-button-fg,rgba(15,23,42,0.94));background:var(--rexai-button-bg,rgba(148,163,184,0.08));box-shadow:0 4px 12px rgba(15,23,42,0.04);transition:transform 0.16s ease,box-shadow 0.18s ease,background 0.2s ease,color 0.2s ease;cursor:pointer;min-height:52px;text-align:center;display:flex;justify-content:center;align-items:center;gap:10px;}
-.rexai-minimal-button:disabled{cursor:not-allowed;opacity:0.6;}
-.rexai-minimal-wrapper[data-width="full"] .rexai-minimal-button{width:100%;}
-.rexai-minimal-wrapper[data-state="loading"] .rexai-minimal-button{background:rgba(148,163,184,0.14);box-shadow:0 4px 14px rgba(59,130,246,0.18);cursor:progress;}
-.rexai-minimal-wrapper[data-state="success"] .rexai-minimal-button{border-color:rgba(16,185,129,0.42);background:rgba(16,185,129,0.12);color:rgba(15,118,110,0.92);}
-.rexai-minimal-wrapper[data-state="error"] .rexai-minimal-button{border-color:rgba(248,113,113,0.48);background:rgba(248,113,113,0.1);color:rgba(153,27,27,0.92);}
-.rexai-minimal-icon{font-size:1.2rem;line-height:1;}
-.rexai-minimal-text{display:flex;flex-direction:column;gap:4px;line-height:1.2;align-items:center;justify-content:center;}
-.rexai-minimal-text[data-layout="inline"]{flex-direction:row;gap:10px;}
-.rexai-minimal-line{display:block;}
-.rexai-minimal-status{font-size:0.78rem;color:rgba(71,85,105,0.82);text-transform:uppercase;letter-spacing:0.04em;transition:opacity 0.18s ease;height:0;opacity:0;}
-.rexai-minimal-status[data-active="true"]{height:auto;opacity:1;}
-.rexai-minimal-help{font-size:0.82rem;color:rgba(100,116,139,0.9);margin:0 4px;}
-@media (prefers-color-scheme:dark){
-  .rexai-minimal-button{border-color:rgba(148,163,184,0.24);background:rgba(100,116,139,0.12);color:rgba(226,232,240,0.94);box-shadow:0 6px 16px rgba(15,23,42,0.3);}
-  .rexai-minimal-wrapper[data-state="loading"] .rexai-minimal-button{background:rgba(148,163,184,0.18);}
-  .rexai-minimal-wrapper[data-state="success"] .rexai-minimal-button{background:rgba(34,197,94,0.14);color:rgba(190,242,100,0.95);}
-  .rexai-minimal-wrapper[data-state="error"] .rexai-minimal-button{background:rgba(248,113,113,0.18);color:rgba(254,226,226,0.92);}
-  .rexai-minimal-status{color:rgba(148,163,184,0.86);}
-  .rexai-minimal-help{color:rgba(148,163,184,0.88);}
-}
-"""
+
+
 
 
 def load_theme(*, show_hud: bool = True) -> None:
@@ -268,6 +216,12 @@ def section(title: str, subtitle: str = "") -> None:
 
 _BUTTON_STATES: set[str] = {"idle", "loading", "success", "error"}
 
+_STATUS_STATE_MAP: dict[str, str] = {
+    "loading": "running",
+    "success": "complete",
+    "error": "error",
+}
+
 
 def _split_lines(text: str) -> list[str]:
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
@@ -321,46 +275,49 @@ def _normalize_button_options(
     }
 
 
-def _render_button_component(
-    markup: str,
-    *,
-    key: str,
-    line_count: int,
-    has_help: bool,
-) -> bool:
-    base_height = 100 + max(0, line_count - 1) * 8
-    component_kwargs = {"height": base_height + (20 if has_help else 0), "key": key}
-    try:
-        result = components_html(markup, **component_kwargs)
-    except TypeError:
-        component_kwargs.pop("key", None)
-        result = components_html(markup, **component_kwargs)
-
-    session_key = f"__rexai_fx_ts::{key}"
-    if isinstance(result, dict) and result.get("event") == "click":
-        ts = result.get("ts")
-        if ts and st.session_state.get(session_key) != ts:
-            st.session_state[session_key] = ts
-            return True
-    return False
+def _compose_button_label(lines: list[str], icon: str | None) -> str:
+    if not lines:
+        return icon or ""
+    if icon:
+        first, *rest = lines
+        prefixed = f"{icon} {first}".strip()
+        return "\n".join([prefixed, *rest]) if rest else prefixed
+    return "\n".join(lines)
 
 
-def minimal_button(
+def _status_label(options: Mapping[str, Any], state: str) -> str:
+    hint = str(options.get("status_text", "")).strip()
+    if hint:
+        return hint
+    state_messages = options.get("state_messages", {})
+    return str(state_messages.get(state, "")).strip()
+
+
+def action_button(
     label: str,
     key: str,
     *,
     state: Literal["idle", "loading", "success", "error"] = "idle",
     width: Literal["full", "auto"] = "full",
     help_text: str | None = None,
+    tooltip: str | None = None,
     loading_label: str | None = None,
     success_label: str | None = None,
     error_label: str | None = None,
-    disabled: bool = False,
     status_hints: dict[str, str] | None = None,
     icon: str | None = None,
+    disabled: bool = False,
+    download_data: Any | None = None,
+    download_file_name: str | None = None,
+    download_mime: str | None = None,
+    on_click: Any | None = None,
+    on_click_args: tuple[Any, ...] | None = None,
+    on_click_kwargs: Mapping[str, Any] | None = None,
+    button_type: Literal["primary", "secondary"] = "secondary",
 ) -> bool:
-    """Render a minimal CTA button with the shared Rex-AI API."""
+    """Render a Streamlit button with Rex-AI convenience features."""
 
+    load_theme(show_hud=False)
     options = _normalize_button_options(
         label,
         state=state,
@@ -372,210 +329,50 @@ def minimal_button(
         icon=icon,
     )
 
-    container_width = "full" if width not in {"full", "auto"} else width
-    button_id = f"rexai-minimal-{uuid4().hex}"
-    label_lines = options["label_lines"]
-    layout_mode = options["layout_mode"]
-    line_count = options["line_count"]
-    status_text = options["status_text"]
-    icon_html = (
-        f'<span class="rexai-minimal-icon" aria-hidden="true">{escape(icon)}</span>'
-        if icon
-        else ""
-    )
-    text_block = "".join(
-        f'<span class="rexai-minimal-line">{escape(line)}</span>' for line in label_lines
-    )
-    text_wrapper = (
-        f'<span class="rexai-minimal-text" data-layout="{layout_mode}" '
-        f'data-lines="{line_count}">{text_block}</span>'
-    )
+    use_container_width = width == "full"
+    disabled_flag = bool(disabled) or state == "loading"
+    button_label = _compose_button_label(options["label_lines"], icon)
+    args = on_click_args or ()
+    kwargs = dict(on_click_kwargs or {})
 
-    help_html = (
-        f'<div class="rexai-minimal-help">{escape(help_text)}</div>' if help_text else ""
-    )
-
-    script = "".join(
-        [
-            "(function(){",
-            "const styleId='rexai-minimal-style';",
-            f"const styleCSS={json.dumps(_MINIMAL_BUTTON_STYLES)};",
-            "if(!document.getElementById(styleId)){const style=document.createElement('style');style.id=styleId;style.textContent=styleCSS;document.head.appendChild(style);}",
-            f"const cfg={{state:{json.dumps(state)},statusText:{json.dumps(status_text)},disabled:{json.dumps(bool(disabled))},width:{json.dumps(container_width)}}};",
-            "const wrapperId='" + button_id + "';",
-            "const Streamlit=window.parent && window.parent.Streamlit;",
-            "if(!Streamlit){return;}",
-            "const wrapper=document.getElementById(wrapperId);",
-            "if(!wrapper){return;}",
-            "Streamlit.setComponentReady();",
-            "wrapper.setAttribute('data-fx','minimal');",
-            "wrapper.setAttribute('data-state',cfg.state);",
-            "wrapper.setAttribute('data-width',cfg.width);",
-            "const statusEl=wrapper.querySelector('.rexai-minimal-status');",
-            "if(statusEl){statusEl.textContent=cfg.statusText||'';statusEl.setAttribute('data-active',cfg.statusText?'true':'false');}",
-            "const buttonEl=wrapper.querySelector('button');",
-            "if(buttonEl){buttonEl.disabled=cfg.disabled || cfg.state==='loading';",
-            "if(cfg.state==='loading'){buttonEl.setAttribute('aria-busy','true');}else{buttonEl.removeAttribute('aria-busy');}",
-            "if(!cfg.disabled){buttonEl.addEventListener('click',()=>Streamlit.setComponentValue({event:'click',ts:Date.now()}));}}",
-            "const sync=()=>Streamlit.setFrameHeight(document.body.scrollHeight);",
-            "sync();",
-            "window.addEventListener('resize',sync);",
-            "})();",
-        ]
-    )
-
-    html_markup = f"""
-    <div id="{button_id}" class="rexai-minimal-wrapper" data-state="{state}" data-width="{container_width}" data-fx="minimal">
-      <button type="button" class="rexai-minimal-button" {'disabled="disabled"' if disabled else ''}>
-        {icon_html}{text_wrapper}
-      </button>
-      <span class="rexai-minimal-status" data-active="{'true' if status_text else 'false'}">{escape(status_text)}</span>
-      {help_html}
-    </div>
-    <script>{script}</script>
-    """
-
-    return _render_button_component(
-        html_markup,
-        key=key,
-        line_count=line_count,
-        has_help=bool(help_text),
-    )
-
-
-def futuristic_button(
-    label: str,
-    key: str,
-    *,
-    state: Literal["idle", "loading", "success", "error"] = "idle",
-    width: Literal["full", "auto"] = "full",
-    help_text: str | None = None,
-    loading_label: str | None = None,
-    success_label: str | None = None,
-    error_label: str | None = None,
-    sound: bool = True,
-    enable_vibration: bool = False,
-    disabled: bool = False,
-    status_hints: dict[str, str] | None = None,
-    icon: str | None = None,
-    mode: Literal["minimal", "cinematic"] = "minimal",
-) -> bool:
-    """Render the CTA button with a streamlined cinematic layout."""
-
-    if mode == "minimal":
-        return minimal_button(
-            label,
-            key,
-            state=state,
-            width=width,
-            help_text=help_text,
-            loading_label=loading_label,
-            success_label=success_label,
-            error_label=error_label,
-            disabled=disabled,
-            status_hints=status_hints,
-            icon=icon,
+    if download_data is not None:
+        clicked = st.download_button(
+            button_label,
+            data=download_data,
+            file_name=download_file_name,
+            mime=download_mime,
+            key=key,
+            help=tooltip,
+            on_click=on_click,
+            args=args,
+            kwargs=kwargs,
+            disabled=disabled_flag,
+            use_container_width=use_container_width,
+        )
+    else:
+        clicked = st.button(
+            button_label,
+            key=key,
+            help=tooltip,
+            on_click=on_click,
+            args=args,
+            kwargs=kwargs,
+            type=button_type,
+            disabled=disabled_flag,
+            use_container_width=use_container_width,
         )
 
-    if mode != "cinematic":
-        raise ValueError(f"Modo no soportado para futuristic_button: {mode}")
+    status_state = _STATUS_STATE_MAP.get(state)
+    if status_state:
+        status_label = _status_label(options, state)
+        if status_label:
+            status = st.status(status_label, state=status_state)
+            status.update(label=status_label, state=status_state, expanded=False)
 
-    options = _normalize_button_options(
-        label,
-        state=state,
-        loading_label=loading_label,
-        success_label=success_label,
-        error_label=error_label,
-        status_hints=status_hints,
-        help_text=help_text,
-        icon=icon,
-    )
+    if help_text:
+        st.caption(help_text)
 
-    container_width = "full" if width not in {"full", "auto"} else width
-    status_text = options["status_text"]
-    help_html = (
-        f'<div class="rexai-fx-help">{escape(help_text)}</div>' if help_text else ""
-    )
-    label_lines = options["label_lines"]
-    line_count = options["line_count"]
-    layout_mode = options["layout_mode"]
-    button_id = f"rexai-fx-{uuid4().hex}"
-    icon_html = (
-        f'<span class="rexai-fx-icon" aria-hidden="true">{escape(icon)}</span>'
-        if icon
-        else ""
-    )
-    text_block = "".join(
-        f'<span class="rexai-fx-line">{escape(line)}</span>' for line in label_lines
-    )
-    label_html = (
-        f'<span class="rexai-fx-label" data-layout="{layout_mode}" '
-        f'data-lines="{line_count}">{icon_html}'
-        f'<span class="rexai-fx-text">{text_block}</span></span>'
-    )
-
-    config: dict[str, Any] = {
-        "state": state,
-        "stateMessages": options["state_messages"],
-        "statusHints": options["status_hints"],
-        "sound": sound,
-        "vibration": bool(enable_vibration),
-        "vibrationPattern": [8, 14, 4, 18] if enable_vibration else [],
-        "particleColors": [
-            "rgba(125,211,252,0.85)",
-            "rgba(59,130,246,0.95)",
-            "rgba(129,140,248,0.85)",
-            "rgba(244,114,182,0.8)",
-        ],
-        "disabled": bool(disabled),
-    }
-
-    script = "".join(
-        [
-            "(function(){",
-            "const styleId='rexai-fx-style';",
-            f"const styleCSS={json.dumps(_BUTTON_STYLES)};",
-            "if(!document.getElementById(styleId)){const style=document.createElement('style');style.id=styleId;style.textContent=styleCSS;document.head.appendChild(style);}",
-            f"const cfg={json.dumps(config)};",
-            f"const wrapperId='{button_id}';",
-            "const Streamlit=window.parent && window.parent.Streamlit;",
-            "if(!Streamlit){return;}",
-            "const wrapper=document.getElementById(wrapperId);",
-            "if(!wrapper){return;}",
-            "Streamlit.setComponentReady();",
-            "wrapper.setAttribute('data-fx','cinematic');",
-            "wrapper.setAttribute('data-state',cfg.state);",
-            "wrapper.setAttribute('data-width'," + json.dumps(container_width) + ");",
-            "const buttonEl=wrapper.querySelector('button');",
-            "if(buttonEl){buttonEl.disabled=cfg.disabled;}",
-            "const statusEl=wrapper.querySelector('.rexai-fx-status');",
-            "if(statusEl){const hint=(cfg.statusHints && cfg.statusHints[cfg.state])||'';statusEl.textContent=hint;statusEl.setAttribute('data-active',hint?'true':'false');}",
-            "const send=(payload)=>Streamlit.setComponentValue(payload);",
-            "if(buttonEl && !cfg.disabled){buttonEl.addEventListener('click',()=>send({event:'click',ts:Date.now()}));}",
-            "const sync=()=>Streamlit.setFrameHeight(document.body.scrollHeight);",
-            "sync();window.addEventListener('resize',sync);",
-            "})();",
-        ]
-    )
-
-    html_markup = f"""
-    <div id="{button_id}" class="rexai-fx-wrapper" data-state="{state}" data-width="{container_width}" data-fx="cinematic">
-      <button type="button" class="rexai-fx-button" {'disabled="disabled"' if disabled else ''}>
-        <span class="rexai-fx-particles"></span>
-        {label_html}
-      </button>
-      <span class="rexai-fx-status" data-active="{'true' if status_text else 'false'}">{escape(status_text)}</span>
-      {help_html}
-    </div>
-    <script>{script}</script>
-    """
-
-    return _render_button_component(
-        html_markup,
-        key=key,
-        line_count=line_count,
-        has_help=bool(help_text),
-    )
+    return clicked
 
 
 @contextmanager

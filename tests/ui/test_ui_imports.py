@@ -14,7 +14,7 @@ def test_ui_blocks_exports_expected_helpers() -> None:
         "surface",
         "chipline",
         "pill",
-        "minimal_button",
+        "action_button",
     }
 
     missing = [name for name in expected_callables if not hasattr(module, name)]
