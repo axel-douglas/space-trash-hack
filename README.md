@@ -16,6 +16,12 @@ streamlit run app/Home.py
 
 No se requieren variables de entorno adicionales para el arranque interactivo.
 
+> ⚙️ **Bootstrap obligatorio:** antes de importar desde `app.modules`, cada
+> script de Streamlit debe ejecutar `from app.bootstrap import
+> ensure_project_root; ensure_project_root()`. Esto garantiza que la carpeta
+> raíz del repositorio esté en `sys.path` cuando se ejecutan archivos sueltos
+> con `streamlit run` o `python app/...`.
+
 El script `app/Home.py` renderiza la misma vista de *Mission Overview* que la
 entrada multipágina `app/pages/0_Mission_Overview.py`, de modo que la pantalla
 principal y el paso "Overview" permanecen sincronizados.

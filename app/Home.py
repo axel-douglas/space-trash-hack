@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from app.bootstrap import ensure_project_root
+
+ensure_project_root()
+
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
