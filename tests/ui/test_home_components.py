@@ -1,5 +1,6 @@
 """Smoke tests for declarative components used on the Home page."""
 
+import importlib
 import sys
 import types
 
@@ -7,6 +8,7 @@ import pytest
 
 pytest.importorskip("numpy")
 pytest.importorskip("plotly")
+pytest.importorskip("streamlit")
 
 if "joblib" not in sys.modules:
     sys.modules["joblib"] = types.ModuleType("joblib")
@@ -18,6 +20,28 @@ from app.modules.luxe_components import (
     CarouselRail,
     MissionMetrics,
 )
+from pytest_streamlit import StreamlitRunner
+
+
+def _render_home() -> None:
+    import importlib
+    import sys
+    from pathlib import Path
+
+    import streamlit as st
+
+    repo_root = Path.cwd()
+    app_dir = repo_root / "app"
+    for path in (repo_root, app_dir):
+        if str(path) not in sys.path:
+            sys.path.insert(0, str(path))
+
+    st.set_page_config = lambda *_, **__: None  # type: ignore[assignment]
+    module_name = "app.Home"
+    if module_name in sys.modules:
+        importlib.reload(sys.modules[module_name])
+    else:
+        importlib.import_module(module_name)
 
 
 def test_mission_metrics_markup_variants() -> None:
@@ -79,3 +103,26 @@ def test_action_deck_markup() -> None:
     assert "luxe-action-deck" in html
     assert "📤" in html
     assert "Descargá Sankey" in html
+
+
+def test_home_metrics_and_inventory_preview() -> None:
+    runner = StreamlitRunner(_render_home)
+    app = runner.run()
+
+    metric_labels = [metric.label for metric in app.metric]
+    assert "Estado del modelo" in metric_labels
+    assert "Inventario normalizado" in metric_labels
+    assert "Feedback de crew" in metric_labels
+
+    assert app.dataframe, "La portada debe exponer al menos un DataFrame"
+    inventory_df = app.dataframe[0].value
+    assert not inventory_df.empty
+    assert {"material", "mass_kg"}.issubset(inventory_df.columns)
+
+
+def test_home_feedback_section_displays_status() -> None:
+    runner = StreamlitRunner(_render_home)
+    app = runner.run()
+
+    captions = [caption.body for caption in app.caption]
+    assert any("Sin registros cargados" in body for body in captions)

@@ -2,23 +2,11 @@
 import _bootstrap  # noqa: F401
 from datetime import datetime, timezone
 from pathlib import Path
-import textwrap
+from typing import Any
 
 import pandas as pd
 import streamlit as st
 
-from app.modules.luxe_components import (
-    CarouselItem,
-    CarouselRail,
-    HeroFlowStage,
-    MetricGalaxy,
-    MetricItem,
-    MissionBoard,
-    MissionMetrics,
-    TeslaHero,
-    TimelineMilestone,
-    guided_demo,
-)
 from app.modules.ml_models import get_model_registry
 from app.modules.navigation import set_active_step
 from app.modules.ui_blocks import load_theme
@@ -46,6 +34,42 @@ def load_inventory_sample() -> pd.DataFrame | None:
         return None
 
 
+@st.cache_data
+def load_feedback_preview(max_rows: int = 5) -> tuple[pd.DataFrame | None, int]:
+    csv_path = Path("data") / "feedback_log.csv"
+    if not csv_path.exists():
+        return None, 0
+
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception:
+        return None, 0
+
+    if df.empty:
+        return None, 0
+
+    if "ts_iso" in df.columns:
+        df["ts_iso"] = pd.to_datetime(df["ts_iso"], errors="coerce", utc=True)
+        df = df.sort_values("ts_iso", ascending=False, na_position="last")
+    else:
+        df = df.sort_values(df.columns[0], ascending=False)
+
+    total_rows = int(df.shape[0])
+    preview = df.head(max_rows).copy()
+    display_columns = [
+        column
+        for column in ["ts_iso", "astronaut", "scenario", "target_name", "issues", "notes"]
+        if column in preview.columns
+    ]
+    if display_columns:
+        preview = preview[display_columns]
+
+    if "ts_iso" in preview.columns:
+        preview["ts_iso"] = preview["ts_iso"].dt.strftime("%Y-%m-%d %H:%M UTC")
+
+    return preview, total_rows
+
+
 def format_mass(value: float | int | None) -> str:
     if value is None:
         return "—"
@@ -54,55 +78,20 @@ def format_mass(value: float | int | None) -> str:
     return f"{value:.0f} kg"
 
 
-_SCENARIO_CONFIG: dict[str, dict[str, object]] = {
-    "residences": {
-        "label": "Residences",
-        "badge_tone": "residences",
-        "priority": 0,
-    },
-    "daring": {
-        "label": "Daring",
-        "badge_tone": "daring",
-        "priority": 1,
-    },
-}
-
-_CATEGORY_SCENARIO_MAP = {
-    "foam": "residences",
-    "foam packaging": "residences",
-    "packaging": "residences",
-    "food packaging": "residences",
-    "structural elements": "residences",
-    "eva waste": "daring",
-    "fabrics": "daring",
-    "gloves": "daring",
-}
-
-_SCENARIO_KEYWORDS = {
-    "residences": ("foam", "pack", "alumin", "struct"),
-    "daring": ("carbon", "mesh", "eva", "fabric", "glove"),
-}
+def format_water(value: float | None) -> str:
+    if value is None:
+        return "—"
+    if value >= 1000:
+        return f"{value/1000:.2f} m³"
+    return f"{value:.0f} L"
 
 
-def map_category_to_scenario(category: str) -> str:
-    normalized = (category or "").strip().lower()
-    if not normalized:
-        return "residences"
-    if normalized in _CATEGORY_SCENARIO_MAP:
-        return _CATEGORY_SCENARIO_MAP[normalized]
-    for scenario, keywords in _SCENARIO_KEYWORDS.items():
-        if any(keyword in normalized for keyword in keywords):
-            return scenario
-    return "residences"
-
-
-def _tone_rank(tone: str | None) -> int:
-    order = {"positive": 0, "info": 1, "warning": 2, "danger": 3}
-    return order.get(tone or "", -1)
-
-
-def _tone_max(current: str, candidate: str) -> str:
-    return candidate if _tone_rank(candidate) > _tone_rank(current) else current
+def format_energy(value: float | None) -> str:
+    if value is None:
+        return "—"
+    if value >= 1000:
+        return f"{value/1000:.2f} MWh"
+    return f"{value:.0f} kWh"
 
 
 def training_health_summary(
@@ -134,7 +123,7 @@ def training_health_summary(
             parsed_note = f"Tipo de fecha inesperado: {type(trained_dt).__name__}"
 
         if normalized_dt is None:
-            tone = _tone_max(tone, "warning")
+            tone = "warning"
             notes.append(parsed_note or "Fecha de entrenamiento no interpretable")
         else:
             try:
@@ -148,12 +137,12 @@ def training_health_summary(
                     tone = "danger"
                     notes.append("⚠️ Reentrená: supera 6 meses")
                 elif age_days > 90:
-                    tone = _tone_max(tone, "warning")
+                    tone = "warning"
                     notes.append("Sugerido reentrenar en <90 días")
                 elif age_days <= 30:
                     notes.append("Entrenamiento reciente (<30 días)")
             except Exception as exc:  # pragma: no cover - defensive
-                tone = _tone_max(tone, "warning")
+                tone = "warning"
                 notes.append(f"No se pudo normalizar fecha: {exc}")
 
     sample_count = int(n_samples or 0)
@@ -163,7 +152,7 @@ def training_health_summary(
     else:
         notes.append(f"Muestras: {sample_count:,}")
         if sample_count < 400:
-            tone = _tone_max(tone, "warning")
+            tone = "warning"
             notes.append("Amplía dataset: <400 muestras")
         elif sample_count >= 1000:
             notes.append("Cobertura sólida (≥1k)")
@@ -171,7 +160,7 @@ def training_health_summary(
     return tone, notes
 
 
-def uncertainty_health_summary(metadata: dict[str, object]) -> tuple[str, list[str]]:
+def uncertainty_health_summary(metadata: dict[str, Any]) -> tuple[str, list[str]]:
     """Compute tone and highlights from residual_std metadata."""
 
     residual_std = metadata.get("residual_std")
@@ -192,15 +181,15 @@ def uncertainty_health_summary(metadata: dict[str, object]) -> tuple[str, list[s
 
     tone = "positive"
     if any(value == 0 for value in (energy_std, water_std, crew_std)):
-        tone = _tone_max(tone, "warning")
+        tone = "warning"
 
     if energy_std > 22000 or crew_std > 6000 or water_std > 220:
         tone = "danger"
     elif energy_std > 16000 or crew_std > 4500 or water_std > 160:
-        tone = _tone_max(tone, "warning")
+        tone = "warning"
 
     if rigidity_std > 0.45 or tightness_std > 0.12:
-        tone = _tone_max(tone, "warning")
+        tone = "warning"
 
     notes = [
         f"σ energía: {energy_std:.0f} kWh",
@@ -237,14 +226,6 @@ def compute_inventory_totals(df: pd.DataFrame | None) -> dict[str, float]:
     return totals
 
 
-def classify_inventory_tone(value: float, warn: float, danger: float) -> str:
-    if value >= danger:
-        return "danger"
-    if value >= warn:
-        return "warning"
-    return "positive"
-
-
 def compute_delta_strings(
     key: str,
     current: float,
@@ -278,22 +259,6 @@ def describe_baseline_caption(state: dict | None) -> str:
     return "Baseline según último save_waste_df disponible."
 
 
-def format_water(value: float | None) -> str:
-    if value is None:
-        return "—"
-    if value >= 1000:
-        return f"{value/1000:.2f} m³"
-    return f"{value:.0f} L"
-
-
-def format_energy(value: float | None) -> str:
-    if value is None:
-        return "—"
-    if value >= 1000:
-        return f"{value/1000:.2f} MWh"
-    return f"{value:.0f} kWh"
-
-
 # ──────────── Lectura segura de metadata del modelo ────────────
 trained_at_raw = model_registry.metadata.get("trained_at")
 trained_label_value = (
@@ -323,164 +288,17 @@ n_samples = model_registry.metadata.get("n_samples")
 model_name = model_registry.metadata.get("model_name", "rexai-rf-ensemble")
 feature_count = len(getattr(model_registry, "feature_names", []) or [])
 
-# ──────────── Hero interactivo ────────────
-ready = "✅ Modelo listo" if model_registry.ready else "⚠️ Entrená localmente"
-
-mission_stages = [
-    HeroFlowStage(
-        key="inventory",
-        order=1,
-        name="Inventario",
-        hero_headline="Prepará el inventario",
-        hero_copy="Normalizá residuos y registrá flags EVA o multilayer.",
-        card_body=(
-            "Normalizá residuos en <code>data/waste_inventory_sample.csv</code> o en tu CSV y "
-            "registrá flags EVA, multilayer o nitrilo."
-        ),
-        compact_card_body=(
-            "Normalizá residuos y flags EVA o multilayer en <code>data/waste_inventory_sample.csv</code>."
-        ),
-        icon="🧱",
-        timeline_label="Inventario en vivo",
-        timeline_description="Cargá CSV NASA, normalizá unidades y marcá riesgos EVA.",
-        footer="Dataset NASA y flags de crew",
-    ),
-    HeroFlowStage(
-        key="target",
-        order=2,
-        name="Target",
-        hero_headline="Definí el objetivo",
-        hero_copy="Configurá límites de agua, energía y crew-time con presets marcianos.",
-        card_body=(
-            "Elegí producto final, límites de agua y energía y presets marcianos (container, utensil, tool, interior)."
-        ),
-        compact_card_body="Elegí producto y límites con presets marcianos certificados.",
-        icon="🎯",
-        timeline_label="Target marciano",
-        timeline_description="Seleccioná producto, límites de agua y energía o usá presets homologados.",
-        footer="Presets y límites manuales",
-    ),
-    HeroFlowStage(
-        key="generator",
-        order=3,
-        name="Generador",
-        hero_headline="Generá y validá",
-        hero_copy="Combiná residuos, compará IA vs heurística y verificá contribuciones.",
-        card_body=(
-            "Rex-AI mezcla ítems, contrasta heurística con modelo y detalla cada contribución en vivo."
-        ),
-        compact_card_body="Mezclá ítems, compará IA vs heurística y revisá contribuciones al instante.",
-        icon="🤖",
-        timeline_label="Generador IA",
-        timeline_description="Explorá mezclas, revisá contribuciones y bandas de confianza en segundos.",
-        footer="ML y heurística cooperativa",
-    ),
-    HeroFlowStage(
-        key="results",
-        order=4,
-        name="Resultados",
-        hero_headline="Reportá y exportá",
-        hero_copy="Compartí trade-offs, confianza 95% y comparativas para ingeniería.",
-        card_body=(
-            "Trade-offs, bandas 95%, comparación heurística vs IA y export de Sankey o feedback listos para ingeniería."
-        ),
-        compact_card_body="Revisá trade-offs, bandas 95% y exportá Sankey o feedback final.",
-        icon="📊",
-        timeline_label="Resultados y export",
-        timeline_description="Compará heurística e IA, exportá recetas y registrá feedback para retraining.",
-        footer="Listo para experimentos",
-    ),
-]
-
-hero_chips = [
-    {"label": "Hook: 8 astronautas → 12.6 t", "tone": "warning"},
-    {
-        "label": "Playbook • Residence Renovations (volumen alto)",
-        "tone": "accent",
-    },
-    {
-        "label": "Playbook • Daring Discoveries (reuso de carbono)",
-        "tone": "accent",
-    },
-    {"label": "RandomForest multisalida", "tone": "info"},
-]
-
-target_state = st.session_state.get("target")
-if isinstance(target_state, dict):
-    scenario_label = target_state.get("scenario")
-    if scenario_label:
-        hero_chips.append({"label": f"Escenario • {scenario_label}", "tone": "positive"})
+ready_label = "✅ Modelo listo" if model_registry.ready else "⚠️ Entrená localmente"
 
 inventory_session_df = st.session_state.get("inventory_data")
-inventory_count = 0
-if isinstance(inventory_session_df, pd.DataFrame):
-    inventory_count = int(inventory_session_df.shape[0])
-inventory_loaded = inventory_count > 0
+inventory_loaded = isinstance(inventory_session_df, pd.DataFrame) and not inventory_session_df.empty
 
 if inventory_loaded:
     inventory_reference_df: pd.DataFrame | None = inventory_session_df
 else:
     inventory_reference_df = load_inventory_sample()
 
-inventory_status = "OK" if inventory_loaded else "Pendiente"
-if inventory_loaded:
-    item_label = "ítem" if inventory_count == 1 else "ítems"
-    normalized_label = "normalizado" if inventory_count == 1 else "normalizados"
-    inventory_subtitle = f"{inventory_count} {item_label} {normalized_label}"
-else:
-    inventory_subtitle = "Cargá y normalizá tu inventario base."
-
-target_ready = isinstance(target_state, dict) and bool(target_state)
-target_name = ""
-if target_ready:
-    target_name = str(target_state.get("name") or target_state.get("product") or "Objetivo listo")
-target_status = "OK" if target_ready else ("Pendiente" if inventory_loaded else "Alerta")
-target_subtitle = (
-    f"Objetivo {target_name} calibrado" if target_ready else "Definí objetivo y límites energéticos."
-)
-if not inventory_loaded and not target_ready:
-    target_subtitle = "Cargá inventario antes de definir el target."
-
-candidates_state = st.session_state.get("candidates")
-try:
-    candidates_count = len(candidates_state) if candidates_state is not None else 0
-except TypeError:
-    candidates_count = 0
-has_candidates = candidates_count > 0
-
-generator_error_msg = st.session_state.get("generator_button_error")
-if not generator_error_msg and st.session_state.get("generator_button_state") == "error":
-    generator_error_msg = "Revisá los parámetros del generador."
-
-generator_status: str
-if generator_error_msg:
-    generator_status = "Alerta"
-    generator_subtitle = textwrap.shorten(str(generator_error_msg), width=72, placeholder="…")
-elif has_candidates:
-    generator_status = "OK"
-    label = "candidato" if candidates_count == 1 else "candidatos"
-    listo_label = "listo" if candidates_count == 1 else "listos"
-    generator_subtitle = f"{candidates_count} {label} {listo_label}"
-else:
-    generator_status = "Pendiente" if target_ready else "Alerta"
-    generator_subtitle = (
-        "Ejecutá el generador IA." if target_ready else "Configura el target antes de generar."
-    )
-
-selected_candidate = st.session_state.get("selected")
-results_ready = bool(selected_candidate)
-
-if results_ready:
-    results_status = "OK"
-    results_subtitle = "Candidata lista para reportar y exportar."
-elif has_candidates:
-    results_status = "Pendiente"
-    results_subtitle = "Seleccioná una candidata para comparar y exportar."
-else:
-    results_status = "Alerta"
-    results_subtitle = (
-        "Corregí el generador antes de exportar." if generator_error_msg else "Generá recetas antes de reportar."
-    )
+inventory_count = int(inventory_reference_df.shape[0]) if isinstance(inventory_reference_df, pd.DataFrame) else 0
 
 baseline_state = st.session_state.get("_inventory_baseline")
 if not isinstance(baseline_state, dict):
@@ -502,588 +320,153 @@ except (TypeError, ValueError):
 training_tone, training_notes = training_health_summary(trained_dt, n_samples_int)
 uncertainty_tone, uncertainty_notes = uncertainty_health_summary(model_registry.metadata)
 
-mission_metrics: list[dict[str, object]] = []
+feedback_preview, feedback_total = load_feedback_preview()
 
-status_tone = "positive" if model_registry.ready else "danger"
-mission_metrics.append(
-    {
-        "key": "status",
-        "label": "Estado",
-        "value": ready,
-        "details": [f"Modelo <code>{model_name}</code>"],
-        "caption": f"Nombre: {model_name}",
-        "icon": "🛰️",
-        "stage_key": "inventory",
-        "tone": status_tone,
-    }
+latest_feedback_label = "Esperando feedback"
+if feedback_total and feedback_preview is not None and not feedback_preview.empty:
+    first_row = feedback_preview.iloc[0]
+    ts_value = first_row.get("ts_iso")
+    if isinstance(ts_value, str) and ts_value:
+        latest_feedback_label = f"Último: {ts_value}"
+    else:
+        latest_feedback_label = "Últimos registros listos"
+elif feedback_total:
+    latest_feedback_label = "Logs disponibles"
+
+inventory_metric_value = (
+    f"{inventory_count} ítem{'s' if inventory_count != 1 else ''}"
+    if inventory_reference_df is not None and not inventory_reference_df.empty
+    else "Sin inventario"
+)
+inventory_metric_delta = (
+    "Fuente: sesión actual" if inventory_loaded else "Usando muestra NASA"
 )
 
-mission_metrics.append(
-    {
-        "key": "training",
-        "label": "Entrenamiento",
-        "value": trained_at_display,
-        "details": [f"Origen: {trained_label_value}", *training_notes],
-        "caption": "Control de frescura y cobertura",
-        "icon": "🧪",
-        "stage_key": "target",
-        "tone": training_tone,
-    }
+feedback_metric_value = (
+    f"{feedback_total} registro{'s' if feedback_total != 1 else ''}"
+    if feedback_total
+    else "Sin registros"
 )
 
-mission_metrics.append(
-    {
-        "key": "feature_space",
-        "label": "Feature space",
-        "value": str(feature_count),
-        "details": ["Fisicoquímica + proceso"],
-        "caption": "Ingeniería fisicoquímica + proceso",
-        "icon": "🧬",
-        "stage_key": "generator",
-        "tone": "info",
-    }
-)
-
-mission_metrics.append(
-    {
-        "key": "uncertainty",
-        "label": "Incertidumbre",
-        "value": model_registry.uncertainty_label(),
-        "details": uncertainty_notes,
-        "caption": "CI 95% expuesta en UI",
-        "icon": "📈",
-        "stage_key": "results",
-        "tone": uncertainty_tone,
-    }
-)
-
-baseline_caption = describe_baseline_caption(baseline_state)
-
-if inventory_totals:
-    mass_total = inventory_totals.get("mass_kg", 0.0)
-    water_total = inventory_totals.get("water_l", 0.0)
-    energy_total = inventory_totals.get("energy_kwh", 0.0)
-
-    mass_delta, mass_delta_detail = compute_delta_strings(
-        "mass_kg", mass_total, baseline_totals, " kg"
-    )
-    water_delta, water_delta_detail = compute_delta_strings(
-        "water_l", water_total, baseline_totals, " L", precision=1
-    )
-    energy_delta, energy_delta_detail = compute_delta_strings(
-        "energy_kwh", energy_total, baseline_totals, " kWh"
-    )
-
-    mass_details = ["Masa total normalizada"]
-    if mass_delta_detail:
-        mass_details.insert(0, mass_delta_detail)
-    mass_details.insert(0, baseline_caption)
-    water_details = ["Basado en humedad declarada"]
-    if water_delta_detail:
-        water_details.insert(0, water_delta_detail)
-    water_details.insert(0, baseline_caption)
-    energy_details = ["Escalado por factor de dificultad"]
-    if energy_delta_detail:
-        energy_details.insert(0, energy_delta_detail)
-    energy_details.insert(0, baseline_caption)
-
-    mission_metrics.extend(
-        [
-            {
-                "key": "inventory_mass",
-                "label": "Masa total",
-                "value": format_mass(mass_total),
-                "details": mass_details,
-                "icon": "🧱",
-                "stage_key": "inventory",
-                "tone": classify_inventory_tone(mass_total, 5000, 8000),
-                "delta": mass_delta,
-            },
-            {
-                "key": "inventory_water",
-                "label": "Agua estimada",
-                "value": format_water(water_total),
-                "details": water_details,
-                "icon": "💧",
-                "stage_key": "target",
-                "tone": classify_inventory_tone(water_total, 600, 1200),
-                "delta": water_delta,
-            },
-            {
-                "key": "inventory_energy",
-                "label": "Energía estimada",
-                "value": format_energy(energy_total),
-                "details": energy_details,
-                "icon": "⚡",
-                "stage_key": "generator",
-                "tone": classify_inventory_tone(energy_total, 2500, 4000),
-                "delta": energy_delta,
-            },
-        ]
-    )
-else:
-    fallback_details = [baseline_caption, "Cargá inventario para estimaciones"]
-    mission_metrics.extend(
-        [
-            {
-                "key": "inventory_mass",
-                "label": "Masa total",
-                "value": "—",
-                "details": fallback_details,
-                "icon": "🧱",
-                "stage_key": "inventory",
-                "tone": "warning",
-            },
-            {
-                "key": "inventory_water",
-                "label": "Agua estimada",
-                "value": "—",
-                "details": fallback_details,
-                "icon": "💧",
-                "stage_key": "target",
-                "tone": "warning",
-            },
-            {
-                "key": "inventory_energy",
-                "label": "Energía estimada",
-                "value": "—",
-                "details": fallback_details,
-                "icon": "⚡",
-                "stage_key": "generator",
-                "tone": "warning",
-            },
-        ]
-    )
-
-st.session_state["_inventory_totals"] = inventory_totals
-
-hero_col, metrics_col = st.columns([2.8, 1.2], gap="large")
-with hero_col:
-    TeslaHero(
-        title="Rex-AI coordina el reciclaje orbital y marciano",
-        subtitle=(
-            "8 astronautas generan 12.6 t de residuos en misión y Rex-AI los convierte en "
-            "equipamiento listo. Automatiza mezclas con regolito MGS-1 del cráter Jezero, "
-            "polímeros EVA y residuos de carga útil para entregar piezas auditables y trazables."
-        ),
-        chips=hero_chips,
-        icon="🛰️",
-        gradient="linear-gradient(135deg, rgba(59,130,246,0.28), rgba(14,165,233,0.08))",
-        glow="rgba(96,165,250,0.45)",
-        density="roomy",
-        variant="minimal",
-    ).render()
-with metrics_col:
-    metrics_placeholder = st.empty()
-    board_placeholder = st.empty()
-
-mission_metric_payload = []
-for metric in mission_metrics:
-    normalized = dict(metric)
-    if "label" in normalized:
-        normalized["label"] = str(normalized["label"])
-    if "value" in normalized:
-        normalized["value"] = str(normalized["value"])
-    if normalized.get("delta") is not None:
-        normalized["delta"] = str(normalized["delta"])
-    mission_metric_payload.append(normalized)
-mission_metrics_component = MissionMetrics.from_payload(
-    mission_metric_payload,
-    title="Panel de misión",
-    animate=False,
-)
-mission_board_payload = [
-    {
-        "key": "inventory",
-        "title": "Inventario",
-        "description": "Normalizá residuos NASA y marcá flags EVA o multilayer.",
-        "href": "./?page=1_Inventory_Builder",
-        "icon": "🧱",
-        "status": inventory_status,
-        "subtitle": inventory_subtitle,
-    },
-    {
-        "key": "target",
-        "title": "Target",
-        "description": "Definí objetivo, límites de agua y energía y presets marcianos.",
-        "href": "./?page=2_Target_Designer",
-        "icon": "🎯",
-        "status": target_status,
-        "subtitle": target_subtitle,
-    },
-    {
-        "key": "generator",
-        "title": "Generador",
-        "description": "Compará recetas IA y heurística y validá contribuciones.",
-        "href": "./?page=3_Generator",
-        "icon": "🤖",
-        "status": generator_status,
-        "subtitle": generator_subtitle,
-    },
-    {
-        "key": "results",
-        "title": "Resultados",
-        "description": "Exportá trade-offs, bandas 95% y Sankey para ingeniería.",
-        "href": "./?page=4_Results_and_Tradeoffs",
-        "icon": "📊",
-        "status": results_status,
-        "subtitle": results_subtitle,
-    },
-]
-mission_board_component = MissionBoard.from_payload(
-    mission_board_payload,
-    title="Próxima acción",
-    reveal=True,
-)
-timeline_milestones = [
-    TimelineMilestone(
-        label=stage.timeline_label,
-        description=stage.timeline_description,
-        icon=stage.icon,
-    )
-    for stage in mission_stages
-]
-stage_by_label = {stage.timeline_label: stage.key for stage in mission_stages}
-hero_metric_items = [
-    MetricItem(
-        label=str(metric.get("label", "")),
-        value=str(metric.get("value", "")),
-        caption=metric.get("caption"),
-        delta=metric.get("delta"),
-        icon=metric.get("icon"),
-        tone=metric.get("tone"),
-    )
-    for metric in mission_metrics
-]
-metrics_placeholder.markdown(
-    mission_metrics_component.markup(with_board=True),
-    unsafe_allow_html=True,
-)
-board_placeholder.markdown(
-    mission_board_component.markup(),
-    unsafe_allow_html=True,
-)
-
-# ──────────── Laboratorio profundo ────────────
-st.markdown(
-    """
-    <section class="home-section" id="laboratorio-profundo">
-      <div class="home-section__header">
-        <span class="home-section__icon">🧪</span>
-        <h2>Laboratorio profundo</h2>
-      </div>
-      <p class="home-section__lead">Analizamos el inventario NASA, destacamos masas críticas y mostramos hipótesis de proceso en paneles compactos.</p>
-    </section>
-    """,
-    unsafe_allow_html=True,
-)
-
-inventory_df = inventory_reference_df
-
-category_items: list[CarouselItem] = []
-if inventory_df is not None and not inventory_df.empty:
-    total_mass = float(inventory_df["mass_kg"].sum() or 0)
-    category_summary = (
-        inventory_df.groupby("category")[["mass_kg", "volume_l"]]
-        .sum()
-        .sort_values("mass_kg", ascending=False)
-        .head(6)
-    )
-    category_cards: list[dict[str, object]] = []
-    for category, row in category_summary.iterrows():
-        scenario_key = map_category_to_scenario(category)
-        scenario_config = _SCENARIO_CONFIG.get(
-            scenario_key, _SCENARIO_CONFIG["residences"]
-        )
-        mass_value = float(row["mass_kg"])
-        volume_value = float(row["volume_l"])
-        share = (mass_value / total_mass) if total_mass else 0.0
-        share_pct = share * 100
-        description_parts = [f"Volumen: {volume_value:.0f} L"]
-        if share_pct >= 1:
-            description_parts.append(f"{share_pct:.0f}% de la masa total")
-        elif share_pct > 0:
-            description_parts.append(f"{share_pct:.1f}% de la masa total")
-        category_cards.append(
-            {
-                "priority": int(scenario_config["priority"]),
-                "mass": mass_value,
-                "item": CarouselItem(
-                    title=category,
-                    value=format_mass(mass_value),
-                    description=" • ".join(description_parts),
-                    badge=str(scenario_config["label"]),
-                    badge_tone=str(scenario_config["badge_tone"]),
-                    highlight=share >= 0.2,
-                ),
-            }
-        )
-    category_items = [
-        entry["item"]
-        for entry in sorted(
-            category_cards,
-            key=lambda entry: (entry["priority"], -entry["mass"]),
-        )
-    ]
-
-if category_items:
-    CarouselRail(
-        items=category_items,
-        data_track="categorias",
-        reveal=False,
-    ).render()
-
-risk_watchlist: list[dict[str, object]] = []
-risk_flag_map = {
-    "pfas": {
-        "label": "PFAS",
-        "keywords": ["pfas", "fluoro", "ptfe", "fep"],
-    },
-    "microplastics": {
-        "label": "Microplásticos",
-        "keywords": ["micro", "foam", "pellet"],
-    },
-    "incineration": {
-        "label": "Incineración",
-        "keywords": ["inciner", "combust", "burn"],
-    },
-}
-
-if inventory_df is not None and not inventory_df.empty:
-    flags_series = inventory_df["flags"].fillna("").astype(str)
-    for risk_key, config in risk_flag_map.items():
-        mask = pd.Series(False, index=flags_series.index)
-        for keyword in config["keywords"]:
-            if not keyword:
-                continue
-            mask |= flags_series.str.contains(keyword, case=False, na=False)
-        count = int(mask.sum())
-        materials = (
-            inventory_df.loc[mask, "material"].head(3).dropna().astype(str).tolist()
-            if count
-            else []
-        )
-        risk_watchlist.append(
-            {
-                "key": risk_key,
-                "label": config["label"],
-                "count": count,
-                "status": "warning" if count else "ok",
-                "status_label": "Advertencia" if count else "OK",
-                "materials": materials,
-            }
-        )
-
-if risk_watchlist:
-    pill_items = []
-    for item in risk_watchlist:
-        materials_html = (
-            f"<span class=\"pill-materials\">{', '.join(item['materials'])}</span>"
-            if item["materials"]
-            else "<span class=\"pill-materials pill-materials--empty\">Sin materiales críticos detectados</span>"
-        )
-        pill_items.append(
-            """
-            <div class="pill-stack__item">
-              <span class="pill {status}">
-                <strong>{label}</strong>
-                <span class="pill-count">{count}</span>
-                <span class="pill-status">{status_label}</span>
-              </span>
-              {materials_html}
-            </div>
-            """.format(
-                status=item["status"],
-                label=item["label"],
-                count=item["count"],
-                status_label=item["status_label"],
-                materials_html=materials_html,
-            )
-        )
-
-    checklist_link = (
-        "<a class=\"pill-stack__link\" href=\"./?page=8_Feedback_and_Impact\">"
-        "Abrir checklist Feedback & Impact</a>"
-    )
-    st.markdown(
-        """
-        <section class="home-card home-card--pills">
-          <header class="pill-stack__header">
-            <h4>Vigilancia de riesgos</h4>
-            {checklist_link}
-          </header>
-          <div class="pill-stack">
-            {pill_items}
-          </div>
-        </section>
-        """.format(
-            pill_items="".join(pill_items),
-            checklist_link=checklist_link,
-        ),
-        unsafe_allow_html=True,
-    )
-
-info_cards: list[str] = [
-    """
-    <article class="home-card">
-      <h4>Ruta guiada de misión</h4>
-      <ol class="home-card__list">
-        <li>Inventario: normalizá residuos y marca flags EVA, multilayer y nitrilo.</li>
-        <li>Target: define producto, límites de agua, energía y crew-time.</li>
-        <li>Generador: Rex-AI mezcla ítems, sugiere procesos y explica cada paso.</li>
-        <li>Resultados: trade-offs, confianza 95% y comparativa heurística.</li>
-      </ol>
-    </article>
-    """
-]
-
-if inventory_df is not None:
-    sample_materials = (
-        inventory_df[["material", "material_family", "moisture_pct", "difficulty_factor"]]
-        .head(4)
-        .to_dict(orient="records")
-    )
-    if sample_materials:
-        list_items = "".join(
-            f"<li><strong>{item['material']}</strong> · {item['material_family']} · humedad {item['moisture_pct']}% · dificultad {item['difficulty_factor']}</li>"
-            for item in sample_materials
-        )
-        info_cards.append(
-            f"""
-            <article class="home-card">
-              <h4>Determinantes fisicoquímicos</h4>
-              <ul class="home-card__list">{list_items}</ul>
-            </article>
-            """
-        )
-
-    flagged = (
-        inventory_df["flags"]
-        .dropna()
-        .loc[lambda series: series.astype(str).str.len() > 0]
-        .head(4)
-        .tolist()
-    )
-    if flagged:
-        bullet_items = "".join(
-            f"<li>{flag}</li>" for flag in flagged if isinstance(flag, str)
-        )
-        info_cards.append(
-            f"""
-            <article class="home-card">
-              <h4>Flags operativos activos</h4>
-              <ul class="home-card__list">{bullet_items}</ul>
-            </article>
-            """
-        )
-
-# Tarjetas de escenarios con inputs/outputs clave
-scenario_cards = [
-    {
-        "name": "Residence Renovations",
-        "inputs": [
-            "Marcos y CTB de aluminio reutilizados",
-            "Espumas ZOTEK/bubble wrap y films MLI",
-            "Opcional: regolito MGS-1 para refuerzos",
-        ],
-        "outputs": [
-            "Estanterías y particiones modulares",
-            "Paneles aislantes laminados para habitat",
-        ],
-        "why": (
-            "Maximiza puntos al transformar masa estructural pesada en mejoras de habitabilidad "
-            "con bajo crew-time y alto puntaje de resiliencia térmica."
-        ),
-    },
-    {
-        "name": "Cosmic Celebrations",
-        "inputs": [
-            "Textiles limpios y wipes de poliéster/nylon",
-            "Films multicapa encapsulados",
-            "Herrajes CTB o clips reutilizables",
-        ],
-        "outputs": [
-            "Utilería y decoración segura sin agua",
-            "Elementos modulares para morale boost",
-        ],
-        "why": (
-            "Maximiza puntos morales y de bajo consumo al priorizar procesos secos de rápido "
-            "ensamblaje y energía mínima."
-        ),
-    },
-    {
-        "name": "Daring Discoveries",
-        "inputs": [
-            "Carbono residual clasificado",
-            "Meshes metálicas/poliméricas",
-            "Polímeros y MGS-1 para sinterizado",
-        ],
-        "outputs": [
-            "Componentes rígidos para ciencia y filtros",
-            "Superficies reforzadas anti-impacto",
-        ],
-        "why": (
-            "Maximiza puntos científicos al entregar piezas de alta rigidez y trazabilidad "
-            "que habilitan experimentos críticos con mínima merma."
-        ),
-    },
-]
-
-for card in scenario_cards:
-    inputs_html = "".join(f"<li>{item}</li>" for item in card["inputs"])
-    outputs_html = "".join(f"<li>{item}</li>" for item in card["outputs"])
-    info_cards.append(
-        f"""
-        <article class="home-card">
-          <h4>{card['name']}</h4>
-          <p><strong>Inputs clave</strong></p>
-          <ul class="home-card__list">{inputs_html}</ul>
-          <p><strong>Outputs estrella</strong></p>
-          <ul class="home-card__list">{outputs_html}</ul>
-          <p class="home-card__note">¿Por qué maximiza puntos? {card['why']}</p>
-        </article>
-        """
-    )
-
-if info_cards:
-    st.markdown(
-        f"<div class=\"home-card-stack\">{''.join(info_cards)}</div>",
-        unsafe_allow_html=True,
-    )
-# ──────────── Ruta guiada ────────────
-st.markdown("### Ruta de misión")
-
-demo_steps = timeline_milestones
-active_demo_step = guided_demo(steps=demo_steps, step_duration=6.5)
-
-active_stage_key = (
-    stage_by_label.get(active_demo_step.label)
-    if active_demo_step
-    else None
-)
-metrics_placeholder.markdown(
-    mission_metrics_component.markup(
-        highlight_key=active_stage_key,
-        with_board=True,
-    ),
-    unsafe_allow_html=True,
-)
-board_placeholder.markdown(
-    mission_board_component.markup(highlight_key=active_stage_key),
-    unsafe_allow_html=True,
-)
-
-# ──────────── Métricas de misión ────────────
-MetricGalaxy(
-    metrics=hero_metric_items,
-    density="cozy",
-).render()
-
-st.info(
-    "Usá el **Mission HUD** superior para saltar entre pasos o presioná las teclas `1-9` "
-    "para navegar rápido por el flujo guiado."
-)
+st.title("Panel operativo Rex-AI")
 st.caption(
-    "Trash → Tools → Survival: cada feedback acelera el salto de residuo a herramienta "
-    "y de herramienta a supervivencia marciana."
+    "Monitoreá el estado del modelo, verificá tu inventario normalizado y seguí los últimos "
+    "feedbacks de la tripulación sin salir del brief."
 )
+
+col_model, col_inventory, col_feedback = st.columns(3)
+
+with col_model:
+    st.metric(
+        label="Estado del modelo",
+        value=ready_label,
+        delta=f"Entrenado: {trained_at_display}",
+    )
+    st.caption(f"Modelo {model_name} · {feature_count} features")
+    if training_notes:
+        st.markdown("\n".join(f"• {note}" for note in training_notes))
+
+with col_inventory:
+    st.metric(
+        label="Inventario normalizado",
+        value=inventory_metric_value,
+        delta=inventory_metric_delta,
+    )
+    st.caption(describe_baseline_caption(baseline_state))
+
+with col_feedback:
+    st.metric(
+        label="Feedback de crew",
+        value=feedback_metric_value,
+        delta=latest_feedback_label,
+    )
+    if feedback_total:
+        st.caption("Consolida registros en 8) Feedback & Impact.")
+    else:
+        st.caption("Capturá feedback tras cada corrida para habilitar retraining.")
+
+st.divider()
+
+st.subheader("Inventario en curso")
+if inventory_totals:
+    mass_delta, mass_detail = compute_delta_strings(
+        "mass_kg", inventory_totals.get("mass_kg", 0.0), baseline_totals, " kg"
+    )
+    water_delta, water_detail = compute_delta_strings(
+        "water_l", inventory_totals.get("water_l", 0.0), baseline_totals, " L"
+    )
+    energy_delta, energy_detail = compute_delta_strings(
+        "energy_kwh", inventory_totals.get("energy_kwh", 0.0), baseline_totals, " kWh"
+    )
+
+    tot_mass = inventory_totals.get("mass_kg")
+    tot_water = inventory_totals.get("water_l")
+    tot_energy = inventory_totals.get("energy_kwh")
+
+    col_mass, col_water, col_energy = st.columns(3)
+    col_mass.metric(
+        "Masa total",
+        format_mass(tot_mass),
+        delta=mass_delta if mass_delta is not None else None,
+    )
+    col_mass.caption(mass_detail)
+
+    col_water.metric(
+        "Agua estimada",
+        format_water(tot_water),
+        delta=water_delta if water_delta is not None else None,
+    )
+    col_water.caption(water_detail)
+
+    col_energy.metric(
+        "Energía estimada",
+        format_energy(tot_energy),
+        delta=energy_delta if energy_delta is not None else None,
+    )
+    col_energy.caption(energy_detail)
+else:
+    st.info("Cargá y normalizá tu inventario para calcular consumos operativos.")
+
+with st.expander(
+    "Ver inventario normalizado", expanded=inventory_reference_df is not None and not inventory_reference_df.empty
+):
+    if inventory_reference_df is not None and not inventory_reference_df.empty:
+        display_columns = [
+            column
+            for column in [
+                "id",
+                "category",
+                "material",
+                "mass_kg",
+                "difficulty_factor",
+                "flags",
+            ]
+            if column in inventory_reference_df.columns
+        ]
+        st.dataframe(
+            inventory_reference_df[display_columns],
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.info("No hay inventario disponible todavía.")
+
+st.divider()
+
+st.subheader("Feedback operativo")
+if feedback_preview is not None and not feedback_preview.empty:
+    st.caption(f"{feedback_total} registro{'s' if feedback_total != 1 else ''} totales")
+else:
+    st.caption("Sin registros cargados en feedback_log.csv")
+
+with st.expander("Últimos envíos de crew", expanded=feedback_preview is not None and not feedback_preview.empty):
+    if feedback_preview is not None and not feedback_preview.empty:
+        st.dataframe(feedback_preview, use_container_width=True, hide_index=True)
+    else:
+        st.info("Aún no hay feedback registrado. Capturá la próxima corrida en 8) Feedback & Impact.")
+
+with st.expander("Notas de salud del modelo", expanded=training_tone != "positive" or uncertainty_tone != "positive"):
+    st.markdown("**Entrenamiento**")
+    st.markdown("\n".join(f"• {note}" for note in training_notes))
+    st.markdown("**Incertidumbre**")
+    st.markdown("\n".join(f"• {note}" for note in uncertainty_notes))
