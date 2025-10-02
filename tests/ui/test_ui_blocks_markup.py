@@ -15,8 +15,8 @@ def test_pill_returns_markup_without_render():
 
     html = ui_blocks.pill("Seguridad", kind="ok", render=False)
 
-    assert "rex-pill" in html
-    assert "data-kind='ok'" in html
+    assert "data-lab-pill='ok'" in html
+    assert "var(--lab-color-positive)" in html
 
 
 def test_chipline_accepts_mappings(monkeypatch):
@@ -33,6 +33,6 @@ def test_chipline_accepts_mappings(monkeypatch):
         render=False,
     )
 
-    assert "chipline__chip" in html
+    assert "data-lab-chip-tone='positive'" in html
     assert "🧪" in html
-    assert "data-tone='positive'" in html
+    assert "var(--lab-color-positive-soft)" in html
