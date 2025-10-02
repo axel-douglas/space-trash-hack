@@ -123,3 +123,33 @@ hr {
   background-color: var(--lab-color-divider);
   margin-block: var(--lab-space-5);
 }
+
+[data-lab-pill] {
+  --lab-pill-bg: var(--lab-color-positive-soft);
+  --lab-pill-fg: var(--lab-color-positive);
+}
+
+[data-lab-pill][data-kind="ok"] {
+  --lab-pill-bg: var(--lab-color-positive-soft);
+  --lab-pill-fg: var(--lab-color-positive);
+}
+
+[data-lab-pill][data-kind="warn"] {
+  --lab-pill-bg: var(--lab-color-warning-soft);
+  --lab-pill-fg: var(--lab-color-warning);
+}
+
+[data-lab-pill][data-kind="risk"] {
+  --lab-pill-bg: var(--lab-color-critical-soft);
+  --lab-pill-fg: var(--lab-color-critical);
+}
+
+[data-lab-pill][data-kind="info"] {
+  --lab-pill-bg: var(--lab-color-layer-soft);
+  --lab-pill-fg: var(--lab-color-accent);
+}
+
+[data-lab-pill][data-kind="accent"] {
+  --lab-pill-bg: var(--lab-color-accent-soft);
+  --lab-pill-fg: var(--lab-color-accent);
+}

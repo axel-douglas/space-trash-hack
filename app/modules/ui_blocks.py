@@ -260,12 +260,16 @@ _PILL_KINDS = {
     "ok": "Rango nominal",
     "warn": "Monitoreo",
     "risk": "Riesgo",
+    "info": "Referencia informativa",
+    "accent": "Etiqueta destacada",
 }
 
 _PILL_COLORS: dict[str, tuple[str, str]] = {
     "ok": ("var(--lab-color-positive-soft)", "var(--lab-color-positive)"),
     "warn": ("var(--lab-color-warning-soft)", "var(--lab-color-warning)"),
     "risk": ("var(--lab-color-critical-soft)", "var(--lab-color-critical)"),
+    "info": ("var(--lab-color-layer-soft)", "var(--lab-color-accent)"),
+    "accent": ("var(--lab-color-accent-soft)", "var(--lab-color-accent)"),
 }
 
 _CHIP_TONES: dict[str, tuple[str, str]] = {
@@ -298,12 +302,15 @@ def pill(
         "font-size: 0.78rem;"
     )
     style = (
-        f"{base_style} background-color: {bg_color}; color: {fg_color}; "
-        f"border: var(--lab-line-weight) solid {fg_color};"
+        f"{base_style} background-color: var(--lab-pill-bg, {bg_color}); "
+        f"color: var(--lab-pill-fg, {fg_color}); "
+        f"border: var(--lab-line-weight) solid var(--lab-pill-fg, {fg_color});"
     )
     title_attr = escape(_PILL_KINDS[tone])
+    tone_attr = escape(tone)
     markup = (
-        f"<span data-lab-pill='{tone}' style=\"{style}\" title=\"{title_attr}\">"
+        f"<span data-lab-pill='{tone}' data-kind='{tone_attr}' "
+        f"style=\"{style}\" title=\"{title_attr}\">"
         f"{escape(label)}"
         "</span>"
     )
