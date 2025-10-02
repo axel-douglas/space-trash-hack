@@ -54,8 +54,9 @@ def _mission_overview_app() -> None:
         ui_blocks.load_theme = lambda **_: None  # type: ignore[assignment]
         mission_overview.load_inventory_overview = load_waste_df  # type: ignore[assignment]
 
-        sys.modules.pop("app.pages.0_Mission_Overview", None)
-        importlib.import_module("app.pages.0_Mission_Overview")
+        sys.modules.pop("app.Home", None)
+        home_module = importlib.import_module("app.Home")
+        home_module.render_page()
     finally:
         ml_models.get_model_registry = original_registry  # type: ignore[assignment]
         ui_blocks.load_theme = original_load_theme  # type: ignore[assignment]

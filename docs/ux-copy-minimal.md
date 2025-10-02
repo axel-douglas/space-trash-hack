@@ -17,6 +17,8 @@
 
 ## Ejemplos antes / después
 ### Home (`app/Home.py`)
+- La vista inicial replica el panel de *Mission Overview* para evitar saltos
+  visuales entre la portada y el paso `Overview`.
 - **Antes:** "Rex-AI orquesta el reciclaje orbital y marciano".
 - **Después:** "Rex-AI coordina el reciclaje orbital y marciano" (sustituye la metáfora por un verbo directo).
 
