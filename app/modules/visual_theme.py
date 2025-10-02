@@ -1,9 +1,8 @@
 """Shared data-visualization themes for Altair and Plotly.
 
 The theme is inspired by premium automotive dashboards: deep, satin-finished
-surfaces contrasted with electric neon highlights.  A single entry point is
-provided so that pages only need to import :mod:`_bootstrap` to enable the
-visual identity across Altair, Plotly and CSS styling.
+surfaces contrasted with electric neon highlights.  A dedicated helper keeps
+the Streamlit pages consistent by wiring both the CSS and chart themes.
 """
 from __future__ import annotations
 
@@ -256,7 +255,7 @@ def register_visual_themes(mode: str | None = None) -> ThemeMode:
 
 
 def apply_global_visual_theme(mode: str | None = None) -> ThemeMode:
-    """Entry-point used by :mod:`_bootstrap` to configure the visualization theme."""
+    """Register and activate the visualization theme across supported libraries."""
 
     resolved = register_visual_themes(mode=mode)
 

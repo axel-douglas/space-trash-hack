@@ -1,7 +1,5 @@
 """Mission overview entrypoint consolidating mission status panels."""
 
-import _bootstrap  # noqa: F401
-
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
@@ -18,11 +16,12 @@ from app.modules.mission_overview import (
 )
 from app.modules.ml_models import get_model_registry
 from app.modules.navigation import render_breadcrumbs, render_stepper, set_active_step
-from app.modules.ui_blocks import load_theme
+from app.modules.ui_blocks import initialise_frontend, load_theme
 
 
 # ⚠️ Debe ser la PRIMERA llamada de Streamlit en la página
 st.set_page_config(page_title="Mission Overview", page_icon="🛰️", layout="wide")
+initialise_frontend()
 
 current_step = set_active_step("overview")
 

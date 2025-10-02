@@ -1,7 +1,5 @@
 """Consolidated feedback capture and mission impact tracking."""
 
-import _bootstrap  # noqa: F401
-
 from datetime import datetime
 
 import pandas as pd
@@ -19,10 +17,11 @@ from app.modules.impact import (
 )
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.page_data import build_feedback_summary_table
-from app.modules.ui_blocks import layout_stack, load_theme
+from app.modules.ui_blocks import initialise_frontend, layout_stack, load_theme
 
 
 st.set_page_config(page_title="Feedback & Impact", page_icon="📝", layout="wide")
+initialise_frontend()
 
 current_step = set_active_step("feedback")
 

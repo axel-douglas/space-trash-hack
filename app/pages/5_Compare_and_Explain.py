@@ -1,5 +1,3 @@
-import _bootstrap  # noqa: F401
-
 import numpy as np
 import streamlit as st
 import pandas as pd
@@ -9,7 +7,7 @@ from streamlit_sortables import sort_items
 
 from app.modules.explain import compare_table, score_breakdown
 from app.modules.navigation import render_breadcrumbs, set_active_step
-from app.modules.ui_blocks import load_theme
+from app.modules.ui_blocks import initialise_frontend, load_theme
 from app.modules.io import load_waste_df
 
 
@@ -175,6 +173,7 @@ def _format_reference_value(key: str, value: float) -> str:
 
 # ⚠️ Debe ser la PRIMERA llamada de Streamlit en la página
 st.set_page_config(page_title="Comparar & Explicar", page_icon="🧪", layout="wide")
+initialise_frontend()
 current_step = set_active_step("compare")
 
 load_theme()

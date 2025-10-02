@@ -1,14 +1,13 @@
-import _bootstrap  # noqa: F401
-
 import streamlit as st
-
-# ⚠️ Debe ser la PRIMERA llamada de Streamlit en la página
-st.set_page_config(page_title="Objetivo", page_icon="🎯", layout="wide")
 
 from app.modules.io import load_targets
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.target_limits import compute_target_limits
-from app.modules.ui_blocks import load_theme
+from app.modules.ui_blocks import initialise_frontend, load_theme
+
+# ⚠️ Debe ser la PRIMERA llamada de Streamlit en la página
+st.set_page_config(page_title="Objetivo", page_icon="🎯", layout="wide")
+initialise_frontend()
 
 current_step = set_active_step("target")
 

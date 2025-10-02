@@ -9,7 +9,7 @@ pytest.importorskip("streamlit")
 from pytest_streamlit import StreamlitRunner
 
 
-def _bootstrap_app() -> None:
+def _theme_app() -> None:
     import streamlit as st
 
     from app.modules.ui_blocks import enable_reveal_animation, load_theme
@@ -27,16 +27,21 @@ def test_interactions_script_injected_once(monkeypatch) -> None:
     original_markdown = ui_blocks.st.markdown
 
     def _tracking_markdown(body: str, **kwargs: object):
-        if isinstance(body, str) and "IntersectionObserver" in body:
-            st.session_state["__interactions_injections__"] = (
-                st.session_state.get("__interactions_injections__", 0) + 1
-            )
+        if isinstance(body, str) and "data-rexai-interactions" in body:
+            key = "__interactions_injections__"
+            current = st.session_state[key] if key in st.session_state else 0
+            st.session_state[key] = current + 1
         return original_markdown(body, **kwargs)
 
     monkeypatch.setattr(ui_blocks.st, "markdown", _tracking_markdown)
 
-    runner = StreamlitRunner(_bootstrap_app)
+    runner = StreamlitRunner(_theme_app)
     app = runner.run()
 
-    assert app.session_state.get("__interactions_injections__", 0) == 1
-    assert "__rexai_interactions_hash__" in app.session_state
+    injections = (
+        app.session_state["__interactions_injections__"]
+        if "__interactions_injections__" in app.session_state
+        else 0
+    )
+    assert injections == 1
+    assert "__rexai_reveal_flag__" in app.session_state
