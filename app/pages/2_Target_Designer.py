@@ -10,11 +10,11 @@ from app.modules.luxe_components import target_configurator
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.ui_blocks import load_theme, section
 
-set_active_step("target")
+current_step = set_active_step("target")
 
 load_theme()
 
-render_breadcrumbs("target")
+render_breadcrumbs(current_step)
 
 st.title("2) Definir objetivo (TargetSpec)")
 

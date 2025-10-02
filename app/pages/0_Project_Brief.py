@@ -11,7 +11,7 @@ repo_root = Path(__file__).resolve().parents[2]
 # ⚠️ PRIMER comando Streamlit:
 st.set_page_config(page_title="REX-AI Mars — Brief", page_icon="🛰️", layout="wide")
 
-set_active_step("brief")
+_current_step = set_active_step("brief")
 
 load_theme()
 # ---------- Header ----------

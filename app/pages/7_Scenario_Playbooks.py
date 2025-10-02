@@ -10,11 +10,11 @@ from app.modules.ui_blocks import load_theme
 # ⚠️ Debe ser la primera llamada
 st.set_page_config(page_title="Scenario Playbooks", page_icon="📚", layout="wide")
 
-set_active_step("playbooks")
+current_step = set_active_step("playbooks")
 
 load_theme()
 
-render_breadcrumbs("playbooks")
+render_breadcrumbs(current_step)
 
 FEATURED_PLAYBOOKS = ("Residence Renovations", "Daring Discoveries")
 GENERATOR_FILTER_PRESETS: dict[str, dict[str, bool]] = {

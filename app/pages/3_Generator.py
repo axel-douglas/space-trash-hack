@@ -40,11 +40,11 @@ from app.modules.schema import (
 
 st.set_page_config(page_title="Rex-AI • Generador", page_icon="🤖", layout="wide")
 
-set_active_step("generator")
+current_step = set_active_step("generator")
 
 load_theme()
 
-render_breadcrumbs("generator")
+render_breadcrumbs(current_step)
 
 _playbook_prefill_raw = st.session_state.pop("_playbook_generator_filters", None)
 _playbook_prefilters: dict[str, object] | None = None
