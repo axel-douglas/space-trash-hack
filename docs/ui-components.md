@@ -9,24 +9,23 @@ controles y estados informativos sin depender del antiguo paquete `luxe`.
 > **Nota de copy**: mantené un tono directo y técnico. Los títulos deben ser
 > cortos y los mensajes orientados a acciones concretas de la tripulación.
 
-## Inicializar tema y HUD accesible
+## Inicializar tema base
 
 ```python
 from app.modules.ui_blocks import load_theme, surface, enable_reveal_animation
 
-load_theme()  # inyecta CSS base, HUD y microinteracciones
+load_theme()  # inyecta CSS base NASA e iconografía compartida
 
 with surface(tone="raised"):
     st.subheader("Panel de control Rex-AI")
     st.write("Agrupá métricas clave dentro del contexto del laboratorio.")
 
-enable_reveal_animation()  # activa animaciones suaves cuando haya scroll
+enable_reveal_animation()  # mantiene compatibilidad con animaciones suaves
 ```
 
 - `surface` y `glass_card` generan contenedores temáticos con paddings y
   sombras coherentes.
-- El HUD accesible permite cambiar contraste, tipografía y modo daltónico sin
-  tocar CSS.
+- El tema global mantiene contraste AA sin depender de toggles en pantalla.
 
 ## Layouts operativos
 
@@ -87,8 +86,8 @@ if minimal_button(
 
 - `minimal_button` cubre el 90% de los CTAs operativos; ajustá `state` (`idle`,
   `loading`, `success`, `error`) según la respuesta del backend.
-- `futuristic_button` mantiene la variante con partículas y sonido para demos
-  públicas. Usa `mode="cinematic"` si querés el efecto completo.
+- `futuristic_button` conserva una variante destacada con layout propio;
+  los efectos visuales ahora son discretos para no distraer durante las demos.
 
 ## Marcadores de objetivo
 

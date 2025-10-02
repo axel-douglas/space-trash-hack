@@ -94,4 +94,4 @@ rango `"ramp"` o el template `"rexai_dark"/"rexai_light"` ya registrado.
 * Plotly: template registrado como `rexai_dark` y `rexai_light`; el template
   activo queda en `pio.templates.default`.
 * CSS global: se inyecta automáticamente mediante `apply_global_visual_theme`,
-  reaprovechando `app/static/theme.css`.
+  reutilizando `app/static/styles/base.css`.

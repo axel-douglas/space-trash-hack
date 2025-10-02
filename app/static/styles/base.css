@@ -1,26 +1,26 @@
 /*
- * NASA-inspired base theme for the Streamlit UI.
- * Lightweight palette + grid primitives without HUD widgets or heavy effects.
+ * NASA-inspired Streamlit theme focused on readability and contrast.
+ * The palette favors deep blues, soft neutrals, and generous spacing.
  */
 
 :root {
-  --color-background: #0b1f3a;
-  --color-background-alt: #102a4d;
-  --color-surface: #112c52;
-  --color-surface-sunken: #081327;
-  --color-surface-raised: #1b3f6f;
-  --color-glass: rgba(24, 49, 86, 0.65);
-  --color-border: rgba(133, 165, 210, 0.24);
-  --color-border-strong: rgba(133, 165, 210, 0.4);
-  --color-text: #f4f7fb;
-  --color-text-muted: #9fb3d1;
-  --color-accent: #2ba6ff;
-  --color-accent-soft: #7ec6ff;
+  --color-background: #09192f;
+  --color-background-alt: #0f2340;
+  --color-surface: #112a45;
+  --color-surface-sunken: #0c1e32;
+  --color-surface-raised: #1c3554;
+  --color-surface-neutral: #142d4c;
+  --color-border: rgba(123, 155, 204, 0.35);
+  --color-border-strong: rgba(123, 155, 204, 0.55);
+  --color-text: #f5f7fb;
+  --color-text-muted: #b6c4d8;
+  --color-accent: #63b3ff;
+  --color-accent-soft: #a0cffb;
   --color-success: #4cd6c0;
   --color-warn: #ffb347;
   --color-risk: #ff6f91;
 
-  --font-body: "Source Sans Pro", "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --font-body: "IBM Plex Sans", "Source Sans Pro", system-ui, -apple-system, sans-serif;
   --font-mono: "IBM Plex Mono", "SFMono-Regular", ui-monospace, monospace;
 
   --space-xs: 0.25rem;
@@ -28,15 +28,15 @@
   --space-md: 0.875rem;
   --space-lg: 1.5rem;
   --space-xl: 2.25rem;
-  --space-xxl: 3.5rem;
+  --space-xxl: 3.25rem;
 
-  --radius-sm: 0.5rem;
-  --radius-md: 0.875rem;
-  --radius-lg: 1.25rem;
+  --radius-sm: 0.4rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1.1rem;
 
-  --shadow-soft: 0 6px 18px rgba(7, 19, 40, 0.35);
-  --shadow-lift: 0 12px 32px rgba(9, 26, 54, 0.4);
-  --shadow-float: 0 18px 44px rgba(10, 30, 60, 0.45);
+  --shadow-soft: 0 6px 18px rgba(3, 13, 31, 0.35);
+  --shadow-lift: 0 12px 28px rgba(9, 27, 54, 0.4);
+  --shadow-float: 0 18px 44px rgba(10, 32, 60, 0.45);
 
   --grid-max-width: 1180px;
 }
@@ -45,8 +45,7 @@ body,
 .stApp {
   margin: 0;
   min-height: 100vh;
-  background: radial-gradient(circle at 15% -20%, rgba(79, 144, 237, 0.18), transparent)
-      var(--color-background);
+  background-color: var(--color-background);
   color: var(--color-text);
   font-family: var(--font-body);
   line-height: 1.55;
@@ -71,6 +70,7 @@ h6 {
   font-weight: 600;
   letter-spacing: 0.01em;
   color: var(--color-text);
+  margin-block: var(--space-md) var(--space-sm);
 }
 
 p,
@@ -112,6 +112,7 @@ pre,
   color: var(--color-accent-soft);
 }
 
+button,
 .stButton > button,
 button[kind="secondary"] {
   border-radius: var(--radius-md);
@@ -133,7 +134,7 @@ button[kind="secondary"] {
 }
 
 .layout-grid--dual {
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
 }
 
 .layout-grid--flow {
@@ -146,12 +147,14 @@ button[kind="secondary"] {
   gap: var(--space-md);
 }
 
-.side-panel,
-.pane {
-  background: linear-gradient(180deg, rgba(32, 62, 112, 0.65), rgba(16, 42, 77, 0.9));
-  border: 1px solid var(--color-border);
+.pane,
+.pane-block,
+.side-panel {
+  background-color: var(--color-surface);
   border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
   padding: var(--space-xl);
+  box-shadow: var(--shadow-soft);
 }
 
 .layer-shadow {
@@ -169,24 +172,23 @@ button[kind="secondary"] {
   position: relative;
   border-radius: var(--radius-lg);
   border: 1px solid var(--color-border);
-  background: var(--color-surface);
+  background-color: var(--color-surface);
   padding: var(--space-lg);
   color: var(--color-text);
 }
 
 .rex-surface[data-tone="sunken"] {
-  background: var(--color-surface-sunken);
+  background-color: var(--color-surface-sunken);
 }
 
 .rex-surface[data-tone="raised"] {
-  background: var(--color-surface-raised);
+  background-color: var(--color-surface-raised);
   box-shadow: var(--shadow-lift);
 }
 
 .rex-surface.rex-glass,
 .rex-glass {
-  backdrop-filter: blur(14px);
-  background: var(--color-glass);
+  background-color: var(--color-surface-neutral);
   border: 1px solid var(--color-border-strong);
   box-shadow: var(--shadow-soft);
 }
@@ -206,39 +208,39 @@ button[kind="secondary"] {
   padding: 0.35rem 0.75rem;
   border-radius: 999px;
   font-size: 0.9rem;
-  background: rgba(133, 165, 210, 0.15);
+  background-color: rgba(123, 155, 204, 0.18);
   border: 1px solid var(--color-border);
   color: var(--color-text);
 }
 
 .chipline__chip[data-tone="positive"] {
-  background: rgba(76, 214, 192, 0.12);
-  border-color: rgba(76, 214, 192, 0.4);
+  background-color: rgba(76, 214, 192, 0.15);
+  border-color: rgba(76, 214, 192, 0.45);
   color: var(--color-success);
 }
 
 .chipline__chip[data-tone="warning"] {
-  background: rgba(255, 179, 71, 0.12);
-  border-color: rgba(255, 179, 71, 0.35);
+  background-color: rgba(255, 179, 71, 0.16);
+  border-color: rgba(255, 179, 71, 0.4);
   color: var(--color-warn);
 }
 
 .chipline__chip[data-tone="danger"],
 .chipline__chip[data-tone="risk"] {
-  background: rgba(255, 111, 145, 0.12);
-  border-color: rgba(255, 111, 145, 0.35);
+  background-color: rgba(255, 111, 145, 0.16);
+  border-color: rgba(255, 111, 145, 0.4);
   color: var(--color-risk);
 }
 
 .chipline__chip[data-tone="info"] {
-  background: rgba(43, 166, 255, 0.14);
-  border-color: rgba(43, 166, 255, 0.38);
-  color: var(--color-accent-soft);
+  background-color: rgba(99, 179, 255, 0.16);
+  border-color: rgba(99, 179, 255, 0.45);
+  color: var(--color-accent);
 }
 
 .chipline__chip[data-tone="accent"] {
-  background: rgba(94, 234, 212, 0.12);
-  border-color: rgba(94, 234, 212, 0.38);
+  background-color: rgba(94, 234, 212, 0.15);
+  border-color: rgba(94, 234, 212, 0.45);
   color: rgba(94, 234, 212, 0.95);
 }
 
@@ -250,7 +252,7 @@ button[kind="secondary"] {
 .chipline__label {
   display: inline-flex;
   align-items: center;
-  gap: 0.25rem;
+  gap: var(--space-xs);
 }
 
 .badge-group {
@@ -274,21 +276,21 @@ button[kind="secondary"] {
 }
 
 .badge:nth-of-type(3n + 1) {
-  background: rgba(76, 214, 192, 0.12);
+  background-color: rgba(76, 214, 192, 0.15);
   color: var(--color-success);
-  border-color: rgba(76, 214, 192, 0.4);
+  border-color: rgba(76, 214, 192, 0.45);
 }
 
 .badge:nth-of-type(3n + 2) {
-  background: rgba(255, 179, 71, 0.12);
+  background-color: rgba(255, 179, 71, 0.15);
   color: var(--color-warn);
-  border-color: rgba(255, 179, 71, 0.35);
+  border-color: rgba(255, 179, 71, 0.4);
 }
 
 .badge:nth-of-type(3n + 3) {
-  background: rgba(255, 111, 145, 0.12);
+  background-color: rgba(255, 111, 145, 0.15);
   color: var(--color-risk);
-  border-color: rgba(255, 111, 145, 0.35);
+  border-color: rgba(255, 111, 145, 0.4);
 }
 
 .rex-pill {
@@ -303,26 +305,26 @@ button[kind="secondary"] {
   text-transform: uppercase;
   font-size: 0.78rem;
   border: 1px solid transparent;
-  background: rgba(17, 47, 82, 0.85);
+  background-color: rgba(17, 46, 78, 0.85);
   color: var(--color-text);
 }
 
 .rex-pill[data-kind="ok"] {
-  border-color: rgba(76, 214, 192, 0.45);
+  border-color: rgba(76, 214, 192, 0.5);
   color: var(--color-success);
-  background: rgba(76, 214, 192, 0.12);
+  background-color: rgba(76, 214, 192, 0.12);
 }
 
 .rex-pill[data-kind="warn"] {
-  border-color: rgba(255, 179, 71, 0.45);
+  border-color: rgba(255, 179, 71, 0.5);
   color: var(--color-warn);
-  background: rgba(255, 179, 71, 0.12);
+  background-color: rgba(255, 179, 71, 0.12);
 }
 
 .rex-pill[data-kind="risk"] {
-  border-color: rgba(255, 111, 145, 0.45);
+  border-color: rgba(255, 111, 145, 0.5);
   color: var(--color-risk);
-  background: rgba(255, 111, 145, 0.12);
+  background-color: rgba(255, 111, 145, 0.12);
 }
 
 .rex-card {
@@ -332,7 +334,7 @@ button[kind="secondary"] {
   padding: var(--space-lg);
   border-radius: var(--radius-lg);
   border: 1px solid var(--color-border);
-  background: rgba(17, 44, 82, 0.85);
+  background-color: var(--color-surface-neutral);
   box-shadow: var(--shadow-soft);
 }
 
@@ -351,12 +353,7 @@ button[kind="secondary"] {
 .hr-micro {
   height: 1px;
   width: 100%;
-  background: linear-gradient(
-    to right,
-    transparent,
-    rgba(133, 165, 210, 0.45),
-    transparent
-  );
+  background-color: rgba(123, 155, 204, 0.35);
   margin-block: var(--space-lg);
 }
 
@@ -379,14 +376,14 @@ button[kind="secondary"] {
   padding: 0.95rem 1.4rem;
   font-weight: 600;
   font-size: 1rem;
-  background: rgba(23, 50, 90, 0.9);
+  background-color: var(--color-surface);
   color: var(--color-text);
   transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
 }
 
 .rexai-minimal-button:hover,
 .rexai-minimal-button:focus {
-  background: rgba(27, 65, 115, 0.95);
+  background-color: var(--color-surface-raised);
   box-shadow: var(--shadow-soft);
 }
 
@@ -406,40 +403,29 @@ button[kind="secondary"] {
 
 .rexai-minimal-text[data-layout="inline"] {
   flex-direction: row;
+  gap: var(--space-sm);
 }
 
 .rexai-minimal-status {
   font-size: 0.78rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  transition: opacity 0.18s ease;
+}
+
+.rexai-minimal-status[data-active="false"] {
+  opacity: 0;
+  height: 0;
+  overflow: hidden;
+}
+
+.rexai-minimal-status[data-active="true"] {
+  opacity: 1;
+  height: auto;
 }
 
 .rexai-minimal-help {
-  font-size: 0.85rem;
+  font-size: 0.82rem;
   color: var(--color-text-muted);
-}
-
-/* Responsive adjustments */
-@media (min-width: 56rem) {
-  .layout-grid--dual {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .side-panel,
-  .pane {
-    padding: var(--space-xl) calc(var(--space-xl) * 1.1);
-  }
-}
-
-@media (max-width: 48rem) {
-  main .block-container {
-    padding-inline: var(--space-md);
-  }
-
-  .side-panel,
-  .pane,
-  .rex-surface {
-    padding: var(--space-lg);
-  }
 }
