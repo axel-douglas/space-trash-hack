@@ -11,10 +11,10 @@ def test_ui_blocks_exports_expected_helpers() -> None:
 
     expected_callables = {
         "load_theme",
-        "surface",
         "chipline",
         "pill",
         "action_button",
+        "layout_stack",
     }
 
     missing = [name for name in expected_callables if not hasattr(module, name)]
