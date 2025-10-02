@@ -10,16 +10,17 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+import altair as alt
 from plotly.colors import sample_colorscale
 
 from app.modules.analytics import pareto_front
 from app.modules.explain import compare_table
 from app.modules.exporters import candidate_to_csv, candidate_to_json
-from app.modules.luxe_components import MetricGalaxy, MetricItem, TeslaHero
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.safety import check_safety, safety_badge  # recalcular badge al seleccionar
 from app.modules.ui_blocks import futuristic_button, load_theme
 from app.modules.io import load_waste_df
+from app.modules.page_data import build_export_kpi_table
 
 # ⚠️ PRIMERA llamada
 st.set_page_config(page_title="Pareto & Export", page_icon="📤", layout="wide")
@@ -168,52 +169,7 @@ if not cands or not target:
 
 inventory_df = load_waste_df()
 
-# ======== estilos (NASA/SpaceX-like) ========
-st.markdown(
-    """
-    <style>
-    .hero {border-radius:16px; padding:18px 18px 8px; background: radial-gradient(1200px 380px at 20% -10%, rgba(80,120,255,.08), transparent);}
-    .section-title{margin-top:6px; margin-bottom:6px}
-    .legend{margin-top:12px; font-size:0.9rem; color:var(--muted);}
-    .pill{display:inline-flex; align-items:center; padding:6px 12px; border-radius:999px; font-size:0.78rem; margin-right:8px; border:1px solid rgba(148,163,184,0.32); background:rgba(15,23,42,0.6); box-shadow:0 0 18px rgba(59,130,246,0.18);}
-    .pill.ok{border-color:rgba(74,222,128,0.45); box-shadow:0 0 18px rgba(74,222,128,0.25);}
-    .kpi{border-radius:18px; padding:16px 18px; background:rgba(15,23,42,0.68); border:1px solid rgba(148,163,184,0.28); box-shadow:0 12px 28px rgba(15,23,42,0.35); text-align:center;}
-    .kpi .v{font-size:1.8rem; font-weight:600; margin-top:4px; color:#e0f2fe;}
-    .legend b{color:#f8fafc;}
-    .nebula-panel{background:rgba(15,23,42,0.65); border-radius:20px; padding:16px 18px; border:1px solid rgba(148,163,184,0.22); box-shadow:0 0 40px rgba(59,130,246,0.12);}
-    .sidebar-flight h2{margin-top:0; color:#e0f2fe;}
-    .flight-card{border-radius:16px; padding:14px 16px; margin-bottom:10px; background:linear-gradient(135deg, rgba(30,64,175,0.25), rgba(15,23,42,0.75)); border:1px solid rgba(96,165,250,0.35); box-shadow:0 8px 22px rgba(15,23,42,0.45); transition:transform 0.25s ease, box-shadow 0.25s ease;}
-    .flight-card:hover{transform:translateY(-2px); box-shadow:0 14px 30px rgba(30,64,175,0.4);}
-    .flight-card.active{border-color:rgba(74,222,128,0.65); box-shadow:0 0 32px rgba(74,222,128,0.35);}
-    .flight-card strong{display:block; font-size:1rem; color:#f8fafc;}
-    .flight-card span{display:block; font-size:0.78rem; color:rgba(226,232,240,0.75);}
-    .flight-alert{border-radius:18px; padding:12px 16px; margin-bottom:12px; border:1px solid rgba(74,222,128,0.4); background:rgba(15,118,110,0.35); color:#f0fdfa; box-shadow:0 0 18px rgba(45,212,191,0.35);}
-    .flight-alert.animate{animation:flightGlow 1.6s ease-in-out 2;}
-    @keyframes flightGlow{0%{box-shadow:0 0 0 rgba(45,212,191,0.0);}50%{box-shadow:0 0 28px rgba(45,212,191,0.65);}100%{box-shadow:0 0 0 rgba(45,212,191,0.0);}}
-    .nebula-preview{border-radius:16px; padding:12px 16px; border:1px solid rgba(148,163,184,0.28); background:rgba(15,23,42,0.6); color:#e2e8f0; font-size:0.85rem;}
-    .wizard-container{margin-top:12px;}
-    .wizard-panel{border-radius:20px; padding:18px 20px; background:linear-gradient(145deg, rgba(30,64,175,0.28), rgba(15,23,42,0.85)); border:1px solid rgba(96,165,250,0.35); box-shadow:0 12px 42px rgba(15,23,42,0.55);}
-    .translucent-panel{border-radius:22px; padding:20px 22px; background:linear-gradient(160deg, rgba(148,197,255,0.18), rgba(15,23,42,0.78)); border:1px solid rgba(148,197,255,0.45); backdrop-filter:blur(10px); box-shadow:0 18px 40px rgba(30,64,175,0.35);}
-    .safety-badges{display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;}
-    .safety-badge{padding:6px 12px; border-radius:999px; font-size:0.78rem; letter-spacing:0.02em; border:1px solid rgba(148,163,184,0.35); background:rgba(15,23,42,0.75); box-shadow:0 0 22px rgba(59,130,246,0.18); color:#e0f2fe;}
-    .safety-badge.ok{border-color:rgba(74,222,128,0.55); box-shadow:0 0 22px rgba(74,222,128,0.35);}
-    .safety-badge.alert{border-color:rgba(248,113,113,0.55); box-shadow:0 0 22px rgba(248,113,113,0.35);}
-    .stRadio > div[role='radiogroup']{display:flex; flex-wrap:wrap; gap:10px;}
-    .stRadio > div[role='radiogroup'] > label{border-radius:999px; padding:10px 18px; border:1px solid rgba(148,163,184,0.35); background:rgba(15,23,42,0.55); box-shadow:0 0 18px rgba(148,197,255,0.18); cursor:pointer; transition:all 0.25s ease;}
-    .stRadio > div[role='radiogroup'] > label:hover{box-shadow:0 0 26px rgba(148,197,255,0.38); transform:translateY(-1px);}
-    .stRadio > div[role='radiogroup'] > label input:checked + div{background:linear-gradient(135deg, rgba(59,130,246,0.85), rgba(56,189,248,0.75)); color:#0f172a; border-radius:999px; font-weight:600; box-shadow:0 0 32px rgba(56,189,248,0.55); padding:6px 12px;}
-    .stButton>button{background:linear-gradient(135deg, rgba(56,189,248,0.95), rgba(59,130,246,0.95)); color:#0f172a; border:1px solid rgba(125,211,252,0.9); font-weight:700; text-transform:uppercase; letter-spacing:0.04em; border-radius:999px; padding:0.6rem 1.8rem; box-shadow:0 18px 38px rgba(56,189,248,0.35); transition:all 0.25s ease;}
-    .stButton>button:hover{box-shadow:0 24px 46px rgba(59,130,246,0.45); transform:translateY(-2px);}
-    .stButton>button:focus{outline:none; box-shadow:0 0 0 3px rgba(125,211,252,0.4);}
-    .history-table{margin-top:18px;}
-    .history-table table{width:100%; border-collapse:collapse; font-size:0.82rem;}
-    .history-table th,.history-table td{padding:8px 10px; border-bottom:1px solid rgba(148,163,184,0.2); text-align:left; color:#e2e8f0;}
-    .history-table tr:last-child td{border-bottom:none;}
-    .history-table th{color:#bae6fd; font-weight:600;}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+
 
 def render_safety_badges_html(flags) -> str:
     if not flags:
@@ -231,34 +187,15 @@ def render_safety_badges_html(flags) -> str:
     return "".join(badges)
 
 # ======== HERO ========
-TeslaHero(
-    title="Pareto & Export",
-    subtitle=(
-        "Explorá el trade-off Energía ↔ Agua ↔ Crew con datos reales de tus candidatos. "
-        "Elegí uno y exportá el plan enlazado al objetivo definido en 2) Target."
-    ),
-    chips=[
-        {
-            "label": "Residence Renovations (volumen alto)",
-            "tone": "accent",
-        },
-        {
-            "label": "Daring Discoveries (reuso de carbono)",
-            "tone": "accent",
-        },
-        {"label": "Paso 1 — Explorar", "tone": "info"},
-        {"label": "Paso 2 — Seleccionar", "tone": "info"},
-        {"label": "Paso 3 — Exportar", "tone": "accent"},
-    ],
-    icon="📤",
-    gradient="linear-gradient(135deg, rgba(80,120,255,0.22), rgba(14,165,233,0.08))",
-    glow="rgba(99,102,241,0.42)",
-    density="cozy",
-    parallax_icons=[
-        {"icon": "🛰️", "top": "20%", "left": "76%", "size": "4rem", "speed": "20s"},
-        {"icon": "📦", "top": "62%", "left": "83%", "size": "3.6rem", "speed": "26s"},
-    ],
-).render()
+st.title("📤 Pareto & Export")
+st.caption(
+    "Explorá el trade-off Energía ↔ Agua ↔ Crew con datos reales de tus candidatos y exportá el plan enlazado al objetivo definido en 2) Target."
+)
+st.markdown(
+    "- Paso 1: Explorá el frente Pareto con los filtros inferiores.\n"
+    "- Paso 2: Seleccioná la opción priorizada por la misión.\n"
+    "- Paso 3: Exportá el plan para compartirlo con la tripulación."
+)
 
 # ======== tabla base (derivada de candidates reales) ========
 df_raw = compare_table(cands, target, crew_time_low=target.get("crew_time_low", False)).copy()
@@ -328,47 +265,21 @@ if "Materiales" in df_raw:
 df_plot = df_raw.dropna(subset=["Energía (kWh)","Agua (L)","Crew (min)","Score"]).copy()
 
 # ======== KPIs ========
-kpi_items = []
-if not df_plot.empty:
-    kpi_items = [
-        MetricItem(label="Opciones válidas", value=str(len(df_plot)), icon="🪐"),
-        MetricItem(label="Score máximo", value=f"{df_plot['Score'].max():.2f}", icon="🌟"),
-        MetricItem(label="Mín. Agua", value=f"{df_plot['Agua (L)'].min():.2f} L", icon="💧"),
-        MetricItem(label="Mín. Energía", value=f"{df_plot['Energía (kWh)'].min():.2f} kWh", icon="⚡"),
-    ]
-    polymer_density_values = pd.to_numeric(df_plot.get("ρ ref (g/cm³)"), errors="coerce").dropna()
-    polymer_tensile_values = pd.to_numeric(df_plot.get("σₜ ref (MPa)"), errors="coerce").dropna()
-    aluminium_tensile_values = pd.to_numeric(df_plot.get("σₜ Al (MPa)"), errors="coerce").dropna()
-    if not polymer_density_values.empty:
-        kpi_items.append(
-            MetricItem(
-                label="ρ ref promedio",
-                value=f"{polymer_density_values.mean():.3f} g/cm³",
-                icon="🧪",
-            )
-        )
-    if not polymer_tensile_values.empty:
-        kpi_items.append(
-            MetricItem(
-                label="σₜ ref promedio",
-                value=f"{polymer_tensile_values.mean():.1f} MPa",
-                icon="🛰️",
-            )
-        )
-    if not aluminium_tensile_values.empty:
-        kpi_items.append(
-            MetricItem(
-                label="σₜ Al promedio",
-                value=f"{aluminium_tensile_values.mean():.1f} MPa",
-                icon="🛡️",
-            )
-        )
-else:
-    kpi_items = [
-        MetricItem(label="Opciones válidas", value="0", icon="🪐"),
-    ]
+kpi_df = build_export_kpi_table(df_plot)
+st.subheader("Indicadores del lote")
+kpi_style = kpi_df.style.format({"Valor": "{:.3f}"})
+try:
+    kpi_style = kpi_style.hide(axis="index")
+except AttributeError:
+    kpi_style = kpi_style.hide_index()
+st.dataframe(kpi_style, use_container_width=True)
 
-MetricGalaxy(metrics=kpi_items, density="compact").render()
+kpi_chart = alt.Chart(kpi_df).mark_bar(color="#38bdf8").encode(
+    x=alt.X("Valor:Q", title="Valor"),
+    y=alt.Y("KPI:N", sort="-x"),
+    tooltip=["KPI", alt.Tooltip("Valor", format=".3f")],
+).properties(height=220)
+st.altair_chart(kpi_chart, use_container_width=True)
 
 # ======== What-If de límites ========
 st.markdown("### 🎛️ What-If (filtro visual)")

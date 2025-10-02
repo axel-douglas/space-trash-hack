@@ -8,14 +8,6 @@ import streamlit as st
 
 from app.modules.ui_blocks import load_theme, layout_block
 from app.modules.navigation import render_breadcrumbs, set_active_step
-from app.modules.luxe_components import (
-    GlassCard,
-    GlassStack,
-    MetricGalaxy,
-    MetricItem,
-    TeslaHero,
-    ChipRow,
-)
 
 from app.modules.data_sources import (
     load_regolith_granulometry,
@@ -30,6 +22,7 @@ from app.modules.schema import (
     POLYMER_LABEL_COLUMNS,
     POLYMER_METRIC_COLUMNS,
 )
+from app.modules.page_data import build_candidate_metric_table, build_resource_table
 
 st.set_page_config(page_title="Rex-AI • Resultados", page_icon="📊", layout="wide")
 
@@ -202,71 +195,82 @@ if target.get("crew_time_low"):
 if ci:
     header_chips.append({"label": "CI 95% activo", "tone": "success"})
 
+st.title(f"📊 {process_id} · {process_name}")
+st.caption(
+    "Predicciones Rex-AI con trazabilidad NASA y contraste frente a la heurística de referencia."
+)
+
 if header_chips:
-    TeslaHero(
-        title=f"📊 {process_id} · {process_name}",
-        subtitle=(
-            "Predicciones Rex-AI con trazabilidad NASA y contraste frente a la heurística de referencia."
+    chip_columns = st.columns(len(header_chips))
+    for column, chip in zip(chip_columns, header_chips, strict=False):
+        column.markdown(f"**{chip['label']}**")
+
+metrics_df = build_candidate_metric_table(props, heur, score, ci, uncertainty)
+st.subheader("Métricas clave")
+metrics_style = metrics_df.style.format(
+    {
+        "IA Rex-AI": "{:.3f}",
+        "Heurística": "{:.3f}",
+        "Δ (IA - Heurística)": "{:+.3f}",
+        "σ": "{:.3f}",
+    }
+)
+try:
+    metrics_style = metrics_style.hide(axis="index")
+except AttributeError:
+    metrics_style = metrics_style.hide_index()
+st.dataframe(metrics_style, use_container_width=True)
+
+comparison_df = metrics_df[metrics_df["Indicador"] != "Score total"].copy()
+comparison_df = comparison_df.melt(
+    id_vars=["Indicador"],
+    value_vars=["IA Rex-AI", "Heurística"],
+    var_name="Modelo",
+    value_name="Valor",
+).dropna(subset=["Valor"])
+if not comparison_df.empty:
+    chart = alt.Chart(comparison_df).mark_bar().encode(
+        x=alt.X("Valor:Q", title="Valor"),
+        y=alt.Y("Indicador:N", sort="-x"),
+        color=alt.Color("Modelo:N", scale=alt.Scale(scheme="tableau10")),
+        tooltip=["Indicador", "Modelo", alt.Tooltip("Valor", format=".3f")],
+    ).properties(height=260)
+    st.altair_chart(chart, use_container_width=True)
+
+resource_df = build_resource_table(props, target)
+st.subheader("Consumos frente a límites")
+resource_style = resource_df.style.format(
+    {
+        "Uso": "{:.3f}",
+        "Límite": "{:.3f}",
+        "Utilización (%)": "{:.1f}",
+    }
+)
+try:
+    resource_style = resource_style.hide(axis="index")
+except AttributeError:
+    resource_style = resource_style.hide_index()
+st.dataframe(resource_style, use_container_width=True)
+
+util_plot = resource_df.dropna(subset=["Utilización (%)"])
+if not util_plot.empty:
+    domain_max = float(util_plot["Utilización (%)"].max()) + 10.0
+    domain_max = max(120.0, domain_max)
+    utilisation_chart = alt.Chart(util_plot).mark_bar(color="#0ea5e9").encode(
+        x=alt.X(
+            "Utilización (%):Q",
+            title="Utilización (%)",
+            scale=alt.Scale(domain=(0, domain_max)),
         ),
-        chips=header_chips,
-        icon="📊",
-        gradient="linear-gradient(135deg, rgba(20,184,166,0.22), rgba(14,165,233,0.08))",
-        glow="rgba(45,212,191,0.32)",
-        density="cozy",
-        variant="minimal",
-    ).render()
-else:
-    st.markdown(
-        f"## 📊 {process_id} · {process_name} — Score {score:.3f}"
-    )
-
-icon_map = {
-    "Rigidez": "🧱",
-    "Estanqueidad": "💧",
-    "Energía (kWh)": "⚡",
-    "Agua (L)": "🚰",
-    "Crew (min)": "🧑‍🚀",
-}
-metric_items: list[MetricItem] = [
-    MetricItem(
-        label="Score total",
-        value=f"{score:.3f}",
-        caption="Función · Recursos · Seguridad",
-        icon="📊",
-    )
-]
-labels = [
-    ("Rigidez", "rigidity", "rigidez"),
-    ("Estanqueidad", "tightness", "estanqueidad"),
-    ("Energía (kWh)", "energy_kwh", "energy_kwh"),
-    ("Agua (L)", "water_l", "water_l"),
-    ("Crew (min)", "crew_min", "crew_min"),
-]
-for label, attr, ci_key in labels:
-    val_ml = _get_value(props, attr, 0.0)
-    val_h = _get_value(heur, attr, 0.0)
-    interval = ci.get(ci_key)
-    delta_value = val_ml - val_h
-    caption_bits = [f"Heurística {val_h:.3f}"]
-    if interval:
-        try:
-            caption_bits.append(f"CI 95% [{interval[0]:.3f}, {interval[1]:.3f}]")
-        except (TypeError, ValueError, IndexError):
-            pass
-
-    metric_items.append(
-        MetricItem(
-            label=label,
-            value=f"{val_ml:.3f}",
-            delta=f"Δ {delta_value:+.3f}",
-            caption=" · ".join(caption_bits),
-            icon=icon_map.get(label),
-        )
-    )
-
-MetricGalaxy(metrics=metric_items, density="compact").render()
-if uncertainty:
-    st.caption("Desviaciones modelo: " + ", ".join(f"{k} {v:.3f}" for k, v in uncertainty.items()))
+        y=alt.Y("Recurso:N", sort="-x"),
+        tooltip=[
+            "Recurso",
+            alt.Tooltip("Utilización (%)", format=".1f"),
+            alt.Tooltip("Uso", format=".3f"),
+            alt.Tooltip("Límite", format=".3f"),
+        ],
+    ).properties(height=200)
+    st.altair_chart(utilisation_chart, use_container_width=True)
 
 external_profiles = _collect_external_profiles(cand, inventory_df)
 if external_profiles:
@@ -394,48 +398,24 @@ with st.container():
 
 with st.expander("🛰️ Contexto y trazabilidad", expanded=True):
     context_data = _load_regolith_context()
-    chips_html = ChipRow(
-        [
-            {
-                "label": f"Seguridad: {safety['level']} · {safety['detail']}",
-                "tone": "info",
-            },
-            {
-                "label": f"Regolito MGS-1: {int(regolith_pct * 100)}%",
-                "tone": "accent",
-            },
-            {
-                "label": f"Entrenado: {metadata.get('trained_at', '—')}",
-                "tone": "info",
-            },
-            {
-                "label": f"Muestras: {metadata.get('n_samples', '—')}",
-                "tone": "info",
-            },
-        ],
-        render=False,
-    )
     materials_text = ", ".join(materials) if materials else "—"
     ids_text = ", ".join(cand.get("source_ids", [])) or "—"
-    latent_text = (
-        ", ".join(f"{v:.2f}" for v in latent[:8]) if latent else "—"
+    latent_text = ", ".join(f"{v:.2f}" for v in latent[:8]) if latent else "—"
+
+    st.markdown("**Resumen operativo**")
+    st.markdown(
+        "\n".join(
+            [
+                f"- **Seguridad**: {safety['level']} · {safety['detail']}",
+                f"- **Regolito MGS-1**: {int(regolith_pct * 100)}%",
+                f"- **Modelo entrenado**: {metadata.get('trained_at', '—')}",
+                f"- **Muestras utilizadas**: {metadata.get('n_samples', '—')}",
+            ]
+        )
     )
-    GlassStack(
-        cards=[
-            GlassCard(
-                title="Trazabilidad Rex-AI",
-                body=(
-                    f"{chips_html}"
-                    f"<p style='margin-top:12px;'>Materiales: {materials_text}</p>"
-                    f"<p>Fuente IDs NASA: {ids_text}</p>"
-                    f"<p>Latent vector (autoencoder): {latent_text}</p>"
-                ),
-                icon="🛰️",
-            )
-        ],
-        columns_min="22rem",
-        density="cozy",
-    ).render()
+    st.markdown(f"**Materiales mezclados:** {materials_text}")
+    st.markdown(f"**Fuente IDs NASA:** {ids_text}")
+    st.markdown(f"**Vector latente (autoencoder):** {latent_text}")
     src = getattr(props, "source", "heuristic")
     if src.startswith("rexai"):
         trained_at = metadata.get("trained_at", "?")
@@ -855,12 +835,17 @@ with tab3:
     )
 
     st.markdown("### ⏱️ Recursos estimados")
-    resource_items = [
-        MetricItem(label="Energía", value=f"{_get_value(props, 'energy_kwh', 0.0):.2f} kWh", icon="⚡"),
-        MetricItem(label="Agua", value=f"{_get_value(props, 'water_l', 0.0):.2f} L", icon="🚰"),
-        MetricItem(label="Crew-time", value=f"{_get_value(props, 'crew_min', 0.0):.0f} min", icon="🧑‍🚀"),
+    resource_entries = [
+        ("⚡ Energía (kWh)", _get_value(props, "energy_kwh", float("nan")), "{:.2f}"),
+        ("🚰 Agua (L)", _get_value(props, "water_l", float("nan")), "{:.2f}"),
+        ("🧑‍🚀 Crew-time (min)", _get_value(props, "crew_min", float("nan")), "{:.0f}"),
     ]
-    MetricGalaxy(metrics=resource_items, density="comfortable").render()
+    resource_cols = st.columns(len(resource_entries))
+    for column, (label, value, fmt) in zip(resource_cols, resource_entries, strict=False):
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            column.metric(label, "—")
+        else:
+            column.metric(label, fmt.format(value))
 
     pop3 = st.popover("¿Por qué importa?")
     with pop3:

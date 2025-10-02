@@ -23,13 +23,7 @@ from app.modules.ui_blocks import (
     minimal_button,
     pill,
 )
-from app.modules.luxe_components import (
-    ChipRow,
-    MetricGalaxy,
-    MetricItem,
-    MetricSpec,
-    RankingCockpit,
-)
+from app.modules.luxe_components import ChipRow
 from app.modules.visualizations import ConvergenceScene
 from app.modules.schema import (
     ALUMINIUM_LABEL_COLUMNS,
@@ -37,6 +31,7 @@ from app.modules.schema import (
     POLYMER_LABEL_COLUMNS,
     POLYMER_METRIC_COLUMNS,
 )
+from app.modules.page_data import build_ranking_table
 
 st.set_page_config(page_title="Rex-AI • Generador", page_icon="🤖", layout="wide")
 
@@ -654,35 +649,38 @@ def render_candidate_card(
                 for column, (label, kind) in zip(badge_columns, highlight_badges):
                     with column:
                         pill(label, kind=kind)
-            logistics_metrics: list[MetricItem] = []
+            logistics_metrics: list[dict[str, object]] = []
             if logistics_reuse is not None:
                 logistics_metrics.append(
-                    MetricItem(
-                        label="Reuso logístico",
-                        value=_format_number(logistics_reuse),
-                        caption="Logistics-to-Living",
-                        icon="🔁",
-                        tone="positive",
-                    )
+                    {
+                        "Indicador": "Reuso logístico",
+                        "Valor": float(logistics_reuse),
+                        "Contexto": "Logistics-to-Living",
+                    }
                 )
             if gas_recovery is not None:
                 logistics_metrics.append(
-                    MetricItem(
-                        label="Recupero gas",
-                        value=_format_number(gas_recovery),
-                        caption="Logistics-to-Living",
-                        icon="🧪",
-                        tone="positive",
-                    )
+                    {
+                        "Indicador": "Recupero gas",
+                        "Valor": float(gas_recovery),
+                        "Contexto": "Logistics-to-Living",
+                    }
                 )
             if logistics_metrics:
                 st.markdown("**Logistics-to-Living · métricas clave**")
-                MetricGalaxy(
-                    metrics=logistics_metrics,
-                    density="compact",
-                    glow=False,
-                    min_width="11rem",
-                ).render()
+                logistics_df = pd.DataFrame(logistics_metrics)
+                logistics_style = logistics_df.style.format({"Valor": "{:.2f}"})
+                try:
+                    logistics_style = logistics_style.hide(axis="index")
+                except AttributeError:
+                    logistics_style = logistics_style.hide_index()
+                st.dataframe(logistics_style, use_container_width=True)
+                chart = alt.Chart(logistics_df).mark_bar(color="#14b8a6").encode(
+                    x=alt.X("Valor:Q", title="Valor"),
+                    y=alt.Y("Indicador:N", sort="-x"),
+                    tooltip=["Indicador", alt.Tooltip("Valor", format=".2f")],
+                )
+                st.altair_chart(chart, use_container_width=True)
 
         external_profiles = _collect_external_profiles(candidate, waste_df)
         if external_profiles:
@@ -1168,46 +1166,48 @@ if isinstance(history_df, pd.DataFrame) and not history_df.empty:
     scene.render(st)
 
 # ----------------------------- Resumen de ranking -----------------------------
-summary_rows: list[dict[str, object]] = []
-for idx, cand in enumerate(cands, start=1):
-    props = cand.get("props")
-    if props is None:
-        continue
-    aux = cand.get("auxiliary") or {}
-    summary_rows.append(
-        {
-            "Rank": idx,
-            "Score": cand.get("score"),
-            "Proceso": f"{cand.get('process_id', '')} · {cand.get('process_name', '')}",
-            "Rigidez": getattr(props, "rigidity", float("nan")),
-            "Estanqueidad": getattr(props, "tightness", float("nan")),
-            "Energía (kWh)": getattr(props, "energy_kwh", float("nan")),
-            "Agua (L)": getattr(props, "water_l", float("nan")),
-            "Crew (min)": getattr(props, "crew_min", float("nan")),
-            "Seal": "✅" if aux.get("passes_seal", True) else "⚠️",
-            "Riesgo": aux.get("process_risk_label", "—"),
-        }
-    )
+summary_df = build_ranking_table(cands)
 
-if summary_rows:
+if not summary_df.empty:
     st.subheader("Ranking de candidatos")
     st.caption("Ordenado por score total con sellado y riesgo resumidos.")
-    cockpit = RankingCockpit(
-        entries=summary_rows,
-        metric_specs=[
-            MetricSpec("Rigidez", "Rigidez", "{:.2f}"),
-            MetricSpec("Estanqueidad", "Estanqueidad", "{:.2f}"),
-            MetricSpec("Energía (kWh)", "Energía", "{:.2f}", unit="kWh", higher_is_better=False),
-            MetricSpec("Agua (L)", "Agua", "{:.1f}", unit="L", higher_is_better=False),
-            MetricSpec("Crew (min)", "Crew", "{:.1f}", unit="min", higher_is_better=False),
-        ],
-        key="generator_ranking",
-        score_label="Score",
-        selection_label="📌 Candidato destacado",
+    summary_style = summary_df.style.format(
+        {
+            "Score": "{:.3f}",
+            "Rigidez": "{:.3f}",
+            "Estanqueidad": "{:.3f}",
+            "Energía (kWh)": "{:.3f}",
+            "Agua (L)": "{:.3f}",
+            "Crew (min)": "{:.1f}",
+        }
     )
-    selected_summary = cockpit.render()
-    if selected_summary is not None:
-        st.session_state["generator_ranking_focus"] = selected_summary
+    try:
+        summary_style = summary_style.hide(axis="index")
+    except AttributeError:
+        summary_style = summary_style.hide_index()
+    st.dataframe(summary_style, use_container_width=True)
+
+    score_chart = alt.Chart(summary_df).mark_bar(color="#2563eb").encode(
+        x=alt.X("Score:Q", title="Score"),
+        y=alt.Y("Proceso:N", sort="-x"),
+        tooltip=["Proceso", alt.Tooltip("Score", format=".3f")],
+    ).properties(height=220)
+    st.altair_chart(score_chart, use_container_width=True)
+
+    option_labels = {
+        int(row["Rank"]): f"Opción {int(row['Rank'])} · {row['Proceso']}"
+        for _, row in summary_df.iterrows()
+    }
+    select_options = list(option_labels.keys())
+    selected_rank = st.selectbox(
+        "📌 Destacar candidato",
+        options=select_options,
+        format_func=lambda value: option_labels.get(int(value), f"Opción {value}"),
+    )
+    if selected_rank is not None:
+        focused = summary_df[summary_df["Rank"] == selected_rank].head(1)
+        if not focused.empty:
+            st.session_state["generator_ranking_focus"] = focused.iloc[0].to_dict()
 
 # ----------------------------- Showroom de candidatos -----------------------------
 st.subheader("Resultados del generador")
