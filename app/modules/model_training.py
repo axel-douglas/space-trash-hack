@@ -1618,7 +1618,7 @@ def train_and_save(
         try:
             refresh_model_metadata()
         except Exception:  # pragma: no cover - cache refresh best-effort
-            LOGGER.debug("No se pudo refrescar metadata del HUD tras entrenamiento", exc_info=True)
+            LOGGER.debug("No se pudo refrescar metadata visual tras entrenamiento", exc_info=True)
     return metadata
 
 
@@ -1641,7 +1641,7 @@ def bootstrap_demo_model(*, seed: int | None = 21, n_samples: int = 64) -> Path:
         try:
             refresh_model_metadata()
         except Exception:  # pragma: no cover - cache refresh best-effort
-            LOGGER.debug("No se pudo refrescar metadata del HUD tras bootstrap", exc_info=True)
+            LOGGER.debug("No se pudo refrescar metadata visual tras bootstrap", exc_info=True)
     return PIPELINE_PATH
 
 

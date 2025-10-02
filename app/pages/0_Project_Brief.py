@@ -55,7 +55,7 @@ with c2:
 with c3:
     st.subheader("Navegación")
     st.markdown(
-        "Usá la barra superior **Mission HUD** o las teclas `1-9` para saltar de paso.\n"
+        "Usá la barra superior de navegación o las teclas `1-9` para saltar de paso.\n"
         "También podés abrir la barra lateral estándar de Streamlit para ver todas las páginas."
     )
 

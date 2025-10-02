@@ -11,47 +11,9 @@ from uuid import uuid4
 import streamlit as st
 from streamlit.components.v1 import html as components_html
 from streamlit.delta_generator import DeltaGenerator
-from streamlit.runtime.scriptrunner.script_runner import get_script_run_ctx
-from streamlit.runtime.state.safe_session_state import SafeSessionState
-
-from app import _bootstrap
 
 _THEME_HASH_KEY = "__rexai_theme_hash__"
-_INTERACTIONS_HASH_KEY = "__rexai_interactions_hash__"
-_THEME_STATE_KEY = "hud_theme"
-_FONT_STATE_KEY = "hud_font"
-_COLORBLIND_STATE_KEY = "hud_colorblind"
 _REVEAL_FLAG_KEY = "__rexai_reveal_flag__"
-_HUD_PLACEHOLDER: Optional[DeltaGenerator] = None
-
-_THEME_LABELS = {
-    "mars-minimal": "Marte minimal",
-    "dark": "Oscuro (fallback)",
-    "dark-high-contrast": "Oscuro · Alto contraste",
-}
-
-_FONT_LABELS = {
-    "base": "Base",
-    "large": "Grande",
-    "xlarge": "XL",
-}
-
-_COLORBLIND_LABELS = {
-    "normal": "Sin ajustes",
-    "safe": "Daltonismo (paleta segura)",
-}
-
-
-if not hasattr(SafeSessionState, "get"):
-
-    def _safe_state_get(self: SafeSessionState, key: str, default: Any = None) -> Any:
-        try:
-            return self[key]
-        except KeyError:
-            return default
-
-    SafeSessionState.get = _safe_state_get  # type: ignore[attr-defined]
-
 
 def _static_path(filename: str | Path) -> Path:
     return Path(__file__).resolve().parents[1] / "static" / Path(filename)
@@ -59,18 +21,6 @@ def _static_path(filename: str | Path) -> Path:
 
 def _base_css_path() -> Path:
     return _static_path(Path("styles") / "base.css")
-
-
-def _ensure_defaults() -> None:
-    st.session_state.setdefault(_THEME_STATE_KEY, "mars-minimal")
-    st.session_state.setdefault(_FONT_STATE_KEY, "base")
-    st.session_state.setdefault(_COLORBLIND_STATE_KEY, "normal")
-
-    current = st.session_state.get(_THEME_STATE_KEY)
-    if current not in _THEME_LABELS:
-        name = str(current)
-        fallback = "dark-high-contrast" if "high-contrast" in name else "dark"
-        st.session_state[_THEME_STATE_KEY] = fallback
 
 
 def _read_css_bundle() -> str:
@@ -93,46 +43,29 @@ def _inject_css_once() -> None:
     st.session_state[_THEME_HASH_KEY] = css_hash
 
 
-def _inject_interactions_script_once() -> None:
-    if not _INTERACTIONS_JS:
-        return
-
-    script_hash = hashlib.sha256(_INTERACTIONS_JS.encode("utf-8")).hexdigest()
-    if st.session_state.get(_INTERACTIONS_HASH_KEY) == script_hash:
-        return
-
-    st.markdown(f"<script>{_INTERACTIONS_JS}</script>", unsafe_allow_html=True)
-    st.session_state[_INTERACTIONS_HASH_KEY] = script_hash
-
-
-_MICRO_JS = _bootstrap.load_microinteractions_script()
-_INTERACTIONS_JS = _bootstrap.load_interactions_script()
-
 _BUTTON_STYLES = """
 .rexai-fx-wrapper{position:relative;display:flex;flex-direction:column;gap:6px;}
 .rexai-fx-wrapper[data-width="full"]{width:100%;}
 .rexai-fx-wrapper[data-width="auto"]{display:inline-flex;}
-.rexai-fx-button{position:relative;border:none;border-radius:16px;padding:14px 18px;font-weight:600;font-size:1rem;color:#0f172a;background:linear-gradient(135deg,rgba(96,165,250,0.92),rgba(14,165,233,0.85));box-shadow:0 12px 26px rgba(14,165,233,0.28);transition:transform 0.18s ease,box-shadow 0.22s ease,filter 0.22s ease;cursor:pointer;overflow:hidden;min-height:54px;}
+.rexai-fx-button{position:relative;border:none;border-radius:14px;padding:14px 18px;font-weight:600;font-size:1rem;color:#0f172a;background:#dbe6ff;box-shadow:0 10px 22px rgba(14,40,80,0.15);transition:transform 0.16s ease,box-shadow 0.2s ease,filter 0.2s ease;cursor:pointer;overflow:hidden;min-height:52px;}
 .rexai-fx-wrapper[data-width="full"] .rexai-fx-button{width:100%;}
-.rexai-fx-button:disabled{cursor:not-allowed;opacity:0.7;filter:grayscale(0.3);}
-.rexai-fx-button:hover{transform:translateY(-1px);box-shadow:0 18px 32px rgba(59,130,246,0.32);}
+.rexai-fx-button:disabled{cursor:not-allowed;opacity:0.7;filter:grayscale(0.2);}
+.rexai-fx-button:hover{transform:translateY(-1px);box-shadow:0 14px 26px rgba(14,40,80,0.2);}
 .rexai-fx-button:active{transform:scale(0.985);}
-.rexai-fx-wrapper[data-state="loading"] .rexai-fx-button{background:linear-gradient(135deg,rgba(59,130,246,0.78),rgba(14,165,233,0.55));box-shadow:0 10px 24px rgba(14,165,233,0.25);cursor:progress;}
-.rexai-fx-wrapper[data-state="success"] .rexai-fx-button{background:linear-gradient(135deg,rgba(16,185,129,0.95),rgba(59,130,246,0.65));box-shadow:0 14px 28px rgba(16,185,129,0.32);}
-.rexai-fx-wrapper[data-state="error"] .rexai-fx-button{background:linear-gradient(135deg,rgba(248,113,113,0.95),rgba(239,68,68,0.75));box-shadow:0 14px 28px rgba(248,113,113,0.35);}
+.rexai-fx-wrapper[data-state="loading"] .rexai-fx-button{background:#c5d7fb;box-shadow:0 10px 20px rgba(14,40,80,0.18);cursor:progress;}
+.rexai-fx-wrapper[data-state="success"] .rexai-fx-button{background:#c8f5df;}
+.rexai-fx-wrapper[data-state="error"] .rexai-fx-button{background:#ffd7dc;}
 .rexai-fx-label{position:relative;z-index:2;display:flex;align-items:center;justify-content:center;gap:10px;text-align:center;letter-spacing:0.01em;flex-wrap:wrap;}
 .rexai-fx-label[data-layout="stack"]{flex-direction:column;gap:6px;}
-.rexai-fx-icon{font-size:1.25rem;line-height:1;filter:drop-shadow(0 0 6px rgba(14,165,233,0.18));}
+.rexai-fx-icon{font-size:1.25rem;line-height:1;}
 .rexai-fx-text{display:flex;flex-direction:column;gap:2px;line-height:1.2;align-items:center;text-align:center;}
 .rexai-fx-line{display:block;}
-.rexai-fx-status{font-size:0.78rem;letter-spacing:0.04em;text-transform:uppercase;color:rgba(148,163,184,0.92);text-align:center;transition:opacity 0.18s ease;opacity:0;height:0;}
+.rexai-fx-status{font-size:0.78rem;letter-spacing:0.04em;text-transform:uppercase;color:rgba(60,79,102,0.9);text-align:center;transition:opacity 0.18s ease;opacity:0;height:0;}
 .rexai-fx-status[data-active="true"]{opacity:1;height:auto;}
-.rexai-fx-particles{position:absolute;inset:0;pointer-events:none;overflow:visible;}
-.rexai-particle{position:absolute;top:50%;left:50%;width:var(--size);height:var(--size);border-radius:999px;transform:translate(-50%,-50%) scale(0.3);transition:transform 0.45s ease,opacity 0.45s ease;}
-.rexai-fx-wrapper[data-state="loading"] .rexai-fx-button::after{content:"";position:absolute;inset:12px;width:28px;height:28px;margin:auto;border-radius:999px;border:3px solid rgba(255,255,255,0.38);border-top-color:rgba(15,23,42,0.82);animation:rexai-spin 0.8s linear infinite;z-index:1;}
-.rexai-fx-wrapper[data-state="loading"] .rexai-fx-label{opacity:0.35;}
-.rexai-fx-wrapper[data-state="error"] .rexai-fx-button{color:#fff;}
-.rexai-fx-help{font-size:0.82rem;color:rgba(148,163,184,0.92);margin:0 4px;}
+.rexai-fx-particles{display:none;}
+.rexai-fx-wrapper[data-state="loading"] .rexai-fx-button::after{content:"";position:absolute;inset:12px;width:28px;height:28px;margin:auto;border-radius:999px;border:3px solid rgba(15,23,42,0.2);border-top-color:rgba(15,23,42,0.6);animation:rexai-spin 0.8s linear infinite;z-index:1;}
+.rexai-fx-wrapper[data-state="loading"] .rexai-fx-label{opacity:0.6;}
+.rexai-fx-help{font-size:0.82rem;color:rgba(71,85,105,0.85);margin:0 4px;}
 @keyframes rexai-spin{from{transform:rotate(0deg);}to{transform:rotate(360deg);}}
 """
 
@@ -169,7 +102,6 @@ def load_theme(*, show_hud: bool = True) -> None:
 
     del show_hud  # compatibility no-op
     _inject_css_once()
-    _inject_interactions_script_once()
 
 
 def enable_reveal_animation() -> None:
@@ -283,76 +215,6 @@ def glass_card(
         container.markdown("</div>", unsafe_allow_html=True)
 
 
-def _apply_runtime_theme() -> None:
-    theme = st.session_state.get(_THEME_STATE_KEY, "dark")
-    font = st.session_state.get(_FONT_STATE_KEY, "base")
-    colorblind = st.session_state.get(_COLORBLIND_STATE_KEY, "normal")
-
-    script = f"""
-    <script>
-    const doc = window.parent?.document ?? document;
-    const body = doc.body;
-    if (body) {{
-      body.setAttribute('data-rexai-theme', '{theme}');
-      body.setAttribute('data-rexai-font', '{font}');
-      body.setAttribute('data-rexai-colorblind', '{colorblind}');
-    }}
-    const appRoot = doc.querySelector('.stApp');
-    if (appRoot) {{
-      appRoot.setAttribute('data-rexai-theme', '{theme}');
-      appRoot.setAttribute('data-rexai-font', '{font}');
-      appRoot.setAttribute('data-rexai-colorblind', '{colorblind}');
-    }}
-    </script>
-    """
-    st.markdown(script, unsafe_allow_html=True)
-
-
-def _render_hud() -> None:
-    ctx = get_script_run_ctx()
-    if ctx and {
-        _THEME_STATE_KEY,
-        _FONT_STATE_KEY,
-        _COLORBLIND_STATE_KEY,
-    }.intersection(ctx.widget_user_keys_this_run):
-        return
-
-    global _HUD_PLACEHOLDER
-    if _HUD_PLACEHOLDER is None:
-        _HUD_PLACEHOLDER = st.empty()
-    hud_container = _HUD_PLACEHOLDER.container()
-    with hud_container:
-        st.markdown('<div class="rexai-hud">', unsafe_allow_html=True)
-        st.markdown('<div class="rexai-hud__title">HUD · Accesibilidad</div>', unsafe_allow_html=True)
-        cols = st.columns(3)
-        with cols[0]:
-            st.selectbox(
-                "Tema",
-                options=list(_THEME_LABELS.keys()),
-                format_func=lambda value: _THEME_LABELS.get(value, value),
-                key=_THEME_STATE_KEY,
-                help="Ajustá contraste y estética base.",
-            )
-        with cols[1]:
-            st.radio(
-                "Tipografía",
-                options=list(_FONT_LABELS.keys()),
-                format_func=lambda value: _FONT_LABELS.get(value, value),
-                key=_FONT_STATE_KEY,
-                horizontal=True,
-                help="Escala de fuente para lectura cómoda.",
-            )
-        with cols[2]:
-            st.selectbox(
-                "Modo daltónico",
-                options=list(_COLORBLIND_LABELS.keys()),
-                format_func=lambda value: _COLORBLIND_LABELS.get(value, value),
-                key=_COLORBLIND_STATE_KEY,
-                help="Paleta optimizada para protanopia/deuteranopia.",
-            )
-        st.markdown('</div>', unsafe_allow_html=True)
-
-
 def card(title: str, body: str = "", *, render: bool = True) -> str:
     """Render a simple Rex-AI card block."""
 
@@ -382,7 +244,7 @@ def pill(
     *,
     render: bool = True,
 ) -> str:
-    """Render a lab-status pill using the base HUD palette."""
+    """Render a lab-status pill using the base mission palette."""
 
     load_theme(show_hud=False)
     tone = kind if kind in _PILL_KINDS else "ok"
@@ -598,7 +460,7 @@ def futuristic_button(
     icon: str | None = None,
     mode: Literal["minimal", "cinematic"] = "minimal",
 ) -> bool:
-    """Render the CTA button with optional cinematic microinteractions."""
+    """Render the CTA button with a streamlined cinematic layout."""
 
     if mode == "minimal":
         return minimal_button(
@@ -668,10 +530,7 @@ def futuristic_button(
         "disabled": bool(disabled),
     }
 
-    script_parts = []
-    if _MICRO_JS:
-        script_parts.append(_MICRO_JS)
-    script_parts.extend(
+    script = "".join(
         [
             "(function(){",
             "const styleId='rexai-fx-style';",
@@ -691,7 +550,6 @@ def futuristic_button(
             "if(buttonEl){buttonEl.disabled=cfg.disabled;}",
             "const statusEl=wrapper.querySelector('.rexai-fx-status');",
             "if(statusEl){const hint=(cfg.statusHints && cfg.statusHints[cfg.state])||'';statusEl.textContent=hint;statusEl.setAttribute('data-active',hint?'true':'false');}",
-            "if(window.RexAIMicro){const controller=window.RexAIMicro.mount(wrapper,cfg);if(controller){controller.applyState(cfg.state);}}",
             "const send=(payload)=>Streamlit.setComponentValue(payload);",
             "if(buttonEl && !cfg.disabled){buttonEl.addEventListener('click',()=>send({event:'click',ts:Date.now()}));}",
             "const sync=()=>Streamlit.setFrameHeight(document.body.scrollHeight);",
@@ -699,7 +557,6 @@ def futuristic_button(
             "})();",
         ]
     )
-    script = "".join(script_parts)
 
     html_markup = f"""
     <div id="{button_id}" class="rexai-fx-wrapper" data-state="{state}" data-width="{container_width}" data-fx="cinematic">
