@@ -334,74 +334,44 @@ _STATUS_STATE_MAP: dict[str, str] = {
 }
 
 
-def _split_lines(text: str) -> list[str]:
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+def _compose_button_label(label: str, icon: str | None) -> str:
+    text = label or ""
+    lines = [ln for ln in text.splitlines() if ln]
     if not lines:
-        stripped = text.strip()
-        return [stripped or text]
-    return lines
+        return icon or text
+    if not icon:
+        return "\n".join(lines)
+    first, *rest = lines
+    prefixed = f"{icon} {first}".strip()
+    return "\n".join([prefixed, *rest]) if rest else prefixed
 
 
-def _normalize_button_options(
+def _state_messages(
     label: str,
     *,
-    state: Literal["idle", "loading", "success", "error"],
     loading_label: str | None,
     success_label: str | None,
     error_label: str | None,
-    status_hints: dict[str, str] | None,
-    help_text: str | None,
-    icon: str | None,
-) -> dict[str, Any]:
-    if state not in _BUTTON_STATES:
-        raise ValueError(f"Estado no soportado: {state}")
-
-    state_messages = {
+) -> Mapping[str, str]:
+    return {
         "idle": label,
         "loading": loading_label or "Procesando…",
         "success": success_label or "Listo",
         "error": error_label or "Reintentar",
     }
-    hints = status_hints or {
-        "idle": "",
-        "loading": "Optimizando parámetros",
-        "success": "Listo para revisar",
-        "error": "Revisá parámetros o intenta de nuevo",
-    }
-
-    current_label = state_messages.get(state, label)
-    label_lines = _split_lines(current_label)
-    line_count = max(1, len(label_lines))
-    layout_mode = "stack" if (len(label_lines) > 1 and not icon) else "inline"
-    status_text = hints.get(state, "")
-    return {
-        "state": state,
-        "state_messages": state_messages,
-        "status_hints": hints,
-        "label_lines": label_lines,
-        "line_count": line_count,
-        "layout_mode": layout_mode,
-        "status_text": status_text,
-        "help_text": help_text,
-    }
 
 
-def _compose_button_label(lines: list[str], icon: str | None) -> str:
-    if not lines:
-        return icon or ""
-    if icon:
-        first, *rest = lines
-        prefixed = f"{icon} {first}".strip()
-        return "\n".join([prefixed, *rest]) if rest else prefixed
-    return "\n".join(lines)
-
-
-def _status_label(options: Mapping[str, Any], state: str) -> str:
-    hint = str(options.get("status_text", "")).strip()
+def _resolve_status_text(
+    state: str,
+    *,
+    hints: Mapping[str, str] | None,
+    messages: Mapping[str, str],
+) -> str:
+    source = hints or {}
+    hint = str(source.get(state, "")).strip()
     if hint:
         return hint
-    state_messages = options.get("state_messages", {})
-    return str(state_messages.get(state, "")).strip()
+    return str(messages.get(state, "")).strip()
 
 
 def action_button(
@@ -429,20 +399,18 @@ def action_button(
     """Render a Streamlit button with Rex-AI convenience features."""
 
     load_theme(show_hud=False)
-    options = _normalize_button_options(
+    if state not in _BUTTON_STATES:
+        raise ValueError(f"Estado no soportado: {state}")
+
+    state_messages = _state_messages(
         label,
-        state=state,
         loading_label=loading_label,
         success_label=success_label,
         error_label=error_label,
-        status_hints=status_hints,
-        help_text=help_text,
-        icon=icon,
     )
-
+    button_label = _compose_button_label(state_messages.get(state, label), icon)
     use_container_width = width == "full"
     disabled_flag = bool(disabled) or state == "loading"
-    button_label = _compose_button_label(options["label_lines"], icon)
     args = on_click_args or ()
     kwargs = dict(on_click_kwargs or {})
 
@@ -475,7 +443,11 @@ def action_button(
 
     status_state = _STATUS_STATE_MAP.get(state)
     if status_state:
-        status_label = _status_label(options, state)
+        status_label = _resolve_status_text(
+            state,
+            hints=status_hints,
+            messages=state_messages,
+        )
         if status_label:
             status = st.status(status_label, state=status_state)
             status.update(label=status_label, state=status_state, expanded=False)

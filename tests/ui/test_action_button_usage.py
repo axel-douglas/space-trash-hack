@@ -10,6 +10,17 @@ import pytest
 
 
 sys.modules.setdefault("joblib", types.ModuleType("joblib"))
+sys.modules.setdefault("numpy", types.ModuleType("numpy"))
+sys.modules.setdefault("pandas", types.ModuleType("pandas"))
+
+modules_pkg = types.ModuleType("app.modules")
+modules_pkg.__path__ = []  # type: ignore[attr-defined]
+sys.modules.setdefault("app.modules", modules_pkg)
+
+visual_theme_stub = types.ModuleType("app.modules.visual_theme")
+visual_theme_stub.apply_global_visual_theme = lambda: None  # type: ignore[attr-defined]
+sys.modules.setdefault("app.modules.visual_theme", visual_theme_stub)
+modules_pkg.visual_theme = visual_theme_stub  # type: ignore[attr-defined]
 
 try:  # prefer the real dependency when available
     import plotly  # type: ignore[import]
@@ -77,6 +88,54 @@ _polars.col = lambda *_args, **_kwargs: _DummyExpr()  # type: ignore[attr-define
 sys.modules.setdefault("polars", _polars)
 
 
+class _DummyStatusWidget:
+    def update(self, *_args, **_kwargs):  # noqa: ANN002
+        return None
+
+
+class _DummyDeltaGenerator:
+    def container(self):  # noqa: D401
+        return self
+
+    def markdown(self, *_args, **_kwargs):  # noqa: ANN002
+        return None
+
+    def caption(self, *_args, **_kwargs):  # noqa: ANN002
+        return None
+
+    def columns(self, *_args, **_kwargs):  # noqa: ANN002
+        return []
+
+    def expander(self, *_args, **_kwargs):  # noqa: ANN002
+        return _DummyContext()
+
+
+class _DummyContext(_DummyDeltaGenerator):
+    def __enter__(self):  # noqa: D401
+        return self
+
+    def __exit__(self, *_args):  # noqa: ANN002
+        return False
+
+
+_streamlit = types.ModuleType("streamlit")
+_streamlit.button = lambda *args, **kwargs: False  # type: ignore[assignment]
+_streamlit.download_button = lambda *args, **kwargs: False  # type: ignore[assignment]
+_streamlit.status = lambda *args, **kwargs: _DummyStatusWidget()  # type: ignore[assignment]
+_streamlit.caption = lambda *args, **kwargs: None  # type: ignore[assignment]
+_streamlit.markdown = lambda *args, **kwargs: None  # type: ignore[assignment]
+_streamlit.container = lambda *args, **kwargs: _DummyDeltaGenerator()  # type: ignore[assignment]
+_streamlit.columns = lambda *args, **kwargs: []  # type: ignore[assignment]
+_streamlit.empty = lambda *args, **kwargs: _DummyDeltaGenerator()  # type: ignore[assignment]
+_streamlit.spinner = lambda *args, **kwargs: _DummyContext()  # type: ignore[assignment]
+_streamlit.session_state = {}
+sys.modules.setdefault("streamlit", _streamlit)
+
+_delta_mod = types.ModuleType("streamlit.delta_generator")
+_delta_mod.DeltaGenerator = _DummyDeltaGenerator  # type: ignore[attr-defined]
+sys.modules.setdefault("streamlit.delta_generator", _delta_mod)
+
+
 @pytest.fixture()
 def ui_blocks(monkeypatch):
     spec = util.spec_from_file_location(
@@ -90,7 +149,7 @@ def ui_blocks(monkeypatch):
     return module
 
 
-def test_action_button_uses_streamlit_primitives(ui_blocks, monkeypatch):
+def test_action_button_loading_state_uses_status(ui_blocks, monkeypatch):
     button_calls: list[dict[str, Any]] = []
     status_events: list[dict[str, Any]] = []
     captions: list[str] = []
@@ -189,3 +248,41 @@ def test_action_button_supports_downloads(ui_blocks, monkeypatch):
     assert button_calls[0]["file_name"] == "inventory.csv"
     assert status_events[0] == {"event": "create", "label": "Inventario actualizado", "state": "complete"}
     assert status_events[1] == {"event": "update", "label": "Inventario actualizado", "state": "complete", "expanded": False}
+
+
+def test_action_button_error_state_shows_feedback(ui_blocks, monkeypatch):
+    button_calls: list[dict[str, Any]] = []
+    status_events: list[dict[str, Any]] = []
+
+    def fake_button(label, **kwargs):  # noqa: ANN001
+        button_calls.append({"label": label, **kwargs})
+        return False
+
+    class DummyStatus:
+        def __init__(self, label: str, state: str = "info") -> None:
+            status_events.append({"event": "create", "label": label, "state": state})
+
+        def update(self, label: str | None = None, state: str | None = None, expanded: bool | None = None) -> None:
+            status_events.append(
+                {
+                    "event": "update",
+                    "label": label,
+                    "state": state,
+                    "expanded": expanded,
+                }
+            )
+
+    monkeypatch.setattr(ui_blocks.st, "button", fake_button)
+    monkeypatch.setattr(ui_blocks.st, "status", lambda label, state="info": DummyStatus(label, state))
+
+    ui_blocks.action_button(
+        "Intentar de nuevo",
+        key="retry_button",
+        state="error",
+        error_label="Fallo",
+        status_hints={"error": "Se produjo un error"},
+    )
+
+    assert button_calls
+    assert status_events[0] == {"event": "create", "label": "Se produjo un error", "state": "error"}
+    assert status_events[1] == {"event": "update", "label": "Se produjo un error", "state": "error", "expanded": False}

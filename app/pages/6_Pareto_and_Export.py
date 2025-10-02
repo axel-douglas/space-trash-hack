@@ -27,7 +27,7 @@ from app.modules.page_data import (
     build_material_summary_table,
 )
 from app.modules.safety import check_safety, safety_badge
-from app.modules.ui_blocks import initialise_frontend, layout_stack, load_theme
+from app.modules.ui_blocks import action_button, initialise_frontend, layout_stack, load_theme
 
 
 st.set_page_config(page_title="Pareto & Export", page_icon="📤", layout="wide")
@@ -201,25 +201,31 @@ if selected_candidate:
     pareto_payload = filtered_df.to_csv(index=False).encode("utf-8")
     col_json, col_csv, col_pareto = st.columns(3)
     with col_json:
-        st.download_button(
+        action_button(
             "⬇️ Plan JSON",
-            data=json_data,
-            file_name=f"flight_plan_{int(selected_option_number):02d}.json",
-            mime="application/json",
+            key="export_plan_json",
+            download_data=json_data,
+            download_file_name=f"flight_plan_{int(selected_option_number):02d}.json",
+            download_mime="application/json",
+            state="idle",
         )
     with col_csv:
-        st.download_button(
+        action_button(
             "⬇️ Resumen CSV",
-            data=csv_data,
-            file_name=f"candidate_{int(selected_option_number):02d}_summary.csv",
-            mime="text/csv",
+            key="export_candidate_csv",
+            download_data=csv_data,
+            download_file_name=f"candidate_{int(selected_option_number):02d}_summary.csv",
+            download_mime="text/csv",
+            state="idle",
         )
     with col_pareto:
-        st.download_button(
+        action_button(
             "⬇️ Tabla filtrada",
-            data=pareto_payload,
-            file_name="pareto_filtrado.csv",
-            mime="text/csv",
+            key="export_filtered_table",
+            download_data=pareto_payload,
+            download_file_name="pareto_filtrado.csv",
+            download_mime="text/csv",
+            state="idle",
         )
 else:
     st.caption("Los botones de exportación se activan al elegir un plan prioritario.")
