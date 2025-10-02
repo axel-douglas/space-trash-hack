@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-import app.modules.luxe_components as luxe
+from app.modules import target_limits
 
 
 def _sample_presets():
@@ -35,24 +35,24 @@ def _waste_df():
 
 
 def test_water_limits_follow_baseline(monkeypatch):
-    monkeypatch.setattr(luxe, "load_waste_df", lambda: _waste_df())
+    monkeypatch.setattr(target_limits, "load_waste_df", lambda: _waste_df())
 
-    limits = luxe._compute_target_limits(_sample_presets())
+    limits = target_limits.compute_target_limits(_sample_presets())
 
     volume_q90 = np.quantile(_waste_df()["_source_volume_l"], 0.9)
-    expected = round(volume_q90 * luxe._WATER_L_PER_VOLUME_L_BASELINE, 2)
+    expected = round(volume_q90 * target_limits.WATER_L_PER_VOLUME_L_BASELINE, 2)
 
     assert limits["max_water_l"]["max"] == expected
     assert "NASA baseline" in limits["max_water_l"]["help"]
 
 
 def test_energy_limits_follow_baseline(monkeypatch):
-    monkeypatch.setattr(luxe, "load_waste_df", lambda: _waste_df())
+    monkeypatch.setattr(target_limits, "load_waste_df", lambda: _waste_df())
 
-    limits = luxe._compute_target_limits(_sample_presets())
+    limits = target_limits.compute_target_limits(_sample_presets())
 
     mass_q90 = np.quantile(_waste_df()["kg"], 0.9)
-    expected = round(mass_q90 * luxe._ENERGY_KWH_PER_KG_BASELINE, 2)
+    expected = round(mass_q90 * target_limits.ENERGY_KWH_PER_KG_BASELINE, 2)
 
     assert limits["max_energy_kwh"]["max"] == expected
     assert "NASA baseline" in limits["max_energy_kwh"]["help"]

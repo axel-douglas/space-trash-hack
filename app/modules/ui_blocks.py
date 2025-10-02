@@ -5,7 +5,7 @@ import json
 from contextlib import contextmanager
 from html import escape
 from pathlib import Path
-from typing import Any, Generator, Iterable, Iterator, Literal, Optional
+from typing import Any, Generator, Iterable, Iterator, Literal, Mapping, Optional
 from uuid import uuid4
 
 import streamlit as st
@@ -15,9 +15,6 @@ from streamlit.runtime.scriptrunner.script_runner import get_script_run_ctx
 from streamlit.runtime.state.safe_session_state import SafeSessionState
 
 from app import _bootstrap
-
-from . import luxe_components as luxe
-
 
 _THEME_HASH_KEY = "__rexai_theme_hash__"
 _INTERACTIONS_HASH_KEY = "__rexai_interactions_hash__"
@@ -356,12 +353,49 @@ def _render_hud() -> None:
         st.markdown('</div>', unsafe_allow_html=True)
 
 
-def card(title: str, body: str = "") -> None:
-    st.markdown(luxe.render_card(title, body), unsafe_allow_html=True)
+def card(title: str, body: str = "", *, render: bool = True) -> str:
+    """Render a simple Rex-AI card block."""
+
+    load_theme(show_hud=False)
+    title_html = f"<h3 class='rex-card__title'>{escape(title)}</h3>" if title else ""
+    body_html = f"<p class='rex-card__body'>{escape(body)}</p>" if body else ""
+    markup = (
+        "<article class='rex-card'>"
+        f"{title_html}{body_html}"
+        "</article>"
+    )
+    if render:
+        st.markdown(markup, unsafe_allow_html=True)
+    return markup
 
 
-def pill(label: str, kind: Literal["ok", "warn", "risk"] = "ok") -> None:
-    st.markdown(luxe.render_pill(label, kind), unsafe_allow_html=True)
+_PILL_KINDS = {
+    "ok": "Rango nominal",
+    "warn": "Monitoreo",
+    "risk": "Riesgo",
+}
+
+
+def pill(
+    label: str,
+    kind: Literal["ok", "warn", "risk"] = "ok",
+    *,
+    render: bool = True,
+) -> str:
+    """Render a lab-status pill using the base HUD palette."""
+
+    load_theme(show_hud=False)
+    tone = kind if kind in _PILL_KINDS else "ok"
+    markup = (
+        "<span class='rex-pill' "
+        f"data-kind='{tone}' "
+        f"title='{escape(_PILL_KINDS[tone])}'>"
+        f"{escape(label)}"
+        "</span>"
+    )
+    if render:
+        st.markdown(markup, unsafe_allow_html=True)
+    return markup
 
 
 def section(title: str, subtitle: str = "") -> None:
@@ -720,15 +754,50 @@ def pane_block(*, parent: DeltaGenerator | None = None) -> Generator[DeltaGenera
         yield block
 
 
-def chipline(labels: Iterable[str], *, parent: DeltaGenerator | None = None) -> None:
+def chipline(
+    labels: Iterable[str | Mapping[str, object]],
+    *,
+    parent: DeltaGenerator | None = None,
+    render: bool = True,
+) -> str:
     """Render a list of chips using the shared chipline styles."""
 
-    if not labels:
-        return
+    items = list(labels)
+    if not items:
+        return ""
 
-    pills = "".join(f'<span>{escape(label)}</span>' for label in labels)
-    target = parent if parent is not None else st
-    target.markdown(f"<div class=\"chipline\">{pills}</div>", unsafe_allow_html=True)
+    load_theme(show_hud=False)
+
+    html: list[str] = ["<div class=\"chipline\">"]
+    for item in items:
+        if isinstance(item, Mapping):
+            label_text = str(item.get("label", ""))
+            icon_text = item.get("icon")
+            tone = str(item.get("tone", "") or "").strip()
+        else:
+            label_text = str(item)
+            icon_text = None
+            tone = ""
+
+        tone_attr = f" data-tone='{escape(tone)}'" if tone else ""
+        icon_html = (
+            f"<span class='chipline__icon'>{escape(str(icon_text))}</span>"
+            if icon_text
+            else ""
+        )
+        html.append(
+            "<span class='chipline__chip'"
+            f"{tone_attr}>"
+            f"{icon_html}<span class='chipline__label'>{escape(label_text)}</span>"
+            "</span>"
+        )
+    html.append("</div>")
+    markup = "".join(html)
+
+    if render:
+        target = parent if parent is not None else st
+        target.markdown(markup, unsafe_allow_html=True)
+    return markup
 
 
 def badge_group(labels: Iterable[str], *, parent: DeltaGenerator | None = None) -> None:

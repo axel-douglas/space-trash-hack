@@ -199,15 +199,58 @@ button[kind="secondary"] {
   margin-bottom: var(--space-sm);
 }
 
-.chipline span {
+.chipline__chip {
   display: inline-flex;
   align-items: center;
+  gap: var(--space-xs);
   padding: 0.35rem 0.75rem;
   border-radius: 999px;
   font-size: 0.9rem;
   background: rgba(133, 165, 210, 0.15);
   border: 1px solid var(--color-border);
   color: var(--color-text);
+}
+
+.chipline__chip[data-tone="positive"] {
+  background: rgba(76, 214, 192, 0.12);
+  border-color: rgba(76, 214, 192, 0.4);
+  color: var(--color-success);
+}
+
+.chipline__chip[data-tone="warning"] {
+  background: rgba(255, 179, 71, 0.12);
+  border-color: rgba(255, 179, 71, 0.35);
+  color: var(--color-warn);
+}
+
+.chipline__chip[data-tone="danger"],
+.chipline__chip[data-tone="risk"] {
+  background: rgba(255, 111, 145, 0.12);
+  border-color: rgba(255, 111, 145, 0.35);
+  color: var(--color-risk);
+}
+
+.chipline__chip[data-tone="info"] {
+  background: rgba(43, 166, 255, 0.14);
+  border-color: rgba(43, 166, 255, 0.38);
+  color: var(--color-accent-soft);
+}
+
+.chipline__chip[data-tone="accent"] {
+  background: rgba(94, 234, 212, 0.12);
+  border-color: rgba(94, 234, 212, 0.38);
+  color: rgba(94, 234, 212, 0.95);
+}
+
+.chipline__icon {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.chipline__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
 }
 
 .badge-group {
@@ -246,6 +289,63 @@ button[kind="secondary"] {
   background: rgba(255, 111, 145, 0.12);
   color: var(--color-risk);
   border-color: rgba(255, 111, 145, 0.35);
+}
+
+.rex-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.85rem;
+  border-radius: 999px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+  border: 1px solid transparent;
+  background: rgba(17, 47, 82, 0.85);
+  color: var(--color-text);
+}
+
+.rex-pill[data-kind="ok"] {
+  border-color: rgba(76, 214, 192, 0.45);
+  color: var(--color-success);
+  background: rgba(76, 214, 192, 0.12);
+}
+
+.rex-pill[data-kind="warn"] {
+  border-color: rgba(255, 179, 71, 0.45);
+  color: var(--color-warn);
+  background: rgba(255, 179, 71, 0.12);
+}
+
+.rex-pill[data-kind="risk"] {
+  border-color: rgba(255, 111, 145, 0.45);
+  color: var(--color-risk);
+  background: rgba(255, 111, 145, 0.12);
+}
+
+.rex-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border);
+  background: rgba(17, 44, 82, 0.85);
+  box-shadow: var(--shadow-soft);
+}
+
+.rex-card__title {
+  margin: 0;
+  font-size: 1.15rem;
+  letter-spacing: 0.02em;
+}
+
+.rex-card__body {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.95rem;
 }
 
 .hr-micro {
