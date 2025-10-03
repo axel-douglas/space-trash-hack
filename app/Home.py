@@ -22,6 +22,7 @@ from app.modules import mission_overview
 from app.modules.ml_models import get_model_registry
 from app.modules.navigation import render_breadcrumbs, render_stepper, set_active_step
 from app.modules.ui_blocks import initialise_frontend, load_theme
+from app.modules.io import MissingDatasetError, format_missing_dataset_message
 
 
 def render_page() -> None:
@@ -40,7 +41,11 @@ def render_page() -> None:
 
     st.title("0) Mission Overview")
 
-    inventory_df = mission_overview.load_inventory_overview()
+    try:
+        inventory_df = mission_overview.load_inventory_overview()
+    except MissingDatasetError as error:
+        st.error(format_missing_dataset_message(error))
+        st.stop()
     mission_metrics = mission_overview.compute_mission_summary(inventory_df)
     mission_overview.render_mission_objective(mission_metrics)
 

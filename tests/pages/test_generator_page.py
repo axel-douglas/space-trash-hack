@@ -15,7 +15,12 @@ pytest.importorskip("streamlit")
 from pytest_streamlit import StreamlitRunner
 
 
-def _generator_page_app(inventory=None, *, force_control_expander_none: bool = False) -> None:
+def _generator_page_app(
+    inventory=None,
+    *,
+    force_control_expander_none: bool = False,
+    missing_dataset: bool = False,
+) -> None:
     import os
     import runpy
     import sys
@@ -95,7 +100,16 @@ def _generator_page_app(inventory=None, *, force_control_expander_none: bool = F
 
     original_waste_loader: Callable[[], pd.DataFrame] = io_module.load_waste_df
     inventory_df = inventory.copy() if isinstance(inventory, pd.DataFrame) else pd.DataFrame()
-    io_module.load_waste_df = lambda: inventory_df  # type: ignore[assignment]
+
+    if missing_dataset:
+        missing_path = Path("missing_waste.csv")
+
+        def _raise_missing() -> pd.DataFrame:
+            raise io_module.MissingDatasetError(missing_path)
+
+        io_module.load_waste_df = _raise_missing  # type: ignore[assignment]
+    else:
+        io_module.load_waste_df = lambda: inventory_df  # type: ignore[assignment]
 
     process_df = pd.DataFrame(
         [
@@ -326,4 +340,15 @@ def test_generator_page_renders_without_inventory(
     # Expect at least the generator header to render even with minimal data.
     headers = " ".join(block.body for block in app.header)
     assert "Generador asistido por IA" in headers
+
+
+def test_generator_page_shows_error_for_missing_dataset(
+    run_generator_page: Callable[..., object]
+) -> None:
+    app = run_generator_page(None, missing_dataset=True)
+
+    error_messages = " ".join(block.body for block in app.error)
+    assert "missing_waste.csv" in error_messages
+    assert "python scripts/download_datasets.py" in error_messages
+    assert not app.exception
 
