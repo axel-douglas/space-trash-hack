@@ -310,7 +310,7 @@ if external_profiles:
             elif density_value:
                 base = alt.Chart(
                     pd.DataFrame({"density": polymer_density_distribution})
-                ).mark_bar(color="#22d3ee", opacity=0.55).encode(
+                ).mark_bar(color="#22d3ee", opacity=0.85).encode(
                     x=alt.X("density:Q", bin=alt.Bin(maxbins=18), title="Densidad inventario (g/cm³)"),
                     y=alt.Y("count()", title="Ítems"),
                 )
@@ -326,7 +326,7 @@ if external_profiles:
             elif tensile_value:
                 base = alt.Chart(
                     pd.DataFrame({"tensile": polymer_tensile_distribution})
-                ).mark_bar(color="#f472b6", opacity=0.55).encode(
+                ).mark_bar(color="#f472b6", opacity=0.85).encode(
                     x=alt.X("tensile:Q", bin=alt.Bin(maxbins=18), title="σₜ inventario (MPa)"),
                     y=alt.Y("count()", title="Ítems"),
                 )
@@ -361,7 +361,7 @@ if external_profiles:
             elif tensile_value:
                 base = alt.Chart(
                     pd.DataFrame({"tensile": aluminium_tensile_distribution})
-                ).mark_bar(color="#f97316", opacity=0.55).encode(
+                ).mark_bar(color="#f97316", opacity=0.85).encode(
                     x=alt.X("tensile:Q", bin=alt.Bin(maxbins=18), title="σₜ inventario (MPa)"),
                     y=alt.Y("count()", title="Ítems"),
                 )
@@ -377,7 +377,7 @@ if external_profiles:
             elif yield_value:
                 base = alt.Chart(
                     pd.DataFrame({"yield_strength": aluminium_yield_distribution})
-                ).mark_bar(color="#fb923c", opacity=0.55).encode(
+                ).mark_bar(color="#fb923c", opacity=0.85).encode(
                     x=alt.X("yield_strength:Q", bin=alt.Bin(maxbins=18), title="σᵧ inventario (MPa)"),
                     y=alt.Y("count()", title="Ítems"),
                 )
@@ -519,7 +519,7 @@ with st.expander("🛰️ Contexto y trazabilidad", expanded=True):
                 if not others_curve.empty:
                     base_chart = (
                         alt.Chart(others_curve)
-                        .mark_line(color="#64748b", opacity=0.35)
+                        .mark_line(color="#94a3b8", opacity=0.7)
                         .encode(
                             x=alt.X("wavelength_nm:Q", title="Longitud de onda (nm)"),
                             y=alt.Y("reflectance:Q", title="Reflectancia"),
