@@ -67,6 +67,7 @@ def _base_css_path() -> Path:
     return _static_path(Path("styles") / "base.css")
 
 
+@lru_cache(maxsize=1)
 def _read_css_bundle() -> str:
     try:
         return _base_css_path().read_text(encoding="utf-8")
@@ -103,6 +104,11 @@ def initialise_frontend(*, force: bool = False) -> None:
         try:
             st.session_state.pop(_THEME_HASH_KEY, None)
         except Exception:  # pragma: no cover - defensive guard for early init
+            pass
+
+        try:
+            _read_css_bundle.cache_clear()
+        except AttributeError:  # pragma: no cover - safeguard if decorator removed
             pass
 
     load_theme()
