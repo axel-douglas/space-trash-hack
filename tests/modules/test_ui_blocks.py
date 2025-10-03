@@ -27,6 +27,26 @@ def test_pill_serialises_extended_tones(kind, expected_title):
     assert f"title='{expected_title}'" in html
 
 
+def test_initialise_frontend_force_resets_theme_cache(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.modules import ui_blocks
+
+    state = {ui_blocks._THEME_HASH_KEY: "cached"}
+    calls: list[str] = []
+
+    def fake_load_theme() -> None:
+        assert ui_blocks._THEME_HASH_KEY not in state
+        calls.append("load")
+
+    monkeypatch.setattr(ui_blocks, "load_theme", fake_load_theme)
+    monkeypatch.setattr(ui_blocks, "apply_global_visual_theme", lambda: None)
+    monkeypatch.setattr(ui_blocks, "st", SimpleNamespace(session_state=state))
+
+    ui_blocks.initialise_frontend(force=True)
+
+    assert calls == ["load"]
+    assert ui_blocks._THEME_HASH_KEY not in state
 def test_logo_markup_reuses_cached_svg(monkeypatch, tmp_path):
     from app.modules import ui_blocks
 

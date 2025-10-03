@@ -38,7 +38,6 @@ from app.modules.ui_blocks import (
     initialise_frontend,
     layout_block,
     layout_stack,
-    load_theme,
     micro_divider,
     pill,
     render_brand_header,
@@ -49,8 +48,6 @@ st.set_page_config(page_title="Rex-AI • Generador", page_icon="🤖", layout="
 initialise_frontend()
 
 current_step = set_active_step("generator")
-
-load_theme()
 
 render_brand_header()
 

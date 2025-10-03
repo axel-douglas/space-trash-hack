@@ -32,7 +32,6 @@ from app.modules.schema import (
 from app.modules.ui_blocks import (
     initialise_frontend,
     layout_block,
-    load_theme,
     render_brand_header,
 )
 
@@ -40,8 +39,6 @@ st.set_page_config(page_title="Rex-AI • Resultados", page_icon="📊", layout=
 initialise_frontend()
 
 current_step = set_active_step("results")
-
-load_theme()
 
 render_brand_header()
 

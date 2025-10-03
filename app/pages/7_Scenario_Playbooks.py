@@ -14,7 +14,6 @@ from app.modules.scenarios import PLAYBOOKS
 from app.modules.ui_blocks import (
     initialise_frontend,
     layout_stack,
-    load_theme,
     render_brand_header,
 )
 
@@ -22,8 +21,6 @@ st.set_page_config(page_title="Scenario Playbooks", page_icon="📚", layout="wi
 initialise_frontend()
 
 current_step = set_active_step("playbooks")
-
-load_theme()
 
 render_brand_header()
 
