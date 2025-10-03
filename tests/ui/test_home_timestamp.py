@@ -6,7 +6,7 @@ import pytest
 
 from app.modules.paths import DATA_ROOT
 
-from tests.ui.test_mission_overview_page import _run_home_app, _load_inventory_fixture
+from tests.ui.test_home_dashboard import _run_home_app, _load_inventory_fixture
 
 
 def test_home_page_shows_last_modified_caption(
