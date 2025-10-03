@@ -18,7 +18,6 @@ in environments where the extras are installed.
 
 from __future__ import annotations
 
-import atexit
 import importlib
 import importlib.util
 import itertools
@@ -213,9 +212,6 @@ _REGOLITH_FEATURE_NAMES = tuple(name for name, _ in _REGOLITH_FEATURE_ITEMS)
 _REGOLITH_FEATURE_VALUES = np.asarray([float(value) for _, value in _REGOLITH_FEATURE_ITEMS], dtype=float)
 
 
-_INFERENCE_LOG_MANAGER = logging_utils._INFERENCE_LOG_MANAGER
-
-
 def _prepare_inference_event(
     input_features: Dict[str, Any],
     prediction: Dict[str, Any] | None,
@@ -254,11 +250,7 @@ def append_inference_log(
 def _close_inference_log_writer() -> None:
     """Close the cached Parquet writer used for inference logs."""
 
-    logging_utils._INFERENCE_LOG_MANAGER.close()
-
-
-if _load_pyarrow_namespace() is not None:  # pragma: no branch - guard for optional dependency
-    atexit.register(logging_utils._INFERENCE_LOG_MANAGER.close)
+    logging_utils.shutdown_inference_logging()
 
 _COMPOSITION_DENSITY_MAP = {
     "Aluminum_pct": 2700.0,

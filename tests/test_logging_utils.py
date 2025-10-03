@@ -12,10 +12,7 @@ from app.modules import logging_utils
 def test_append_inference_log_uses_cached_writer(monkeypatch, tmp_path):
     """Ensure sequential appends reuse the same Parquet writer without reads."""
 
-    logging_utils._INFERENCE_LOG_MANAGER.close()
-
-    manager = logging_utils._InferenceLogWriterManager()
-    monkeypatch.setattr(logging_utils, "_INFERENCE_LOG_MANAGER", manager)
+    logging_utils.shutdown_inference_logging()
     monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
 
     created_paths: list[Path] = []
@@ -80,6 +77,9 @@ def test_append_inference_log_uses_cached_writer(monkeypatch, tmp_path):
 
     monkeypatch.setattr(logging_utils, "prepare_inference_event", fake_prepare)
 
+    manager = logging_utils.get_inference_log_manager()
+    assert manager is logging_utils.get_inference_log_manager()
+
     logging_utils.append_inference_log({}, {}, {}, None)
     logging_utils.append_inference_log({}, {}, {}, None)
 
@@ -89,14 +89,11 @@ def test_append_inference_log_uses_cached_writer(monkeypatch, tmp_path):
     assert created_paths == [expected_path]
     assert write_counts == [1, 2]
 
-    manager.close()
+    logging_utils.shutdown_inference_logging()
 
 
 def test_configure_inference_parquet_writer_passes_options(monkeypatch, tmp_path):
-    logging_utils._INFERENCE_LOG_MANAGER.close()
-
-    manager = logging_utils._InferenceLogWriterManager()
-    monkeypatch.setattr(logging_utils, "_INFERENCE_LOG_MANAGER", manager)
+    logging_utils.shutdown_inference_logging()
     monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
 
     captured_kwargs: list[Dict[str, Any]] = []
@@ -121,7 +118,7 @@ def test_configure_inference_parquet_writer_passes_options(monkeypatch, tmp_path
     assert captured_kwargs[-1]["use_dictionary"] is True
     assert captured_kwargs[-1]["version"] == "2.6"
 
-    manager.close()
+    logging_utils.shutdown_inference_logging()
     captured_kwargs.clear()
 
     logging_utils.configure_inference_parquet_writer(
@@ -136,4 +133,4 @@ def test_configure_inference_parquet_writer_passes_options(monkeypatch, tmp_path
     assert captured_kwargs[-1]["version"] == "2.6"
 
     logging_utils.configure_inference_parquet_writer()
-    manager.close()
+    logging_utils.shutdown_inference_logging()
