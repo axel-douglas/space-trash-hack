@@ -16,7 +16,7 @@ import streamlit as st
 from app.modules.io import load_targets
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.target_limits import compute_target_limits
-from app.modules.ui_blocks import initialise_frontend, load_theme
+from app.modules.ui_blocks import initialise_frontend, load_theme, render_brand_header
 
 # ⚠️ Debe ser la PRIMERA llamada de Streamlit en la página
 st.set_page_config(page_title="Objetivo", page_icon="🎯", layout="wide")
@@ -25,6 +25,8 @@ initialise_frontend()
 current_step = set_active_step("target")
 
 load_theme()
+
+render_brand_header()
 
 render_breadcrumbs(current_step)
 
