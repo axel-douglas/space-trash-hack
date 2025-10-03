@@ -225,27 +225,15 @@ table {
 
 .mission-brand-header__tagline {
   display: block;
-  width: 100%;
-  margin: var(--mission-space-2xs) auto 0;
-  font-size: 0.68rem;
-  font-weight: 600;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--mission-color-muted);
   width: min(180px, 45vw);
-  height: auto;
-  margin: 0;
-  filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.35));
-}
-
-.mission-brand-header__tagline {
-  margin: var(--mission-space-2xs) 0 0;
+  margin: var(--mission-space-2xs) auto 0;
   font-size: 0.82rem;
   font-weight: 600;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--mission-color-surface);
+  color: var(--mission-color-muted);
   opacity: 0.9;
+  filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.35));
 }
 
 :focus-visible {
