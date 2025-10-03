@@ -1,15 +1,10 @@
-from pathlib import Path
-import sys
+from _entrypoint_utils import ensure_repo_root_on_path
 
-if __package__ in {None, ""}:
-    project_root = Path(__file__).resolve().parents[1]
-    project_root_str = str(project_root)
-    if project_root_str not in sys.path:
-        sys.path.insert(0, project_root_str)
+ensure_repo_root_on_path(__file__)
 
 from app.bootstrap import ensure_streamlit_entrypoint
 
-_PROJECT_ROOT = ensure_streamlit_entrypoint(__file__)
+ensure_streamlit_entrypoint(__file__)
 
 import numpy as np
 import streamlit as st
@@ -20,7 +15,7 @@ from streamlit_sortables import sort_items
 
 from app.modules.explain import compare_table, score_breakdown
 from app.modules.navigation import render_breadcrumbs, set_active_step
-from app.modules.ui_blocks import initialise_frontend, load_theme, pill, render_brand_header
+from app.modules.ui_blocks import initialise_frontend, pill, render_brand_header
 from app.modules.io import (
     MissingDatasetError,
     format_missing_dataset_message,
@@ -192,8 +187,6 @@ def _format_reference_value(key: str, value: float) -> str:
 st.set_page_config(page_title="Comparar & Explicar", page_icon="🧪", layout="wide")
 initialise_frontend()
 current_step = set_active_step("compare")
-
-load_theme()
 
 render_brand_header()
 
