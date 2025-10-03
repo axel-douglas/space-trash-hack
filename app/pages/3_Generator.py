@@ -293,7 +293,7 @@ def _render_reference_distribution(
     histogram_color: str,
     reference_color: str,
     empty_message: str,
-    opacity: float = 0.55,
+    opacity: float = 0.85,
 ) -> None:
     if series.empty:
         st.info(empty_message)

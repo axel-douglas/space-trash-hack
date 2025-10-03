@@ -109,6 +109,116 @@ button,
 .stButton > button,
 button[kind="secondary"] {
   border-radius: var(--mission-radius-md);
+  border: var(--mission-line-weight) solid var(--mission-color-accent);
+  background-color: var(--mission-color-accent);
+  color: var(--mission-color-surface);
+  font-weight: 600;
+  padding: 0.65rem 1.25rem;
+  box-shadow: 0 2px 6px rgba(11, 61, 145, 0.25);
+  transition: background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+button:hover,
+.stButton > button:hover,
+button[kind="secondary"]:hover,
+button:focus-visible,
+.stButton > button:focus-visible,
+button[kind="secondary"]:focus-visible {
+  background-color: var(--mission-color-accent-soft);
+  border-color: var(--mission-color-accent-soft);
+  color: var(--mission-color-surface);
+}
+
+button:focus-visible,
+.stButton > button:focus-visible,
+button[kind="secondary"]:focus-visible {
+  outline: 3px solid var(--mission-color-accent-soft);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 3px rgba(11, 61, 145, 0.2);
+}
+
+button:disabled,
+.stButton > button:disabled,
+button[kind="secondary"]:disabled {
+  background-color: var(--mission-color-border);
+  border-color: var(--mission-color-border-strong);
+  color: var(--mission-color-muted);
+  box-shadow: none;
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+button[kind="secondary"] {
+  background-color: var(--mission-color-surface);
+  border-color: var(--mission-color-border-strong);
+  color: var(--mission-color-text);
+  box-shadow: none;
+}
+
+button[kind="secondary"]:hover,
+button[kind="secondary"]:focus-visible {
+  background-color: var(--mission-color-panel);
+  border-color: var(--mission-color-border-strong);
+  color: var(--mission-color-text);
+}
+
+button[kind="secondary"]:disabled {
+  background-color: var(--mission-color-panel);
+  color: var(--mission-color-muted);
+}
+
+input,
+textarea,
+select,
+.stTextInput input,
+.stTextArea textarea,
+.stNumberInput input,
+.stDateInput input,
+.stTimeInput input,
+.stSelectbox [data-baseweb="select"] > div,
+.stMultiSelect [data-baseweb="select"] > div,
+[data-baseweb="input"] input {
+  color: var(--mission-color-text);
+  background-color: var(--mission-color-surface);
+  border: var(--mission-line-weight) solid var(--mission-color-border-strong);
+  border-radius: var(--mission-radius-md);
+  box-shadow: none;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+input:focus,
+textarea:focus,
+select:focus,
+.stTextInput input:focus,
+.stTextArea textarea:focus,
+.stNumberInput input:focus,
+.stDateInput input:focus,
+.stTimeInput input:focus,
+.stSelectbox [data-baseweb="select"] > div:focus,
+.stSelectbox [data-baseweb="select"] > div:focus-within,
+.stMultiSelect [data-baseweb="select"] > div:focus,
+.stMultiSelect [data-baseweb="select"] > div:focus-within,
+[data-baseweb="input"] input:focus {
+  border-color: var(--mission-color-accent);
+  box-shadow: 0 0 0 3px rgba(11, 61, 145, 0.18);
+  outline: none;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--mission-color-muted);
+  opacity: 1;
+}
+
+[data-testid="stAlert"] {
+  border: var(--mission-line-weight) solid var(--mission-color-border-strong);
+  background-color: var(--mission-color-surface);
+  color: var(--mission-color-text);
+}
+
+[data-testid="stAlert"] p {
+  color: inherit;
 }
 
 hr {
