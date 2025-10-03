@@ -1,59 +1,57 @@
 /*
- * NASA laboratory minimal theme tokens for Streamlit pages.
- * The variables favour clear contrast, high legibility, and restrained chrome
- * so that analytical surfaces feel like mission-control workspaces.
+ * NASA instrumentation-inspired base tokens and minimal resets.
+ * The palette emphasises neutral control-room surfaces with a single
+ * operations blue accent so analytical views stay focused and legible.
  */
 
 :root {
-  --lab-color-canvas: #f4f7fb;
-  --lab-color-surface: #ffffff;
-  --lab-color-layer-soft: #ecf1f9;
-  --lab-color-layer-strong: #dbe5f3;
-  --lab-color-border: #c3ccdd;
-  --lab-color-border-strong: #9da9bf;
-  --lab-color-divider: #d9e1ee;
-  --lab-color-text: #0b2142;
-  --lab-color-muted: #51607a;
-  --lab-color-accent: #224a91;
-  --lab-color-accent-soft: #5578c6;
-  --lab-color-positive: #1b6f5b;
-  --lab-color-positive-soft: #d5ede6;
-  --lab-color-warning: #b75e10;
-  --lab-color-warning-soft: #f4dfc8;
-  --lab-color-critical: #8e2430;
-  --lab-color-critical-soft: #f4d8dd;
+  --mission-color-canvas: #f5f7fa;
+  --mission-color-surface: #ffffff;
+  --mission-color-panel: #e1e6ef;
+  --mission-color-border: #b7c2d3;
+  --mission-color-border-strong: #7f8ba0;
+  --mission-color-divider: #cbd5e1;
+  --mission-color-text: #0b1526;
+  --mission-color-muted: #465164;
+  --mission-color-accent: #0b3d91;
+  --mission-color-accent-soft: #4d6fb8;
+  --mission-color-positive: #19624d;
+  --mission-color-positive-soft: #c7e5d9;
+  --mission-color-warning: #b35c1a;
+  --mission-color-warning-soft: #f2dfcd;
+  --mission-color-critical: #8c2f3a;
+  --mission-color-critical-soft: #f2d3da;
 
-  --lab-font-sans: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
-  --lab-font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
+  --mission-font-sans: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --mission-font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
 
-  --lab-space-1: 0.25rem;
-  --lab-space-2: 0.5rem;
-  --lab-space-3: 0.75rem;
-  --lab-space-4: 1rem;
-  --lab-space-5: 1.5rem;
-  --lab-space-6: 2.25rem;
+  --mission-space-2xs: 0.25rem;
+  --mission-space-xs: 0.5rem;
+  --mission-space-sm: 0.75rem;
+  --mission-space-md: 1rem;
+  --mission-space-lg: 1.5rem;
+  --mission-space-xl: 2.25rem;
 
-  --lab-radius-1: 0.25rem;
-  --lab-radius-2: 0.5rem;
+  --mission-radius-sm: 0.25rem;
+  --mission-radius-md: 0.5rem;
 
-  --lab-line-weight: 1px;
-  --lab-layout-max-width: 1120px;
+  --mission-line-weight: 1px;
+  --mission-layout-max-width: 1120px;
 }
 
 body,
 .stApp {
   margin: 0;
   min-height: 100vh;
-  background-color: var(--lab-color-canvas);
-  color: var(--lab-color-text);
-  font-family: var(--lab-font-sans);
-  line-height: 1.5;
+  background-color: var(--mission-color-canvas);
+  color: var(--mission-color-text);
+  font-family: var(--mission-font-sans);
+  line-height: 1.55;
 }
 
 main .block-container {
-  max-width: var(--lab-layout-max-width);
-  padding-top: var(--lab-space-6);
-  padding-bottom: var(--lab-space-6);
+  max-width: var(--mission-layout-max-width);
+  padding-block: var(--mission-space-xl);
 }
 
 h1,
@@ -62,10 +60,10 @@ h3,
 h4,
 h5,
 h6 {
-  color: var(--lab-color-text);
+  color: var(--mission-color-text);
   font-weight: 600;
   letter-spacing: 0.01em;
-  margin-block: var(--lab-space-4) var(--lab-space-2);
+  margin-block: var(--mission-space-md) var(--mission-space-xs);
 }
 
 p,
@@ -86,70 +84,61 @@ small,
 caption,
 .stMarkdown small {
   font-size: 0.85rem;
-  color: var(--lab-color-muted);
+  color: var(--mission-color-muted);
 }
 
 a {
-  color: var(--lab-color-accent);
+  color: var(--mission-color-accent);
   text-decoration-thickness: 2px;
   text-underline-offset: 4px;
 }
 
 a:hover,
 a:focus {
-  color: var(--lab-color-accent-soft);
+  color: var(--mission-color-accent-soft);
 }
 
 code,
 pre,
 .stCode {
-  font-family: var(--lab-font-mono);
-  color: var(--lab-color-accent);
+  font-family: var(--mission-font-mono);
+  color: var(--mission-color-accent);
 }
 
 button,
 .stButton > button,
 button[kind="secondary"] {
-  border-radius: var(--lab-radius-2);
-}
-
-table {
-  border-color: var(--lab-color-divider);
+  border-radius: var(--mission-radius-md);
 }
 
 hr {
   border: 0;
   height: 1px;
-  background-color: var(--lab-color-divider);
-  margin-block: var(--lab-space-5);
+  background-color: var(--mission-color-divider);
+  margin-block: var(--mission-space-lg);
 }
 
-[data-lab-pill] {
-  --lab-pill-bg: var(--lab-color-positive-soft);
-  --lab-pill-fg: var(--lab-color-positive);
+table {
+  border-color: var(--mission-color-divider);
 }
 
-[data-lab-pill][data-kind="ok"] {
-  --lab-pill-bg: var(--lab-color-positive-soft);
-  --lab-pill-fg: var(--lab-color-positive);
+[data-testid="stMetricValue"] {
+  color: var(--mission-color-text);
+  font-weight: 600;
 }
 
-[data-lab-pill][data-kind="warn"] {
-  --lab-pill-bg: var(--lab-color-warning-soft);
-  --lab-pill-fg: var(--lab-color-warning);
+[data-testid="stMetricLabel"] {
+  color: var(--mission-color-muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
-[data-lab-pill][data-kind="risk"] {
-  --lab-pill-bg: var(--lab-color-critical-soft);
-  --lab-pill-fg: var(--lab-color-critical);
+[data-testid="stMetricDelta"] {
+  font-weight: 600;
 }
 
-[data-lab-pill][data-kind="info"] {
-  --lab-pill-bg: var(--lab-color-layer-soft);
-  --lab-pill-fg: var(--lab-color-accent);
-}
-
-[data-lab-pill][data-kind="accent"] {
-  --lab-pill-bg: var(--lab-color-accent-soft);
-  --lab-pill-fg: var(--lab-color-accent);
+:focus-visible {
+  outline: 2px solid var(--mission-color-accent);
+  outline-offset: 2px;
 }

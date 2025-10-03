@@ -4,7 +4,7 @@ import hashlib
 from contextlib import contextmanager
 from html import escape
 from pathlib import Path
-from typing import Any, Generator, Iterable, Iterator, Literal, Mapping, Optional
+from typing import Any, Generator, Iterable, Literal, Mapping, Optional
 
 import streamlit as st
 from streamlit.delta_generator import DeltaGenerator
@@ -12,31 +12,31 @@ from streamlit.delta_generator import DeltaGenerator
 from app.modules.visual_theme import apply_global_visual_theme
 
 _LAYOUT_STYLE_MAP: dict[str, str] = {
-    "layout-stack": "display:flex; flex-direction:column; gap: var(--lab-space-4);",
+    "layout-stack": "display:flex; flex-direction:column; gap: var(--mission-space-md);",
     "layout-grid": (
-        "display:grid; gap: var(--lab-space-4); align-items:start; "
-        "width:min(100%, var(--lab-layout-max-width)); margin-inline:auto;"
+        "display:grid; gap: var(--mission-space-md); align-items:start; "
+        "width:min(100%, var(--mission-layout-max-width)); margin-inline:auto;"
     ),
     "layout-grid--dual": "grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));",
     "layout-grid--flow": "grid-auto-flow: row;",
-    "depth-stack": "display:flex; flex-direction:column; gap: var(--lab-space-3);",
+    "depth-stack": "display:flex; flex-direction:column; gap: var(--mission-space-sm);",
     "side-panel": (
-        "display:flex; flex-direction:column; gap: var(--lab-space-3); "
-        "background-color: var(--lab-color-surface); "
-        "border: var(--lab-line-weight) solid var(--lab-color-border); "
-        "border-radius: var(--lab-radius-2); padding: var(--lab-space-5); "
-        "color: var(--lab-color-text);"
+        "display:flex; flex-direction:column; gap: var(--mission-space-sm); "
+        "background-color: var(--mission-color-surface); "
+        "border: var(--mission-line-weight) solid var(--mission-color-border); "
+        "border-radius: var(--mission-radius-md); padding: var(--mission-space-lg); "
+        "color: var(--mission-color-text);"
     ),
     "pane": (
-        "display:flex; flex-direction:column; gap: var(--lab-space-3); "
-        "background-color: var(--lab-color-surface); "
-        "border: var(--lab-line-weight) solid var(--lab-color-border); "
-        "border-radius: var(--lab-radius-2); padding: var(--lab-space-5); "
-        "color: var(--lab-color-text);"
+        "display:flex; flex-direction:column; gap: var(--mission-space-sm); "
+        "background-color: var(--mission-color-surface); "
+        "border: var(--mission-line-weight) solid var(--mission-color-border); "
+        "border-radius: var(--mission-radius-md); padding: var(--mission-space-lg); "
+        "color: var(--mission-color-text);"
     ),
     "layer-shadow": (
-        "background-color: var(--lab-color-layer-soft); "
-        "border-color: var(--lab-color-border-strong);"
+        "background-color: var(--mission-color-panel); "
+        "border-color: var(--mission-color-border-strong);"
     ),
     "fade-in": "",
     "fade-in-delayed": "",
@@ -108,21 +108,27 @@ def use_token(name: str, fallback: Optional[str] = None) -> str:
 
 
 def card(title: str, body: str = "", *, render: bool = True) -> str:
-    """Render a simple Rex-AI card block."""
+    """Render a minimalist mission panel."""
 
     load_theme(show_hud=False)
     base_style = (
-        "display:flex; flex-direction:column; gap: var(--lab-space-2); "
-        "background-color: var(--lab-color-surface); "
-        "border: var(--lab-line-weight) solid var(--lab-color-border); "
-        "border-radius: var(--lab-radius-2); "
-        "padding: var(--lab-space-5);"
+        "display:flex; flex-direction:column; gap: var(--mission-space-xs); "
+        "background-color: var(--mission-color-surface); "
+        "border: var(--mission-line-weight) solid var(--mission-color-border); "
+        "border-radius: var(--mission-radius-md); "
+        "padding: var(--mission-space-lg);"
     )
-    title_style = "margin:0; font-size:1.1rem; color: var(--lab-color-text); letter-spacing:0.01em;"
-    body_style = "margin:0; color: var(--lab-color-muted); font-size:0.95rem;"
+    title_style = (
+        "margin:0; font-size:1.1rem; color: var(--mission-color-text); "
+        "letter-spacing:0.01em;"
+    )
+    body_style = "margin:0; color: var(--mission-color-muted); font-size:0.95rem;"
     title_html = f"<h3 style=\"{title_style}\">{escape(title)}</h3>" if title else ""
     body_html = f"<p style=\"{body_style}\">{escape(body)}</p>" if body else ""
-    markup = f"<article data-lab-card style=\"{base_style}\">{title_html}{body_html}</article>"
+    markup = (
+        f"<article data-mission-card data-lab-card style=\"{base_style}\">"
+        f"{title_html}{body_html}</article>"
+    )
     if render:
         st.markdown(markup, unsafe_allow_html=True)
     return markup
@@ -137,22 +143,22 @@ _PILL_KINDS = {
 }
 
 _PILL_COLORS: dict[str, tuple[str, str]] = {
-    "ok": ("var(--lab-color-positive-soft)", "var(--lab-color-positive)"),
-    "warn": ("var(--lab-color-warning-soft)", "var(--lab-color-warning)"),
-    "risk": ("var(--lab-color-critical-soft)", "var(--lab-color-critical)"),
-    "info": ("var(--lab-color-layer-soft)", "var(--lab-color-accent)"),
-    "accent": ("var(--lab-color-accent-soft)", "var(--lab-color-accent)"),
+    "ok": ("var(--mission-color-positive-soft)", "var(--mission-color-positive)"),
+    "warn": ("var(--mission-color-warning-soft)", "var(--mission-color-warning)"),
+    "risk": ("var(--mission-color-critical-soft)", "var(--mission-color-critical)"),
+    "info": ("var(--mission-color-panel)", "var(--mission-color-accent)"),
+    "accent": ("var(--mission-color-accent-soft)", "var(--mission-color-accent)"),
 }
 
 _CHIP_TONES: dict[str, tuple[str, str]] = {
-    "positive": ("var(--lab-color-positive-soft)", "var(--lab-color-positive)"),
-    "ok": ("var(--lab-color-positive-soft)", "var(--lab-color-positive)"),
-    "warning": ("var(--lab-color-warning-soft)", "var(--lab-color-warning)"),
-    "warn": ("var(--lab-color-warning-soft)", "var(--lab-color-warning)"),
-    "danger": ("var(--lab-color-critical-soft)", "var(--lab-color-critical)"),
-    "risk": ("var(--lab-color-critical-soft)", "var(--lab-color-critical)"),
-    "info": ("var(--lab-color-layer-soft)", "var(--lab-color-accent)"),
-    "accent": ("var(--lab-color-accent-soft)", "var(--lab-color-accent)"),
+    "positive": ("var(--mission-color-positive-soft)", "var(--mission-color-positive)"),
+    "ok": ("var(--mission-color-positive-soft)", "var(--mission-color-positive)"),
+    "warning": ("var(--mission-color-warning-soft)", "var(--mission-color-warning)"),
+    "warn": ("var(--mission-color-warning-soft)", "var(--mission-color-warning)"),
+    "danger": ("var(--mission-color-critical-soft)", "var(--mission-color-critical)"),
+    "risk": ("var(--mission-color-critical-soft)", "var(--mission-color-critical)"),
+    "info": ("var(--mission-color-panel)", "var(--mission-color-accent)"),
+    "accent": ("var(--mission-color-accent-soft)", "var(--mission-color-accent)"),
 }
 
 
@@ -162,26 +168,26 @@ def pill(
     *,
     render: bool = True,
 ) -> str:
-    """Render a lab-status pill using the base mission palette."""
+    """Render a mission-status pill using the base palette."""
 
     load_theme(show_hud=False)
     tone = kind if kind in _PILL_KINDS else "ok"
     bg_color, fg_color = _PILL_COLORS.get(tone, _PILL_COLORS["ok"])
     base_style = (
         "display:inline-flex; align-items:center; justify-content:center; "
-        "gap: var(--lab-space-1); padding: 0.35rem 0.9rem; border-radius: 999px; "
+        "gap: var(--mission-space-2xs); padding: 0.35rem 0.9rem; border-radius: 999px; "
         "font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; "
         "font-size: 0.78rem;"
     )
     style = (
-        f"{base_style} background-color: var(--lab-pill-bg, {bg_color}); "
-        f"color: var(--lab-pill-fg, {fg_color}); "
-        f"border: var(--lab-line-weight) solid var(--lab-pill-fg, {fg_color});"
+        f"{base_style} background-color: var(--mission-pill-bg, {bg_color}); "
+        f"color: var(--mission-pill-fg, {fg_color}); "
+        f"border: var(--mission-line-weight) solid var(--mission-pill-fg, {fg_color});"
     )
     title_attr = escape(_PILL_KINDS[tone])
     tone_attr = escape(tone)
     markup = (
-        f"<span data-lab-pill='{tone}' data-kind='{tone_attr}' "
+        f"<span data-mission-pill='{tone}' data-lab-pill='{tone}' data-kind='{tone_attr}' "
         f"style=\"{style}\" title=\"{title_attr}\">"
         f"{escape(label)}"
         "</span>"
@@ -346,10 +352,15 @@ def layout_block(
             style_bits.append(mapped)
 
     if not style_bits:
-        style_bits.append("display:flex; flex-direction:column; gap: var(--lab-space-3);")
+        style_bits.append("display:flex; flex-direction:column; gap: var(--mission-space-sm);")
 
     style_attr = " ".join(style_bits)
-    data_attr = f' data-lab-classes="{escape(" ".join(tokens))}"' if tokens else ""
+    data_attr = ""
+    if tokens:
+        token_attr = escape(" ".join(tokens))
+        data_attr = (
+            f' data-mission-classes="{token_attr}" data-lab-classes="{token_attr}"'
+        )
 
     target = parent if parent is not None else st.container()
     target.markdown(
@@ -394,17 +405,17 @@ def chipline(
     load_theme(show_hud=False)
 
     row_style = (
-        "display:flex; flex-wrap:wrap; align-items:center; gap: var(--lab-space-2); "
-        "margin-block: var(--lab-space-2);"
+        "display:flex; flex-wrap:wrap; align-items:center; gap: var(--mission-space-xs); "
+        "margin-block: var(--mission-space-xs);"
     )
     chip_base = (
-        "display:inline-flex; align-items:center; gap: var(--lab-space-1); "
+        "display:inline-flex; align-items:center; gap: var(--mission-space-2xs); "
         "padding: 0.3rem 0.75rem; border-radius: 999px; font-size: 0.9rem; "
-        "border: var(--lab-line-weight) solid var(--lab-color-border); "
-        "background-color: var(--lab-color-layer-soft); color: var(--lab-color-text);"
+        "border: var(--mission-line-weight) solid var(--mission-color-border); "
+        "background-color: var(--mission-color-panel); color: var(--mission-color-text);"
     )
     icon_style = "font-size:1rem; line-height:1;"
-    label_style = "display:inline-flex; align-items:center; gap: var(--lab-space-1);"
+    label_style = "display:inline-flex; align-items:center; gap: var(--mission-space-2xs);"
 
     html: list[str] = [f"<div style=\"{row_style}\">"]
     for item in items:
@@ -419,7 +430,7 @@ def chipline(
 
         tone_key = tone.lower()
         bg_color, fg_color = _CHIP_TONES.get(
-            tone_key, ("var(--lab-color-layer-soft)", "var(--lab-color-text)")
+            tone_key, ("var(--mission-color-panel)", "var(--mission-color-text)")
         )
         chip_style = (
             f"{chip_base} background-color: {bg_color}; color: {fg_color}; "
@@ -432,7 +443,10 @@ def chipline(
             if icon_text
             else ""
         )
-        tone_attr = f" data-lab-chip-tone='{escape(tone_key)}'" if tone_key else ""
+        tone_attr = (
+            f" data-mission-chip-tone='{escape(tone_key)}'"
+            f" data-lab-chip-tone='{escape(tone_key)}'"
+        ) if tone_key else ""
         html.append(
             f"<span{tone_attr} style=\"{chip_style}\">"
             f"{icon_html}<span style=\"{label_style}\">{escape(label_text)}</span>"
@@ -451,12 +465,12 @@ def badge_group(labels: Iterable[str], *, parent: DeltaGenerator | None = None) 
     """Render pill badges inside the shared badge group wrapper."""
 
     palette_cycle = [
-        ("var(--lab-color-positive-soft)", "var(--lab-color-positive)"),
-        ("var(--lab-color-warning-soft)", "var(--lab-color-warning)"),
-        ("var(--lab-color-critical-soft)", "var(--lab-color-critical)"),
+        ("var(--mission-color-positive-soft)", "var(--mission-color-positive)"),
+        ("var(--mission-color-warning-soft)", "var(--mission-color-warning)"),
+        ("var(--mission-color-critical-soft)", "var(--mission-color-critical)"),
     ]
     row_style = (
-        "display:flex; flex-wrap:wrap; gap: var(--lab-space-2); margin-block: var(--lab-space-2);"
+        "display:flex; flex-wrap:wrap; gap: var(--mission-space-xs); margin-block: var(--mission-space-xs);"
     )
     badge_style = (
         "display:inline-flex; align-items:center; justify-content:center; "
@@ -473,10 +487,11 @@ def badge_group(labels: Iterable[str], *, parent: DeltaGenerator | None = None) 
         bg_color, fg_color = palette_cycle[index % len(palette_cycle)]
         style = (
             f"{badge_style} background-color: {bg_color}; color: {fg_color}; "
-            f"border: var(--lab-line-weight) solid {fg_color};"
+            f"border: var(--mission-line-weight) solid {fg_color};"
         )
         badge_markup.append(
-            f"<span data-lab-badge-index='{index}' style=\"{style}\">{escape(label)}</span>"
+            f"<span data-mission-badge-index='{index}' data-lab-badge-index='{index}' "
+            f"style=\"{style}\">{escape(label)}</span>"
         )
     badge_markup.append("</div>")
 
@@ -486,11 +501,11 @@ def badge_group(labels: Iterable[str], *, parent: DeltaGenerator | None = None) 
 
 
 def micro_divider(*, parent: DeltaGenerator | None = None) -> None:
-    """Insert a subtle divider matching the Rex-AI style guide."""
+    """Insert a subtle divider matching the mission style guide."""
 
     target = parent if parent is not None else st
     divider_style = (
-        "height:1px; width:100%; background-color: var(--lab-color-divider); "
-        "margin-block: var(--lab-space-4);"
+        "height:1px; width:100%; background-color: var(--mission-color-divider); "
+        "margin-block: var(--mission-space-md);"
     )
     target.markdown(f"<div style=\"{divider_style}\"></div>", unsafe_allow_html=True)

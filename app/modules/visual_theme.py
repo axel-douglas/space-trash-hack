@@ -1,10 +1,12 @@
 """NASA minimal visualization themes for Altair and Plotly.
 
-The palette favours clean laboratory whites, aerospace blues, and sharply
-defined contrast so that charts feel like instrumentation readouts rather than
-entertainment dashboards.  Both Altair and Plotly share the same minimalist
-tokens so that Streamlit pages inherit a restrained NASA mission-control
-aesthetic regardless of the rendering backend.
+The module codifies a compact palette derived from the NASA "meatball"
+guidelines: desaturated instrumentation neutrals, clean whites, and the
+mission-operations blue used as the primary accent.  The aim is to give charts
+and dashboards the feeling of a console readout—high legibility, zero
+ornamentation, and consistent contrast across libraries.  The same design
+tokens are exported to Altair, Plotly, and the CSS layer so that whichever
+backend renders a chart it stays aligned with the mission-control aesthetic.
 """
 from __future__ import annotations
 
@@ -19,9 +21,12 @@ ThemeMode = Literal["light", "dark"]
 
 _THEME_ENV_VAR = "REXAI_THEME_MODE"
 _DEFAULT_MODE: ThemeMode = "dark"
+FONT_STACK = "'Source Sans 3', 'Segoe UI', sans-serif"
+
+
 @dataclass(frozen=True)
 class Palette:
-    """Palette tokens exposed for downstream documentation or widgets."""
+    """Minimal high-contrast palette shared between backends."""
 
     background: str
     surface: str
@@ -37,41 +42,41 @@ class Palette:
 
 _PALETTES: Dict[ThemeMode, Palette] = {
     "light": Palette(
-        background="#F4F7FB",
+        background="#F5F7FA",
         surface="#FFFFFF",
-        panel="#E4EBF7",
-        grid="rgba(23,63,134,0.18)",
-        text="#0E2140",
-        muted="#4B607D",
-        accent="#234A91",
-        accent_soft="#6E8FD6",
-        electric_gradient=("#D7E3FF", "#7FA7FF", "#1F3E7A"),
+        panel="#E1E6EF",
+        grid="rgba(18,36,66,0.24)",
+        text="#0B1526",
+        muted="#465164",
+        accent="#0B3D91",
+        accent_soft="#4D6FB8",
+        electric_gradient=("#C9D4E8", "#7B93C9", "#1F3D7A"),
         categorical=(
-            "#234A91",
-            "#2A7F9E",
-            "#BF6C00",
-            "#146B4E",
-            "#5A3BA6",
-            "#9C2F3F",
+            "#0B3D91",
+            "#345D9C",
+            "#B65E15",
+            "#1D5F48",
+            "#5A4FBF",
+            "#A13A4A",
         ),
     ),
     "dark": Palette(
-        background="#0B1526",
-        surface="#141F32",
-        panel="#1F2B41",
-        grid="rgba(165,179,201,0.24)",
-        text="#F4F7FB",
-        muted="#9AA9C2",
-        accent="#6F9BFF",
-        accent_soft="#A8C1FF",
-        electric_gradient=("#4469B8", "#5E87E3", "#B1C7FF"),
+        background="#050A14",
+        surface="#0F172A",
+        panel="#1C2840",
+        grid="rgba(148,163,184,0.35)",
+        text="#F8FAFC",
+        muted="#9AA5BF",
+        accent="#5A8DEE",
+        accent_soft="#90AAEF",
+        electric_gradient=("#1D3B6F", "#325EA3", "#8FB8FF"),
         categorical=(
-            "#6F9BFF",
-            "#49B0C9",
-            "#D4973C",
-            "#49B188",
-            "#9082D5",
-            "#CF5E73",
+            "#5A8DEE",
+            "#3F9BB8",
+            "#D0812A",
+            "#4FA079",
+            "#8579D6",
+            "#C65B6C",
         ),
     ),
 }
@@ -94,20 +99,20 @@ def _altair_config(mode: ThemeMode) -> Dict[str, Dict[str, object]]:
             "background": background,
             "view": {
                 "stroke": palette.panel,
-                "strokeOpacity": 0.35,
+                "strokeOpacity": 0.4,
             },
             "padding": 16,
             "title": {
-                "font": "'Source Sans 3', 'Segoe UI', sans-serif",
+                "font": FONT_STACK,
                 "fontSize": 20,
                 "fontWeight": 600,
                 "color": palette.text,
             },
             "axis": {
-                "labelFont": "'Source Sans 3', 'Segoe UI', sans-serif",
+                "labelFont": FONT_STACK,
                 "labelFontSize": 12,
                 "labelColor": palette.muted,
-                "titleFont": "'Source Sans 3', 'Segoe UI', sans-serif",
+                "titleFont": FONT_STACK,
                 "titleFontWeight": 600,
                 "titleColor": palette.text,
                 "grid": True,
@@ -117,15 +122,15 @@ def _altair_config(mode: ThemeMode) -> Dict[str, Dict[str, object]]:
                 "tickSize": 4,
             },
             "legend": {
-                "labelFont": "'Source Sans 3', 'Segoe UI', sans-serif",
+                "labelFont": FONT_STACK,
                 "labelColor": palette.muted,
                 "titleColor": palette.text,
-                "symbolType": "circle",
+                "symbolType": "square",
                 "gradientLength": 140,
             },
             "header": {
-                "labelFont": "'Source Sans 3', 'Segoe UI', sans-serif",
-                "titleFont": "'Source Sans 3', 'Segoe UI', sans-serif",
+                "labelFont": FONT_STACK,
+                "titleFont": FONT_STACK,
                 "labelColor": palette.muted,
                 "titleColor": palette.text,
             },
@@ -133,7 +138,7 @@ def _altair_config(mode: ThemeMode) -> Dict[str, Dict[str, object]]:
                 "color": palette.accent,
                 "fill": palette.accent_soft,
                 "stroke": palette.accent,
-                "strokeWidth": 1.2,
+                "strokeWidth": 1.1,
             },
             "range": {
                 "category": list(palette.categorical),
@@ -143,7 +148,7 @@ def _altair_config(mode: ThemeMode) -> Dict[str, Dict[str, object]]:
             },
             "area": {
                 "line": True,
-                "opacity": 0.8,
+                "opacity": 0.85,
             },
             "rect": {
                 "stroke": surface,
@@ -168,8 +173,8 @@ def _plotly_template(mode: ThemeMode) -> Dict[str, object]:
         [0.5, palette.electric_gradient[1]],
         [1.0, palette.electric_gradient[2]],
     ]
-    font_family = "'Source Sans 3', 'Segoe UI', sans-serif"
-    title_family = "'Source Sans 3', 'Segoe UI', sans-serif"
+    font_family = FONT_STACK
+    title_family = FONT_STACK
 
     return {
         "layout": {
