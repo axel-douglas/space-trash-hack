@@ -1,6 +1,7 @@
 import sys
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Generator, Mapping
 
 project_root = Path(__file__).resolve().parents[1]
 project_root_str = str(project_root)
@@ -88,6 +89,39 @@ ALUMINIUM_LABEL_MAP = {
     "yield_mpa": "σᵧ ref (MPa)",
     "elongation_pct": "ε ref (%)",
 }
+
+
+@contextmanager
+def _optional_container_expander(
+    container: Any,
+    label: str,
+    *,
+    warning_message: str | None = None,
+    **kwargs: Any,
+) -> Generator[Any, None, None]:
+    """Use ``container.expander`` when possible, otherwise yield ``None`` and warn."""
+
+    expander_fn = getattr(container, "expander", None)
+    if callable(expander_fn):
+        with expander_fn(label, **kwargs) as maybe_inner:
+            if maybe_inner is None and warning_message:
+                st.warning(warning_message)
+            yield maybe_inner
+        return
+
+    if warning_message:
+        st.warning(warning_message)
+    yield None
+
+
+def _container_text_input(container: Any, *args: Any, **kwargs: Any) -> str:
+    """Render ``st.text_input`` within ``container`` if available."""
+
+    target = getattr(container, "text_input", None) if container is not None else None
+    if callable(target):
+        return target(*args, **kwargs)
+
+    return st.text_input(*args, **kwargs)
 
 
 def _apply_generator_prefilters(
@@ -985,9 +1019,18 @@ with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None
                 help="Cantidad de combinaciones candidatas por lote.",
             )
 
-            with control.expander("Opciones avanzadas") as advanced:
+            advanced_warning = (
+                "No es posible mostrar las opciones avanzadas en modo expandido; "
+                "se utiliza la vista básica."
+            )
+            with _optional_container_expander(
+                control,
+                "Opciones avanzadas",
+                warning_message=advanced_warning,
+            ) as advanced:
                 seed_default = st.session_state.get("generator_seed_input", "")
-                seed_input = advanced.text_input(
+                seed_input = _container_text_input(
+                    advanced,
                     "Semilla (opcional)",
                     value=seed_default,
                     help="Ingresá un entero para repetir exactamente el mismo lote.",
