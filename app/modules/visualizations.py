@@ -62,11 +62,12 @@ class ConvergenceScene:
         df["dominance_pct"] = df["dominance_ratio"] * 100
         return df.dropna(subset=["hypervolume", "dominance_ratio"], how="all")
 
-    def build_chart(self) -> alt.Chart:
-        if self._prepared.empty:
+    def build_chart(self, data: pd.DataFrame | None = None) -> alt.Chart:
+        data = self._prepared if data is None else data
+
+        if data.empty:
             return alt.Chart(pd.DataFrame({"iteration": [], "value": []}))
 
-        data = self._prepared
         base = alt.Chart(data).encode(
             x=alt.X(
                 "iteration:Q",
@@ -115,11 +116,16 @@ class ConvergenceScene:
             target.info("Sin datos de convergencia todavía. Ejecutá el optimizador para graficar su progreso.")
             return
 
+        valid_history = self._prepared.dropna(subset=["hypervolume", "dominance_ratio"], how="all")
+        if valid_history.empty:
+            target.info("Sin datos de convergencia todavía. Ejecutá el optimizador para graficar su progreso.")
+            return
+
         target.subheader(self.title)
         if self.subtitle:
             target.caption(self.subtitle)
 
-        last = self._prepared.dropna(subset=["hypervolume", "dominance_ratio"], how="all").iloc[-1]
+        last = valid_history.iloc[-1]
         hv = last.get("hypervolume")
         dom_ratio = last.get("dominance_ratio")
         pareto_size = last.get("pareto_size")
@@ -157,5 +163,5 @@ class ConvergenceScene:
         for line in copy_lines:
             target.markdown(f"- {line}")
 
-        chart = self.build_chart()
+        chart = self.build_chart(valid_history)
         target.altair_chart(chart, use_container_width=True)
