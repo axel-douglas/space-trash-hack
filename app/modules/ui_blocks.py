@@ -198,8 +198,7 @@ def render_brand_header(
     tagline_style = (
         "display:block; width: min(180px, 45vw); margin: var(--mission-space-2xs, 0.25rem) auto 0; "
         "font-size: 0.82rem; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; "
-        "color: var(--mission-color-surface, #FFFFFF); opacity: 0.9; "
-        "filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.35));"
+        "opacity: 0.9; filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.35));"
     )
 
     logo_markup = _get_logo_markup(alt_text=alt_text)
