@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
@@ -22,7 +21,12 @@ from app.modules import mission_overview
 from app.modules.ml_models import get_model_registry
 from app.modules.navigation import render_breadcrumbs, render_stepper, set_active_step
 from app.modules.ui_blocks import initialise_frontend, load_theme
-from app.modules.io import MissingDatasetError, format_missing_dataset_message
+from app.modules.io import (
+    MissingDatasetError,
+    format_missing_dataset_message,
+    get_last_modified,
+)
+from app.modules.paths import DATA_ROOT
 
 
 def render_page() -> None:
@@ -78,10 +82,8 @@ def render_page() -> None:
         st.caption(f"Categorías: {categories_label}")
     st.caption(f"Problemáticos detectados: {problematic}")
 
-    last_modified: datetime | None = None
-    data_path = Path("data/waste_inventory_sample.csv")
-    if data_path.exists():
-        last_modified = datetime.fromtimestamp(data_path.stat().st_mtime)
+    data_path = DATA_ROOT / "waste_inventory_sample.csv"
+    last_modified = get_last_modified(data_path)
     if last_modified:
         st.caption(last_modified.strftime("Actualizado: %Y-%m-%d %H:%M"))
 

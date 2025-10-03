@@ -9,6 +9,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Mapping, Sequence
+from datetime import datetime
 
 import pandas as pd
 import polars as pl
@@ -35,6 +36,17 @@ INSTALL_DATA_HINT = "Instalá los datasets ejecutando `python scripts/download_d
 
 def format_missing_dataset_message(error: MissingDatasetError) -> str:
     return f"{error} {INSTALL_DATA_HINT}"
+
+
+def get_last_modified(path: Path | str) -> datetime | None:
+    """Return the last modification timestamp for ``path`` if it exists."""
+
+    candidate = Path(path)
+    try:
+        stat_result = candidate.stat()
+    except FileNotFoundError:
+        return None
+    return datetime.fromtimestamp(stat_result.st_mtime)
 
 # Archivos que proporcionó NASA (ustedes)
 WASTE_CSV   = DATA_DIR / "waste_inventory_sample.csv"
