@@ -1,10 +1,10 @@
 from app.bootstrap import ensure_streamlit_entrypoint
+
 ensure_streamlit_entrypoint(__file__)
 
+import math
 from contextlib import contextmanager
 from typing import Any, Generator, Mapping
-
-import math
 
 import altair as alt
 import pandas as pd
@@ -12,20 +12,27 @@ import streamlit as st
 
 from app.modules.candidate_showroom import render_candidate_showroom
 from app.modules.generator import generate_candidates
-from app.modules.io import (
+from app.modules.io import (  # si tu IO usa load_process_catalog, cámbialo aquí
     MissingDatasetError,
     format_missing_dataset_message,
     load_process_df,
     load_waste_df,
-)  # si tu IO usa load_process_catalog, cámbialo aquí
+)
 from app.modules.ml_models import get_model_registry
 from app.modules.navigation import render_breadcrumbs, set_active_step
+from app.modules.page_data import build_ranking_table
 from app.modules.process_planner import choose_process
 from app.modules.safety import check_safety, safety_badge
+from app.modules.schema import (
+    ALUMINIUM_LABEL_COLUMNS,
+    ALUMINIUM_NUMERIC_COLUMNS,
+    POLYMER_LABEL_COLUMNS,
+    POLYMER_METRIC_COLUMNS,
+)
 from app.modules.ui_blocks import (
     action_button,
-    initialise_frontend,
     chipline,
+    initialise_frontend,
     layout_block,
     layout_stack,
     load_theme,
@@ -34,13 +41,6 @@ from app.modules.ui_blocks import (
     render_brand_header,
 )
 from app.modules.visualizations import ConvergenceScene
-from app.modules.schema import (
-    ALUMINIUM_LABEL_COLUMNS,
-    ALUMINIUM_NUMERIC_COLUMNS,
-    POLYMER_LABEL_COLUMNS,
-    POLYMER_METRIC_COLUMNS,
-)
-from app.modules.page_data import build_ranking_table
 
 st.set_page_config(page_title="Rex-AI • Generador", page_icon="🤖", layout="wide")
 initialise_frontend()

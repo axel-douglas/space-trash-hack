@@ -1,4 +1,5 @@
 from app.bootstrap import ensure_streamlit_entrypoint
+
 ensure_streamlit_entrypoint(__file__)
 
 from collections.abc import Mapping
@@ -7,9 +8,6 @@ import altair as alt
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-
-from app.modules.navigation import render_breadcrumbs, set_active_step
-from app.modules.ui_blocks import initialise_frontend, layout_block, load_theme, render_brand_header
 
 from app.modules.data_sources import (
     load_regolith_granulometry,
@@ -22,13 +20,20 @@ from app.modules.io import (
     format_missing_dataset_message,
     load_waste_df,
 )
+from app.modules.navigation import render_breadcrumbs, set_active_step
+from app.modules.page_data import build_candidate_metric_table, build_resource_table
 from app.modules.schema import (
     ALUMINIUM_LABEL_COLUMNS,
     ALUMINIUM_NUMERIC_COLUMNS,
     POLYMER_LABEL_COLUMNS,
     POLYMER_METRIC_COLUMNS,
 )
-from app.modules.page_data import build_candidate_metric_table, build_resource_table
+from app.modules.ui_blocks import (
+    initialise_frontend,
+    layout_block,
+    load_theme,
+    render_brand_header,
+)
 
 st.set_page_config(page_title="Rex-AI • Resultados", page_icon="📊", layout="wide")
 initialise_frontend()

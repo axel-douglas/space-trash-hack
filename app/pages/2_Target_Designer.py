@@ -1,4 +1,5 @@
 from app.bootstrap import ensure_streamlit_entrypoint
+
 ensure_streamlit_entrypoint(__file__)
 
 import streamlit as st

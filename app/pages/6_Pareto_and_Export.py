@@ -1,11 +1,11 @@
 from app.bootstrap import ensure_streamlit_entrypoint
+
 ensure_streamlit_entrypoint(__file__)
 
 __doc__ = """Streamlined Pareto exploration and export centre."""
 
-from typing import Iterable
-
 import math
+from typing import Iterable
 
 import streamlit as st
 
@@ -31,7 +31,6 @@ from app.modules.ui_blocks import (
     render_brand_header,
 )
 from app.modules.utils import safe_int
-
 
 st.set_page_config(page_title="Pareto & Export", page_icon="📤", layout="wide")
 initialise_frontend()

@@ -1,4 +1,5 @@
 from app.bootstrap import ensure_streamlit_entrypoint
+
 ensure_streamlit_entrypoint(__file__)
 
 __doc__ = """Simplified scenario playbooks with actionable summaries."""
@@ -10,8 +11,12 @@ import streamlit as st
 
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.scenarios import PLAYBOOKS
-from app.modules.ui_blocks import initialise_frontend, layout_stack, load_theme, render_brand_header
-
+from app.modules.ui_blocks import (
+    initialise_frontend,
+    layout_stack,
+    load_theme,
+    render_brand_header,
+)
 
 st.set_page_config(page_title="Scenario Playbooks", page_icon="📚", layout="wide")
 initialise_frontend()
