@@ -10,6 +10,8 @@ from typing import Iterable
 def ensure_streamlit_entrypoint(module_file: str | Path) -> Path:
     """Ensure the Streamlit entrypoint can import ``app`` modules."""
 
+    module_path = Path(module_file).resolve()
+    root = _find_project_root(module_path.parent)
     module_path = Path(module_file)
     try:
         root = module_path.resolve().parents[1]
