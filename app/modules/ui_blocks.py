@@ -93,14 +93,21 @@ def configure_page(
 ) -> None:
     """Apply shared Streamlit page configuration with the mission theme."""
 
-    st.set_page_config(
-        page_title=page_title,
-        page_icon=page_icon,
-        layout=layout,
-        initial_sidebar_state=initial_sidebar_state,
-        menu_items=menu_items,
-        theme=_PAGE_THEME,
-    )
+    page_config: dict[str, Any] = {
+        "page_title": page_title,
+        "page_icon": page_icon,
+        "layout": layout,
+        "initial_sidebar_state": initial_sidebar_state,
+        "menu_items": menu_items,
+    }
+
+    try:
+        st.set_page_config(**page_config, theme=_PAGE_THEME)
+    except TypeError:
+        # Streamlit versions prior to 1.38 do not accept a ``theme`` keyword.
+        # Falling back to the base configuration avoids a hard crash while the
+        # visual styling is applied via :func:`initialise_frontend`.
+        st.set_page_config(**page_config)
 
 
 def load_theme(*, show_hud: bool = True) -> None:
