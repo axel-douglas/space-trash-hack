@@ -141,6 +141,17 @@ def test_compare_page_renders_table_and_storytelling(compare_page_runner: Stream
     expected_columns = {"Score", "Energía (kWh)", "Agua (L)", "Crew (min)"}
     assert expected_columns.issubset(set(comparison_table.columns))
 
+    metric_labels = {metric.label for metric in app.metric}
+    assert {"Opciones generadas", "Mejor Score"}.issubset(metric_labels)
+
     storytelling_section = " ".join(block.body for block in app.markdown)
     assert "Storytelling asistido por IA" in storytelling_section
     assert "- " in storytelling_section  # bullet list con los insights
+
+
+def test_compare_page_pills_do_not_use_inline_styles(compare_page_runner: StreamlitRunner) -> None:
+    app = compare_page_runner.run()
+
+    pill_sections = [block.body for block in app.markdown if "data-mission-pill" in block.body]
+    assert pill_sections, "Se espera al menos un pill renderizado"
+    assert all("style=" not in section.lower() for section in pill_sections)

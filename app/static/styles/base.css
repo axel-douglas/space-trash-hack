@@ -138,6 +138,55 @@ table {
   font-weight: 600;
 }
 
+[data-mission-pill] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--mission-space-2xs);
+  padding: 0.35rem 0.9rem;
+  border-radius: 999px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+  border: var(--mission-line-weight) solid transparent;
+}
+
+[data-mission-pill="ok"],
+.mission-pill--ok {
+  background-color: var(--mission-color-positive-soft);
+  color: var(--mission-color-positive);
+  border-color: var(--mission-color-positive);
+}
+
+[data-mission-pill="warn"],
+.mission-pill--warn {
+  background-color: var(--mission-color-warning-soft);
+  color: var(--mission-color-warning);
+  border-color: var(--mission-color-warning);
+}
+
+[data-mission-pill="risk"],
+.mission-pill--risk {
+  background-color: var(--mission-color-critical-soft);
+  color: var(--mission-color-critical);
+  border-color: var(--mission-color-critical);
+}
+
+[data-mission-pill="info"],
+.mission-pill--info {
+  background-color: var(--mission-color-panel);
+  color: var(--mission-color-accent);
+  border-color: var(--mission-color-accent);
+}
+
+[data-mission-pill="accent"],
+.mission-pill--accent {
+  background-color: var(--mission-color-accent-soft);
+  color: var(--mission-color-surface);
+  border-color: var(--mission-color-accent-soft);
+}
+
 :focus-visible {
   outline: 2px solid var(--mission-color-accent);
   outline-offset: 2px;
