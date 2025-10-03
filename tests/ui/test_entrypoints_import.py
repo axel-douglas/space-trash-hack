@@ -1,4 +1,4 @@
-"""Ensure Streamlit entrypoints can be imported without path hacks."""
+"""Ensure Streamlit entrypoints can resolve ``app`` imports when run as scripts."""
 
 from __future__ import annotations
 
@@ -9,50 +9,51 @@ from pathlib import Path
 import pytest
 
 
-class _StreamlitAbort(RuntimeError):
-    """Sentinel exception raised when ``st.stop`` is invoked."""
+class _EarlyStreamlitExit(RuntimeError):
+    """Signal that the patched Streamlit function was invoked."""
 
 
-ENTRYPOINT_FILES = [
+_ENTRYPOINT_FILES = [
     Path("app/Home.py"),
     *sorted(Path("app/pages").glob("*.py")),
 ]
 
 
-def _sanitise_module_name(path: Path) -> str:
-    stem = path.stem
-    sanitized = "".join(char if char.isalnum() or char == "_" else "_" for char in stem)
-    if sanitized and sanitized[0].isdigit():
-        sanitized = f"page_{sanitized}"
-    return f"tests.ui.entrypoints.{sanitized}"
+@pytest.mark.parametrize("entrypoint", _ENTRYPOINT_FILES, ids=lambda path: path.name)
+def test_streamlit_entrypoints_import_without_repo_on_path(entrypoint: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Import each entrypoint with the repository root temporarily removed."""
 
+    repo_root = Path(__file__).resolve().parents[2]
+    clean_sys_path: list[str] = []
+    for item in sys.path:
+        try:
+            resolved = Path(item).resolve()
+        except TypeError:  # pragma: no cover - defensive for unusual path entries
+            clean_sys_path.append(item)
+            continue
+        if resolved == repo_root:
+            continue
+        clean_sys_path.append(item)
+    monkeypatch.setattr(sys, "path", clean_sys_path)
 
-@pytest.mark.parametrize("module_path", ENTRYPOINT_FILES)
-def test_entrypoint_imports_without_module_not_found(
-    module_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Import each Streamlit entrypoint and ensure dependencies resolve."""
+    streamlit = pytest.importorskip("streamlit")
 
-    module_name = _sanitise_module_name(module_path)
-    spec = importlib.util.spec_from_file_location(module_name, module_path)
-    assert spec is not None, f"Expected import spec for '{module_path}'"
-    assert spec.loader is not None, f"Expected loader in import spec for '{module_path}'"
-    sys.modules.pop(module_name, None)
+    def _exit_on_config(*_args, **_kwargs) -> None:
+        raise _EarlyStreamlitExit("set_page_config")
+
+    monkeypatch.setattr(streamlit, "set_page_config", _exit_on_config)
+
+    module_name = f"_entrypoints_{entrypoint.stem.replace('-', '_').replace('.', '_')}"
+    spec = importlib.util.spec_from_file_location(module_name, entrypoint)
+    assert spec is not None and spec.loader is not None
+
     module = importlib.util.module_from_spec(spec)
     try:
-        import streamlit as st
-    except ModuleNotFoundError:
-        pytest.skip("streamlit is required for entrypoint imports")
-
-    def _stop() -> None:
-        raise _StreamlitAbort
-
-    monkeypatch.setattr(st, "stop", _stop, raising=False)
-    try:
         spec.loader.exec_module(module)
-    except ModuleNotFoundError as error:  # pragma: no cover - explicit failure path
-        pytest.fail(f"Unexpected ModuleNotFoundError importing '{module_path}': {error}")
-    except _StreamlitAbort:
+    except _EarlyStreamlitExit:
+        # Reaching the stub indicates the module was imported successfully and
+        # executed far enough to touch Streamlit, which is more than enough for
+        # this regression test.
         pass
-    assert module.__name__ == module_name
-
+    finally:
+        sys.modules.pop(module_name, None)
