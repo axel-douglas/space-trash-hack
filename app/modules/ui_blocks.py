@@ -43,6 +43,14 @@ _LAYOUT_STYLE_MAP: dict[str, str] = {
     "fade-in": "",
     "fade-in-delayed": "",
 }
+
+_PAGE_THEME: dict[str, str] = {
+    "primaryColor": "#0B3D91",
+    "backgroundColor": "#F5F7FA",
+    "secondaryBackgroundColor": "#FFFFFF",
+    "textColor": "#0B1526",
+    "font": "Source Sans 3",
+}
 _THEME_HASH_KEY = "__rexai_theme_hash__"
 
 _BRAND_LOGO_FILENAME = "logo_rexai.svg"
@@ -73,6 +81,26 @@ def _read_css_bundle() -> str:
         return _base_css_path().read_text(encoding="utf-8")
     except FileNotFoundError:
         return ""
+
+
+def configure_page(
+    *,
+    page_title: str,
+    page_icon: str | None = None,
+    layout: Literal["centered", "wide"] = "wide",
+    initial_sidebar_state: Literal["auto", "expanded", "collapsed"] = "collapsed",
+    menu_items: Mapping[str, str] | None = None,
+) -> None:
+    """Apply shared Streamlit page configuration with the mission theme."""
+
+    st.set_page_config(
+        page_title=page_title,
+        page_icon=page_icon,
+        layout=layout,
+        initial_sidebar_state=initial_sidebar_state,
+        menu_items=menu_items,
+        theme=_PAGE_THEME,
+    )
 
 
 def load_theme(*, show_hud: bool = True) -> None:
@@ -131,7 +159,8 @@ def _get_logo_markup(*, alt_text: str = "RexAI mission control logo") -> str:
     else:
         src = data_uri
 
-    return f"<img src='{src}' alt='{alt_attr}' />"
+    image_style = "display:block; width:100%; height:auto; max-width:100%;"
+    return f'<img src="{src}" alt="{alt_attr}" style="{image_style}" />'
 
 
 def render_brand_header(
@@ -143,17 +172,41 @@ def render_brand_header(
 
     load_theme(show_hud=False)
 
+    container_style = (
+        "display:flex; flex-direction:column; align-items:center; justify-content:center; "
+        "gap: var(--mission-space-2xs, 0.25rem); text-align:center; "
+        "width: var(--mission-brand-width, clamp(108px, 12vw, 156px)); "
+        "margin: var(--mission-space-lg, 1.5rem) auto; padding: 0; "
+        "color: var(--mission-color-text, #0B1526);"
+    )
+    logo_container_style = (
+        "width:100%; display:flex; align-items:center; justify-content:center; "
+        "gap: var(--mission-space-sm, 0.75rem); text-align:center; "
+        "margin: 0; padding: var(--mission-space-md, 1rem) var(--mission-space-lg, 1.5rem); "
+        "background: var(--mission-color-text, #0B1526); border-radius: var(--mission-radius-md, 0.5rem); "
+        "border: 1px solid rgba(255, 255, 255, 0.08); "
+        "box-shadow: 0 12px 28px rgba(11, 21, 38, 0.28); "
+        "color: var(--mission-color-surface, #FFFFFF);"
+    )
+    tagline_style = (
+        "display:block; width: min(180px, 45vw); margin: var(--mission-space-2xs, 0.25rem) auto 0; "
+        "font-size: 0.82rem; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; "
+        "color: var(--mission-color-surface, #FFFFFF); opacity: 0.9; "
+        "filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.35));"
+    )
+
     logo_markup = _get_logo_markup(alt_text=alt_text)
 
     tagline_markup = ""
     if tagline:
         tagline_markup = (
-            f"<p class='mission-brand-header__tagline'>{escape(tagline)}</p>"
+            "<p class='mission-brand-header__tagline' "
+            f"style='{tagline_style}'>{escape(tagline)}</p>"
         )
 
     markup = (
-        "<div class='mission-brand-header'>"
-        "<div class='mission-brand-header__logo'>"
+        f"<div class='mission-brand-header' style='{container_style}'>"
+        f"<div class='mission-brand-header__logo' style='{logo_container_style}'>"
         f"{logo_markup}"
         "</div>"
         f"{tagline_markup}"

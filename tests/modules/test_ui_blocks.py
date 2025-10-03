@@ -27,6 +27,31 @@ def test_pill_serialises_extended_tones(kind, expected_title):
     assert f"title='{expected_title}'" in html
 
 
+def test_configure_page_applies_theme_defaults(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.modules import ui_blocks
+
+    captured: dict[str, object] = {}
+
+    def fake_set_page_config(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(
+        ui_blocks,
+        "st",
+        SimpleNamespace(set_page_config=fake_set_page_config),
+    )
+
+    ui_blocks.configure_page(page_title="Demo", page_icon="🚀")
+
+    assert captured["page_title"] == "Demo"
+    assert captured["page_icon"] == "🚀"
+    assert captured["layout"] == "wide"
+    assert captured["initial_sidebar_state"] == "collapsed"
+    assert captured["theme"] == ui_blocks._PAGE_THEME
+
+
 def test_initialise_frontend_force_resets_theme_cache(monkeypatch):
     from types import SimpleNamespace
 

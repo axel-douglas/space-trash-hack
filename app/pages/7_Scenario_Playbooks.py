@@ -21,12 +21,13 @@ import streamlit as st
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.scenarios import PLAYBOOKS
 from app.modules.ui_blocks import (
+    configure_page,
     initialise_frontend,
     layout_stack,
     render_brand_header,
 )
 
-st.set_page_config(page_title="Scenario Playbooks", page_icon="📚", layout="wide")
+configure_page(page_title="Scenario Playbooks", page_icon="📚")
 initialise_frontend()
 
 current_step = set_active_step("playbooks")

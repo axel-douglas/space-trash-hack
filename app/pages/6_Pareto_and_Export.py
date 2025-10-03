@@ -34,13 +34,14 @@ from app.modules.page_data import (
 from app.modules.safety import check_safety, safety_badge
 from app.modules.ui_blocks import (
     action_button,
+    configure_page,
     initialise_frontend,
     layout_stack,
     render_brand_header,
 )
 from app.modules.utils import safe_int
 
-st.set_page_config(page_title="Pareto & Export", page_icon="📤", layout="wide")
+configure_page(page_title="Pareto & Export", page_icon="📤")
 initialise_frontend()
 
 current_step = set_active_step("export")

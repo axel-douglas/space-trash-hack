@@ -39,12 +39,13 @@ from app.modules.schema import (
     numeric_series,
 )
 from app.modules.ui_blocks import (
+    configure_page,
     initialise_frontend,
     layout_block,
     render_brand_header,
 )
 
-st.set_page_config(page_title="Rex-AI • Resultados", page_icon="📊", layout="wide")
+configure_page(page_title="Rex-AI • Resultados", page_icon="📊")
 initialise_frontend()
 
 current_step = set_active_step("results")
