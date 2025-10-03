@@ -391,19 +391,19 @@ def _render_candidate_actions(
             btn_state = "idle"
 
         if action_button(
-            "✨ Seleccionar",
+            "Abrir detalle de proceso",
             key=f"showroom_select_{candidate_key}",
             state=btn_state,
             width="full",
             help_text="Confirmá la receta desde la ventana emergente.",
             state_labels={
-                "loading": "Abriendo holograma…",
-                "success": "Receta seleccionada",
+                "loading": "Abriendo detalle…",
+                "success": "Detalle abierto",
             },
             state_messages={
-                "loading": "Mostrando holograma",
-                "success": "Receta lista para confirmar",
-                "error": "Reintentá la selección",
+                "loading": "Preparando información del proceso",
+                "success": "Detalle listo para confirmar",
+                "error": "Intentá abrirlo de nuevo",
             },
         ):
             st.session_state[_MODAL_KEY] = candidate_key
@@ -412,22 +412,22 @@ def _render_candidate_actions(
                 st.session_state.pop(_SUCCESS_KEY, None)
 
         if st.session_state.get(_MODAL_KEY) == candidate_key:
-            with st.modal("Confirmación holográfica", key=f"modal_{candidate_key}"):
+            with st.modal("Confirmar receta", key=f"modal_{candidate_key}"):
                 _render_modal_content(row["candidate"], badge, scenario=scenario)
                 col_ok, col_cancel = st.columns(2)
                 with col_ok:
                     confirm_label = _scenario_result_cta(scenario)
                     if action_button(
-                        f"✅ {confirm_label}",
+                        confirm_label,
                         key=f"confirm_{candidate_key}",
                         state="idle",
                         width="full",
                         state_labels={
-                            "loading": "Sincronizando…",
+                            "loading": "Calculando…",
                             "success": "Receta confirmada",
                         },
                         state_messages={
-                            "loading": "Sincronizando selección",
+                            "loading": "Guardando receta en Resultados",
                             "success": "Receta confirmada",
                             "error": "No se pudo confirmar",
                         },
@@ -439,8 +439,9 @@ def _render_candidate_actions(
                         }
                         st.session_state[_SUCCESS_KEY] = {
                             "message": (
-                                f"{process_name} confirmado. Revisá 4) Resultados, "
-                                "5) Comparar o 6) Pareto."
+                                f"{process_name} confirmado. Revisá Resultados para "
+                                "analizar, luego usá Comparar o Pareto cuando lo "
+                                "necesites."
                             ),
                             "candidate_key": candidate_key,
                         }
@@ -472,9 +473,9 @@ def _scenario_result_cta(scenario: str | None) -> str:
 def _scenario_steps(scenario: str | None) -> list[str]:
     scenario_key = (scenario or "").strip().casefold()
     base_steps = [
-        "Revisá resultados detallados en la pestaña 4.",
-        "Compará alternativas en la pestaña 5.",
-        "Exportá plan u órdenes en la pestaña 6.",
+        "Revisá los resultados detallados en la pestaña Resultados.",
+        "Compará alternativas en la pestaña Comparar.",
+        "Exportá el plan u órdenes desde la pestaña Pareto.",
     ]
     if scenario_key == "residence renovations":
         return [
@@ -512,7 +513,7 @@ def _render_modal_content(cand: dict, badge: dict, *, scenario: str | None = Non
     process = f"{cand.get('process_id', '')} · {cand.get('process_name', '')}".strip()
     score = _safe_number(cand.get("score"))
 
-    st.subheader("Confirmar receta seleccionada")
+    st.subheader("Confirmar receta")
     st.write(f"Proceso **{process or 'Proceso'}** con score {score:.3f}.")
 
     st.write("Pasos sugeridos:")
