@@ -366,7 +366,28 @@ def render_overview_dashboard(
     render_breadcrumbs(current_step)
     render_stepper(current_step)
 
-    st.title("0) Mission Overview")
+    st.title("Panorama general de la misión")
+    st.markdown(
+        """
+        Este panel reúne los datos operativos más recientes del inventario orbital.
+        Pensalo como un tablero de control que señala dónde estamos parados y qué
+        requiere atención inmediata.
+
+        **Cómo leer las métricas principales:**
+        - **Masa (kg):** peso total que tenemos en órbita; es la carga que habrá que
+          mover o procesar.
+        - **Agua recuperable (L):** cantidad estimada de humedad que podemos
+          destilar, útil para planificar soporte vital.
+        - **Energía estimada (kWh):** energía que demandará tratar el inventario
+          según la dificultad declarada.
+        - **Volumen (m³):** espacio físico ocupado, clave para logística y
+          almacenamiento.
+        - **Residuos problemáticos:** piezas que requieren protocolos especiales
+          (riesgo químico, radiactivo o mecánico). Si sos nuevo, asumí que son los
+          elementos que no pueden ir al flujo estándar; si ya operás la misión,
+          usalos para priorizar inspecciones.
+        """
+    )
 
     try:
         inventory_df = _resolve_inventory_loader(inventory_loader)
@@ -404,13 +425,27 @@ def render_overview_dashboard(
         categories_label = ", ".join(unique_categories[:5])
         if len(unique_categories) > 5:
             categories_label += "…"
-        st.caption(f"Categorías: {categories_label}")
-    st.caption(f"Problemáticos detectados: {problematic}")
+        st.caption(
+            "**Categorías monitoreadas:** "
+            f"{categories_label}. Interpretalas como familias de materiales que "
+            "comparten tratamiento; si precisás más detalle, abrí la tabla para "
+            "ver la etiqueta completa."
+        )
+    st.caption(
+        "**Residuos problemáticos detectados:** "
+        f"{problematic}. Son componentes que piden aislamiento, inspección extra "
+        "o coordinación con seguridad industrial."
+    )
 
     data_path = DATA_ROOT / "waste_inventory_sample.csv"
     last_modified = get_last_modified(data_path)
     if last_modified:
-        st.caption(last_modified.strftime("Actualizado: %Y-%m-%d %H:%M"))
+        st.caption(
+            "**Última actualización del inventario:** "
+            f"{last_modified.strftime('%Y-%m-%d %H:%M')} UTC. Úsalo para confirmar "
+            "que las cifras reflejan el escaneo más reciente; quienes coordinan la "
+            "misión pueden compararlo con sus bitácoras de carga."
+        )
 
     render_material_summary(inventory_df, max_rows=20)
 
