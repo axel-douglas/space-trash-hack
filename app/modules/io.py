@@ -4,10 +4,12 @@ from __future__ import annotations
 import copy
 import json
 import math
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Mapping, Sequence
 from datetime import datetime
+from tempfile import NamedTemporaryFile
 
 import pandas as pd
 import polars as pl
@@ -310,7 +312,38 @@ def save_waste_df(df: pd.DataFrame | pl.DataFrame) -> None:
         ]
     )
 
-    out.write_csv(WASTE_CSV, include_header=True)
+    target_path = Path(WASTE_CSV)
+    target_dir = target_path.parent
+    backup_path = target_path.with_suffix(target_path.suffix + ".bak")
+
+    tmp_path: Path | None = None
+    backup_created = False
+
+    try:
+        with NamedTemporaryFile("wb", dir=target_dir, delete=False) as tmp_file:
+            tmp_path = Path(tmp_file.name)
+            out.write_csv(tmp_file, include_header=True)
+            tmp_file.flush()
+            os.fsync(tmp_file.fileno())
+
+        if backup_path.exists():
+            backup_path.unlink()
+
+        if target_path.exists():
+            target_path.replace(backup_path)
+            backup_created = True
+
+        if tmp_path is None:
+            raise RuntimeError("No se pudo crear el archivo temporal para guardar el dataset")
+
+        tmp_path.replace(target_path)
+    except Exception:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+        if backup_created and backup_path.exists():
+            backup_path.replace(target_path)
+        raise
+
     invalidate_waste_cache()
 
 
