@@ -304,7 +304,12 @@ if external_profiles:
             density_value = polymer_metrics.get("density_g_cm3")
             tensile_value = polymer_metrics.get("tensile_mpa")
             chart_cols = st.columns(2)
-            if density_value and not polymer_density_distribution.empty:
+            density_area, tensile_area = chart_cols
+            if polymer_density_distribution.empty:
+                density_area.info(
+                    "No hay densidades de polímeros en el inventario actual para comparar."
+                )
+            elif density_value:
                 base = alt.Chart(
                     pd.DataFrame({"density": polymer_density_distribution})
                 ).mark_bar(color="#22d3ee", opacity=0.55).encode(
@@ -314,8 +319,13 @@ if external_profiles:
                 rule = alt.Chart(pd.DataFrame({"density": [density_value]})).mark_rule(
                     color="#f97316", size=3
                 ).encode(x="density:Q")
-                chart_cols[0].altair_chart(base + rule, use_container_width=True)
-            if tensile_value and not polymer_tensile_distribution.empty:
+                density_area.altair_chart(base + rule, use_container_width=True)
+
+            if polymer_tensile_distribution.empty:
+                tensile_area.info(
+                    "No hay datos de resistencia a tracción de polímeros en el inventario actual."
+                )
+            elif tensile_value:
                 base = alt.Chart(
                     pd.DataFrame({"tensile": polymer_tensile_distribution})
                 ).mark_bar(color="#f472b6", opacity=0.55).encode(
@@ -325,7 +335,7 @@ if external_profiles:
                 rule = alt.Chart(pd.DataFrame({"tensile": [tensile_value]})).mark_rule(
                     color="#f97316", size=3
                 ).encode(x="tensile:Q")
-                chart_cols[1].altair_chart(base + rule, use_container_width=True)
+                tensile_area.altair_chart(base + rule, use_container_width=True)
 
     aluminium_section = external_profiles.get("aluminium")
     if aluminium_section:
@@ -345,7 +355,12 @@ if external_profiles:
             tensile_value = aluminium_metrics.get("tensile_mpa")
             yield_value = aluminium_metrics.get("yield_mpa")
             chart_cols = st.columns(2)
-            if tensile_value and not aluminium_tensile_distribution.empty:
+            tensile_area, yield_area = chart_cols
+            if aluminium_tensile_distribution.empty:
+                tensile_area.info(
+                    "No hay datos de tracción de aluminio en el inventario actual para comparar."
+                )
+            elif tensile_value:
                 base = alt.Chart(
                     pd.DataFrame({"tensile": aluminium_tensile_distribution})
                 ).mark_bar(color="#f97316", opacity=0.55).encode(
@@ -355,8 +370,13 @@ if external_profiles:
                 rule = alt.Chart(pd.DataFrame({"tensile": [tensile_value]})).mark_rule(
                     color="#22d3ee", size=3
                 ).encode(x="tensile:Q")
-                chart_cols[0].altair_chart(base + rule, use_container_width=True)
-            if yield_value and not aluminium_yield_distribution.empty:
+                tensile_area.altair_chart(base + rule, use_container_width=True)
+
+            if aluminium_yield_distribution.empty:
+                yield_area.info(
+                    "No hay datos de límite de fluencia de aluminio en el inventario actual."
+                )
+            elif yield_value:
                 base = alt.Chart(
                     pd.DataFrame({"yield_strength": aluminium_yield_distribution})
                 ).mark_bar(color="#fb923c", opacity=0.55).encode(
@@ -366,7 +386,7 @@ if external_profiles:
                 rule = alt.Chart(pd.DataFrame({"yield_strength": [yield_value]})).mark_rule(
                     color="#22d3ee", size=3
                 ).encode(x="yield_strength:Q")
-                chart_cols[1].altair_chart(base + rule, use_container_width=True)
+                yield_area.altair_chart(base + rule, use_container_width=True)
 
     st.caption(
         "Comparativa con laboratorios/industria (`polymer_composite_*`, `aluminium_alloys.csv`)."

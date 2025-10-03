@@ -295,6 +295,20 @@ def test_generator_page_warns_when_inventory_missing_columns(
     assert "No hay datos de tracción de aluminio en el inventario actual para comparar." in info_messages
 
 
+def test_generator_page_renders_without_external_columns(
+    run_generator_page: Callable[..., object]
+) -> None:
+    inventory = pd.DataFrame({"id": ["poly-1"], "other": [1.0]})
+
+    app = run_generator_page(inventory)
+
+    headers = " ".join(block.body for block in app.header)
+    assert "Generador" in headers
+
+    subheaders = " ".join(block.body for block in app.subheader)
+    assert "Resultados del generador" in subheaders
+
+
 def test_generator_page_falls_back_when_expander_missing(
     run_generator_page: Callable[..., object]
 ) -> None:
