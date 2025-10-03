@@ -25,6 +25,7 @@ from app.modules.page_data import (
 )
 from app.modules.safety import check_safety, safety_badge
 from app.modules.ui_blocks import action_button, initialise_frontend, layout_stack, load_theme
+from app.modules.utils import safe_int
 
 
 st.set_page_config(page_title="Pareto & Export", page_icon="📤", layout="wide")
@@ -57,7 +58,7 @@ if not candidates or not target:
 
 selected_candidate = selected_state["data"] if isinstance(selected_state, dict) else None
 selected_badge = selected_state.get("safety") if isinstance(selected_state, dict) else None
-selected_option_number = st.session_state.get("selected_option_number")
+selected_option_number = safe_int(st.session_state.get("selected_option_number"), default=0)
 
 try:
     inventory_df = load_waste_df()
@@ -135,11 +136,15 @@ if not filtered_df.empty:
         pareto_indices = pareto_front(filtered_df[required])
 filtered_df["En Pareto"] = filtered_df.index.isin(pareto_indices)
 
-option_numbers = filtered_df["Opción"].dropna().astype(int).tolist()
+option_numbers: list[int] = []
+for option in filtered_df["Opción"].tolist():
+    parsed_option = safe_int(option, default=None)
+    if parsed_option is not None and parsed_option > 0:
+        option_numbers.append(parsed_option)
 if option_numbers:
     default_index = 0
     if selected_option_number in option_numbers:
-        default_index = option_numbers.index(int(selected_option_number))
+        default_index = option_numbers.index(selected_option_number)
     chosen_option = st.selectbox(
         "Seleccioná el plan prioritario",
         option_numbers,
@@ -168,8 +173,11 @@ if option_numbers:
         st.session_state["selected_option_number"] = chosen_option
         selected_option_number = chosen_option
 
-selected_series = filtered_df["Opción"].fillna(0).astype(int)
-filtered_df["Seleccionado"] = selected_series == int(selected_option_number or 0)
+selected_series = filtered_df["Opción"].apply(lambda value: safe_int(value, default=None))
+if selected_option_number > 0:
+    filtered_df["Seleccionado"] = selected_series.eq(selected_option_number).fillna(False)
+else:
+    filtered_df["Seleccionado"] = False
 
 st.subheader("Opciones dentro de límites")
 st.dataframe(
@@ -185,8 +193,10 @@ if not materials_df.empty:
 
 if selected_candidate and isinstance(selected_badge, dict):
     st.subheader("Estado del plan seleccionado")
+    option_label = safe_int(selected_option_number, default=0)
+    option_text = f"#{option_label}" if option_label else "—"
     st.markdown(
-        f"**Opción #{int(selected_option_number)}** — {selected_candidate.get('process_name', 'Proceso')}"
+        f"**Opción {option_text}** — {selected_candidate.get('process_name', 'Proceso')}"
     )
     st.caption(f"Seguridad: {selected_badge.get('level', '—')} · {selected_badge.get('detail', '')}")
 else:
@@ -206,7 +216,7 @@ if selected_candidate:
             "⬇️ Plan JSON",
             key="export_plan_json",
             download_data=json_data,
-            download_file_name=f"flight_plan_{int(selected_option_number):02d}.json",
+            download_file_name=f"flight_plan_{safe_int(selected_option_number, default=0):02d}.json",
             download_mime="application/json",
             state="idle",
         )
@@ -215,7 +225,7 @@ if selected_candidate:
             "⬇️ Resumen CSV",
             key="export_candidate_csv",
             download_data=csv_data,
-            download_file_name=f"candidate_{int(selected_option_number):02d}_summary.csv",
+            download_file_name=f"candidate_{safe_int(selected_option_number, default=0):02d}_summary.csv",
             download_mime="text/csv",
             state="idle",
         )

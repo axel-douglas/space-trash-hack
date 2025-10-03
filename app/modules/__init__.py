@@ -26,6 +26,7 @@ from .io import (
     invalidate_all_io_caches,
 )
 from . import mission_overview
+from .utils import safe_int
 
 __all__ = [
     # IO
@@ -54,6 +55,8 @@ __all__ = [
     "get_train_and_save",
     # Overview helpers
     "mission_overview",
+    # Utils
+    "safe_int",
 ]
 
 def get_train_and_save():

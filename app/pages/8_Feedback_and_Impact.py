@@ -22,6 +22,7 @@ from app.modules.impact import (
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.page_data import build_feedback_summary_table
 from app.modules.ui_blocks import initialise_frontend, layout_stack, load_theme
+from app.modules.utils import safe_int
 
 
 st.set_page_config(page_title="Feedback & Impact", page_icon="📝", layout="wide")
@@ -52,10 +53,12 @@ target = st.session_state.get("target")
 selected_state = st.session_state.get("selected")
 selected_candidate = selected_state.get("data") if isinstance(selected_state, dict) else None
 props = selected_candidate.get("props") if isinstance(selected_candidate, dict) else None
-selected_option_number = st.session_state.get("selected_option_number")
+selected_option_number = safe_int(st.session_state.get("selected_option_number"), default=0)
 
-impact_df = load_impact_df() or pd.DataFrame()
-feedback_df = load_feedback_df() or pd.DataFrame()
+impact_df_raw = load_impact_df()
+impact_df = impact_df_raw if isinstance(impact_df_raw, pd.DataFrame) else pd.DataFrame()
+feedback_df_raw = load_feedback_df()
+feedback_df = feedback_df_raw if isinstance(feedback_df_raw, pd.DataFrame) else pd.DataFrame()
 expanded_impact_df = _expand_extra_columns(impact_df)
 expanded_feedback_df = _expand_extra_columns(feedback_df)
 
@@ -151,7 +154,7 @@ with st.form("feedback_form"):
             astronaut=astronaut or "-",
             scenario=str(target.get("scenario", "-")) if isinstance(target, dict) else "-",
             target_name=str(target.get("name", "-")) if isinstance(target, dict) else "-",
-            option_idx=int(selected_option_number or 0),
+            option_idx=safe_int(selected_option_number, default=0) or 0,
             rigidity_ok=bool(rigidity_ok),
             ease_ok=bool(ease_ok),
             issues=issues_text,
