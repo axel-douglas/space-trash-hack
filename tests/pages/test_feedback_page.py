@@ -7,7 +7,13 @@ pytest.importorskip("streamlit")
 from pytest_streamlit import StreamlitRunner
 
 
-def _feedback_page_app(*, selected_option=None, set_option: bool = False) -> None:
+def _feedback_page_app(
+    *,
+    selected_option=None,
+    set_option: bool = False,
+    impact_loader=None,
+    feedback_loader=None,
+) -> None:
     import os
     import runpy
     import sys
@@ -94,8 +100,12 @@ def _feedback_page_app(*, selected_option=None, set_option: bool = False) -> Non
         ]
     )
 
-    impact_module.load_impact_df = lambda: impact_df.copy()  # type: ignore[assignment]
-    impact_module.load_feedback_df = lambda: feedback_df.copy()  # type: ignore[assignment]
+    impact_module.load_impact_df = (
+        impact_loader if impact_loader is not None else lambda: impact_df.copy()
+    )  # type: ignore[assignment]
+    impact_module.load_feedback_df = (
+        feedback_loader if feedback_loader is not None else lambda: feedback_df.copy()
+    )  # type: ignore[assignment]
     impact_module.append_feedback = lambda entry: "run-id"  # type: ignore[assignment]
     impact_module.append_impact = lambda entry: "run-id"  # type: ignore[assignment]
 
@@ -125,6 +135,20 @@ def test_feedback_page_handles_malformed_selected_option_number() -> None:
     runner = StreamlitRunner(
         _feedback_page_app,
         kwargs={"selected_option": "not-a-number", "set_option": True},
+    )
+    app = runner.run()
+
+    assert not app.exception
+
+
+def test_feedback_page_handles_missing_dataframes() -> None:
+    runner = StreamlitRunner(
+        _feedback_page_app,
+        kwargs={
+            "set_option": False,
+            "impact_loader": lambda: None,
+            "feedback_loader": lambda: None,
+        },
     )
     app = runner.run()
 

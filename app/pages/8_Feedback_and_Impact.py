@@ -35,8 +35,10 @@ load_theme()
 render_breadcrumbs(current_step)
 
 
-def _expand_extra_columns(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty or "extra" not in df.columns:
+def _expand_extra_columns(df: pd.DataFrame | None) -> pd.DataFrame:
+    if df is None:
+        return pd.DataFrame()
+    if df.empty or "extra" not in df.columns:
         return df
     extras = pd.DataFrame([parse_extra_blob(value) for value in df["extra"]])
     merged = pd.concat([df.drop(columns=["extra"]), extras], axis=1)
@@ -55,14 +57,19 @@ selected_candidate = selected_state.get("data") if isinstance(selected_state, di
 props = selected_candidate.get("props") if isinstance(selected_candidate, dict) else None
 selected_option_number = safe_int(st.session_state.get("selected_option_number"), default=0)
 
-impact_df_raw = load_impact_df()
-impact_df = impact_df_raw if isinstance(impact_df_raw, pd.DataFrame) else pd.DataFrame()
-feedback_df_raw = load_feedback_df()
-feedback_df = feedback_df_raw if isinstance(feedback_df_raw, pd.DataFrame) else pd.DataFrame()
+impact_df_loaded = load_impact_df()
+impact_df = impact_df_loaded if impact_df_loaded is not None else pd.DataFrame()
+if not isinstance(impact_df, pd.DataFrame):
+    impact_df = pd.DataFrame()
+
+feedback_df_loaded = load_feedback_df()
+feedback_df = feedback_df_loaded if feedback_df_loaded is not None else pd.DataFrame()
+if not isinstance(feedback_df, pd.DataFrame):
+    feedback_df = pd.DataFrame()
 expanded_impact_df = _expand_extra_columns(impact_df)
 expanded_feedback_df = _expand_extra_columns(feedback_df)
 
-impact_summary = summarize_impact(impact_df if not impact_df.empty else pd.DataFrame())
+impact_summary = summarize_impact(impact_df)
 feedback_summary_df = build_feedback_summary_table(expanded_feedback_df)
 
 with layout_stack():
