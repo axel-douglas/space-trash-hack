@@ -196,12 +196,6 @@ def section(title: str, subtitle: str = "") -> None:
 
 _BUTTON_STATES: set[str] = {"idle", "loading", "success", "error"}
 
-_STATUS_STATE_MAP: dict[str, str] = {
-    "loading": "running",
-    "success": "complete",
-    "error": "error",
-}
-
 
 def _compose_button_label(label: str, icon: str | None) -> str:
     text = label or ""
@@ -215,32 +209,35 @@ def _compose_button_label(label: str, icon: str | None) -> str:
     return "\n".join([prefixed, *rest]) if rest else prefixed
 
 
+def _state_labels(
+    default: str,
+    *,
+    overrides: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    labels = {state: default for state in _BUTTON_STATES}
+    labels["idle"] = default
+    if overrides:
+        for state, text in overrides.items():
+            if state in _BUTTON_STATES:
+                labels[state] = str(text)
+    return labels
+
+
 def _state_messages(
-    label: str,
     *,
-    loading_label: str | None,
-    success_label: str | None,
-    error_label: str | None,
-) -> Mapping[str, str]:
-    return {
-        "idle": label,
-        "loading": loading_label or "Procesando…",
-        "success": success_label or "Listo",
-        "error": error_label or "Reintentar",
+    overrides: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    messages = {
+        "idle": "",
+        "loading": "Procesando…",
+        "success": "Listo",
+        "error": "Reintentar",
     }
-
-
-def _resolve_status_text(
-    state: str,
-    *,
-    hints: Mapping[str, str] | None,
-    messages: Mapping[str, str],
-) -> str:
-    source = hints or {}
-    hint = str(source.get(state, "")).strip()
-    if hint:
-        return hint
-    return str(messages.get(state, "")).strip()
+    if overrides:
+        for state, text in overrides.items():
+            if state in _BUTTON_STATES:
+                messages[state] = str(text)
+    return messages
 
 
 def action_button(
@@ -251,10 +248,6 @@ def action_button(
     width: Literal["full", "auto"] = "full",
     help_text: str | None = None,
     tooltip: str | None = None,
-    loading_label: str | None = None,
-    success_label: str | None = None,
-    error_label: str | None = None,
-    status_hints: dict[str, str] | None = None,
     icon: str | None = None,
     disabled: bool = False,
     download_data: Any | None = None,
@@ -264,6 +257,8 @@ def action_button(
     on_click_args: tuple[Any, ...] | None = None,
     on_click_kwargs: Mapping[str, Any] | None = None,
     button_type: Literal["primary", "secondary"] = "secondary",
+    state_labels: Mapping[str, str] | None = None,
+    state_messages: Mapping[str, str] | None = None,
 ) -> bool:
     """Render a Streamlit button with Rex-AI convenience features."""
 
@@ -271,34 +266,30 @@ def action_button(
     if state not in _BUTTON_STATES:
         raise ValueError(f"Estado no soportado: {state}")
 
-    state_messages = _state_messages(
-        label,
-        loading_label=loading_label,
-        success_label=success_label,
-        error_label=error_label,
-    )
-    button_label = _compose_button_label(state_messages.get(state, label), icon)
+    labels = _state_labels(label, overrides=state_labels)
+    messages = _state_messages(overrides=state_messages)
+    button_label = _compose_button_label(labels.get(state, label), icon)
     use_container_width = width == "full"
     disabled_flag = bool(disabled) or state == "loading"
     args = on_click_args or ()
     kwargs = dict(on_click_kwargs or {})
 
-    if download_data is not None:
-        clicked = st.download_button(
-            button_label,
-            data=download_data,
-            file_name=download_file_name,
-            mime=download_mime,
-            key=key,
-            help=tooltip,
-            on_click=on_click,
-            args=args,
-            kwargs=kwargs,
-            disabled=disabled_flag,
-            use_container_width=use_container_width,
-        )
-    else:
-        clicked = st.button(
+    def _render_button() -> bool:
+        if download_data is not None:
+            return st.download_button(
+                button_label,
+                data=download_data,
+                file_name=download_file_name,
+                mime=download_mime,
+                key=key,
+                help=tooltip,
+                on_click=on_click,
+                args=args,
+                kwargs=kwargs,
+                disabled=disabled_flag,
+                use_container_width=use_container_width,
+            )
+        return st.button(
             button_label,
             key=key,
             help=tooltip,
@@ -310,16 +301,17 @@ def action_button(
             use_container_width=use_container_width,
         )
 
-    status_state = _STATUS_STATE_MAP.get(state)
-    if status_state:
-        status_label = _resolve_status_text(
-            state,
-            hints=status_hints,
-            messages=state_messages,
-        )
-        if status_label:
-            status = st.status(status_label, state=status_state)
-            status.update(label=status_label, state=status_state, expanded=False)
+    status_text = messages.get(state, "")
+    if state == "loading" and status_text:
+        with st.spinner(status_text):
+            clicked = _render_button()
+    else:
+        clicked = _render_button()
+
+    if state == "success" and status_text:
+        st.status(status_text, state="complete")
+    elif state == "error" and status_text:
+        st.status(status_text, state="error")
 
     if help_text:
         st.caption(help_text)

@@ -149,9 +149,9 @@ def ui_blocks(monkeypatch):
     return module
 
 
-def test_action_button_loading_state_uses_status(ui_blocks, monkeypatch):
+def test_action_button_loading_state_uses_spinner(ui_blocks, monkeypatch):
     button_calls: list[dict[str, Any]] = []
-    status_events: list[dict[str, Any]] = []
+    spinner_events: list[dict[str, Any]] = []
     captions: list[str] = []
 
     def fake_button(label, **kwargs):  # noqa: ANN001
@@ -159,22 +159,20 @@ def test_action_button_loading_state_uses_status(ui_blocks, monkeypatch):
         button_calls.append(call)
         return False
 
-    class DummyStatus:
-        def __init__(self, label: str, state: str = "info") -> None:
-            status_events.append({"event": "create", "label": label, "state": state})
+    class DummySpinner:
+        def __init__(self, label: str) -> None:
+            self.label = label
 
-        def update(self, label: str | None = None, state: str | None = None, expanded: bool | None = None) -> None:
-            status_events.append(
-                {
-                    "event": "update",
-                    "label": label,
-                    "state": state,
-                    "expanded": expanded,
-                }
-            )
+        def __enter__(self):  # noqa: D401
+            spinner_events.append({"event": "enter", "label": self.label})
+            return self
+
+        def __exit__(self, *_args):  # noqa: ANN002
+            spinner_events.append({"event": "exit", "label": self.label})
+            return False
 
     monkeypatch.setattr(ui_blocks.st, "button", fake_button)
-    monkeypatch.setattr(ui_blocks.st, "status", lambda label, state="info": DummyStatus(label, state))
+    monkeypatch.setattr(ui_blocks.st, "spinner", lambda label: DummySpinner(label))
     monkeypatch.setattr(ui_blocks.st, "caption", lambda text: captions.append(text))
 
     ui_blocks.action_button(
@@ -182,10 +180,11 @@ def test_action_button_loading_state_uses_status(ui_blocks, monkeypatch):
         key="demo_fx_cta",
         icon="🚀",
         state="loading",
-        loading_label="Sincronizando cápsula…",
-        success_label="Órbita establecida",
-        status_hints={
-            "idle": "Listo para despegar",
+        state_labels={
+            "loading": "Sincronizando cápsula…",
+            "success": "Órbita establecida",
+        },
+        state_messages={
             "loading": "Ajustando vector",
             "success": "Secuencia completada",
             "error": "Interrupción detectada",
@@ -200,9 +199,10 @@ def test_action_button_loading_state_uses_status(ui_blocks, monkeypatch):
     assert call["disabled"] is True
     assert call["use_container_width"] is True
     assert captions == ["Demo de secuencia orbital"]
-
-    assert status_events[0] == {"event": "create", "label": "Ajustando vector", "state": "running"}
-    assert status_events[1] == {"event": "update", "label": "Ajustando vector", "state": "running", "expanded": False}
+    assert spinner_events == [
+        {"event": "enter", "label": "Ajustando vector"},
+        {"event": "exit", "label": "Ajustando vector"},
+    ]
 
 
 def test_action_button_supports_downloads(ui_blocks, monkeypatch):
@@ -218,16 +218,6 @@ def test_action_button_supports_downloads(ui_blocks, monkeypatch):
         def __init__(self, label: str, state: str = "info") -> None:
             status_events.append({"event": "create", "label": label, "state": state})
 
-        def update(self, label: str | None = None, state: str | None = None, expanded: bool | None = None) -> None:
-            status_events.append(
-                {
-                    "event": "update",
-                    "label": label,
-                    "state": state,
-                    "expanded": expanded,
-                }
-            )
-
     monkeypatch.setattr(ui_blocks.st, "download_button", fake_download)
     monkeypatch.setattr(ui_blocks.st, "status", lambda label, state="info": DummyStatus(label, state))
 
@@ -236,8 +226,8 @@ def test_action_button_supports_downloads(ui_blocks, monkeypatch):
         key="export_inventory",
         icon="💾",
         state="success",
-        success_label="Inventario guardado",
-        status_hints={"success": "Inventario actualizado"},
+        state_labels={"success": "Inventario guardado"},
+        state_messages={"success": "Inventario actualizado"},
         download_data=b"id,name\n1,Demo",
         download_file_name="inventory.csv",
         download_mime="text/csv",
@@ -246,8 +236,9 @@ def test_action_button_supports_downloads(ui_blocks, monkeypatch):
     assert result is True
     assert button_calls and button_calls[0]["label"] == "💾 Inventario guardado"
     assert button_calls[0]["file_name"] == "inventory.csv"
-    assert status_events[0] == {"event": "create", "label": "Inventario actualizado", "state": "complete"}
-    assert status_events[1] == {"event": "update", "label": "Inventario actualizado", "state": "complete", "expanded": False}
+    assert status_events == [
+        {"event": "create", "label": "Inventario actualizado", "state": "complete"}
+    ]
 
 
 def test_action_button_error_state_shows_feedback(ui_blocks, monkeypatch):
@@ -262,16 +253,6 @@ def test_action_button_error_state_shows_feedback(ui_blocks, monkeypatch):
         def __init__(self, label: str, state: str = "info") -> None:
             status_events.append({"event": "create", "label": label, "state": state})
 
-        def update(self, label: str | None = None, state: str | None = None, expanded: bool | None = None) -> None:
-            status_events.append(
-                {
-                    "event": "update",
-                    "label": label,
-                    "state": state,
-                    "expanded": expanded,
-                }
-            )
-
     monkeypatch.setattr(ui_blocks.st, "button", fake_button)
     monkeypatch.setattr(ui_blocks.st, "status", lambda label, state="info": DummyStatus(label, state))
 
@@ -279,10 +260,11 @@ def test_action_button_error_state_shows_feedback(ui_blocks, monkeypatch):
         "Intentar de nuevo",
         key="retry_button",
         state="error",
-        error_label="Fallo",
-        status_hints={"error": "Se produjo un error"},
+        state_labels={"error": "Fallo"},
+        state_messages={"error": "Se produjo un error"},
     )
 
     assert button_calls
-    assert status_events[0] == {"event": "create", "label": "Se produjo un error", "state": "error"}
-    assert status_events[1] == {"event": "update", "label": "Se produjo un error", "state": "error", "expanded": False}
+    assert status_events == [
+        {"event": "create", "label": "Se produjo un error", "state": "error"}
+    ]

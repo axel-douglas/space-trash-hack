@@ -395,11 +395,12 @@ def _render_candidate_actions(
             key=f"showroom_select_{candidate_key}",
             state=btn_state,
             width="full",
-            loading_label="Abriendo holograma…",
-            success_label="Receta seleccionada",
             help_text="Confirmá la receta desde la ventana emergente.",
-            status_hints={
-                "idle": "",
+            state_labels={
+                "loading": "Abriendo holograma…",
+                "success": "Receta seleccionada",
+            },
+            state_messages={
                 "loading": "Mostrando holograma",
                 "success": "Receta lista para confirmar",
                 "error": "Reintentá la selección",
@@ -421,10 +422,11 @@ def _render_candidate_actions(
                         key=f"confirm_{candidate_key}",
                         state="idle",
                         width="full",
-                        loading_label="Sincronizando…",
-                        success_label="Receta confirmada",
-                        status_hints={
-                            "idle": "",
+                        state_labels={
+                            "loading": "Sincronizando…",
+                            "success": "Receta confirmada",
+                        },
+                        state_messages={
                             "loading": "Sincronizando selección",
                             "success": "Receta confirmada",
                             "error": "No se pudo confirmar",
