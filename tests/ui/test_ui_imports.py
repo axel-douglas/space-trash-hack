@@ -21,6 +21,15 @@ def test_ui_blocks_exports_expected_helpers() -> None:
     assert not missing, f"ui_blocks missing helpers: {missing}"
 
 
+def test_ui_blocks_does_not_expose_legacy_helpers() -> None:
+    module = _get_module("app.modules.ui_blocks")
+
+    for legacy_name in ("enable_reveal_animation", "surface", "glass_card"):
+        assert not hasattr(
+            module, legacy_name
+        ), f"ui_blocks should no longer expose {legacy_name}"
+
+
 def test_target_limits_exports_constants() -> None:
     module = _get_module("app.modules.target_limits")
 
