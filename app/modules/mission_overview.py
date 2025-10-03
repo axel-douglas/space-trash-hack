@@ -360,7 +360,7 @@ def render_overview_dashboard(
     st.set_page_config(page_title="Mission Overview", page_icon="🛰️", layout="wide")
     initialise_frontend()
 
-    current_step = set_active_step("overview")
+    current_step = set_active_step("home")
     load_theme(show_hud=False)
 
     render_breadcrumbs(current_step)

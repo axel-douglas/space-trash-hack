@@ -6,7 +6,7 @@ def test_format_stepper_uses_spanish_labels() -> None:
     summary = navigation.format_stepper(step)
 
     assert summary.startswith("Paso 4 de")
-    assert summary.endswith("Resultados (legacy)")
+    assert summary.endswith("Resultados y trade-offs")
 
 
 def test_set_active_step_invalid_key_raises(monkeypatch) -> None:
