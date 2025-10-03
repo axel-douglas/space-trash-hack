@@ -21,7 +21,11 @@ from typing import Any, Iterable, Mapping
 import pandas as pd
 import streamlit as st
 
-from app.modules.io import load_waste_df
+from app.modules.io import (
+    MissingDatasetError,
+    format_missing_dataset_message,
+    load_waste_df,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -31,7 +35,12 @@ from app.modules.io import load_waste_df
 def load_inventory_overview() -> pd.DataFrame:
     """Return a defensive copy of the enriched inventory dataframe."""
 
-    df = load_waste_df()
+    try:
+        df = load_waste_df()
+    except MissingDatasetError as error:
+        st.error(format_missing_dataset_message(error))
+        st.stop()
+        raise  # pragma: no cover - st.stop halts execution
     result = df.copy(deep=True)
     if "_problematic" in result.columns:
         result["_problematic"] = result["_problematic"].astype(bool)

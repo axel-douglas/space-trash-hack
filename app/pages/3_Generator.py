@@ -20,7 +20,12 @@ import streamlit as st
 
 from app.modules.candidate_showroom import render_candidate_showroom
 from app.modules.generator import generate_candidates
-from app.modules.io import load_waste_df, load_process_df  # si tu IO usa load_process_catalog, cámbialo aquí
+from app.modules.io import (
+    MissingDatasetError,
+    format_missing_dataset_message,
+    load_process_df,
+    load_waste_df,
+)  # si tu IO usa load_process_catalog, cámbialo aquí
 from app.modules.ml_models import get_model_registry
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.process_planner import choose_process
@@ -961,8 +966,12 @@ if not target:
     st.stop()
 
 # ----------------------------- Datos base -----------------------------
-waste_df = load_waste_df()
-proc_df = load_process_df()
+try:
+    waste_df = load_waste_df()
+    proc_df = load_process_df()
+except MissingDatasetError as error:
+    st.error(format_missing_dataset_message(error))
+    st.stop()
 polymer_density_distribution = _numeric_series(
     waste_df, "pc_density_density_g_per_cm3"
 )

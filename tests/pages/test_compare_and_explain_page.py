@@ -14,8 +14,10 @@ pytest.importorskip("streamlit")
 
 from pytest_streamlit import StreamlitRunner
 
+from app.modules.io import format_missing_dataset_message, MissingDatasetError
 
-def _compare_page_app() -> None:
+
+def _compare_page_app(*, missing_dataset: bool = False) -> None:
     import os
     import runpy
     import sys
@@ -58,7 +60,15 @@ def _compare_page_app() -> None:
             "aluminium_yield_strength_mpa": [None, 180.0],
         }
     )
-    io_module.load_waste_df = lambda: inventory_stub  # type: ignore[assignment]
+    if missing_dataset:
+        missing_path = Path("missing_compare.csv")
+
+        def _raise_missing() -> pd.DataFrame:
+            raise io_module.MissingDatasetError(missing_path)
+
+        io_module.load_waste_df = _raise_missing  # type: ignore[assignment]
+    else:
+        io_module.load_waste_df = lambda: inventory_stub  # type: ignore[assignment]
 
     original_sortables = sys.modules.get("streamlit_sortables")
     sys.modules["streamlit_sortables"] = types.SimpleNamespace(
@@ -155,3 +165,17 @@ def test_compare_page_pills_do_not_use_inline_styles(compare_page_runner: Stream
     pill_sections = [block.body for block in app.markdown if "data-mission-pill" in block.body]
     assert pill_sections, "Se espera al menos un pill renderizado"
     assert all("style=" not in section.lower() for section in pill_sections)
+
+
+def test_compare_page_shows_error_for_missing_dataset() -> None:
+    runner = StreamlitRunner(_compare_page_app, kwargs={"missing_dataset": True})
+    app = runner.run()
+
+    error_messages = " ".join(block.body for block in app.error)
+    assert "missing_compare.csv" in error_messages
+    assert "python scripts/download_datasets.py" in error_messages
+    expected_message = format_missing_dataset_message(
+        MissingDatasetError(Path("missing_compare.csv"))
+    )
+    assert expected_message in error_messages
+    assert not app.exception

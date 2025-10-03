@@ -19,7 +19,11 @@ import streamlit as st
 
 from app.modules.analytics import pareto_front
 from app.modules.exporters import candidate_to_csv, candidate_to_json
-from app.modules.io import load_waste_df
+from app.modules.io import (
+    MissingDatasetError,
+    format_missing_dataset_message,
+    load_waste_df,
+)
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.page_data import (
     build_candidate_export_table,
@@ -62,7 +66,11 @@ selected_candidate = selected_state["data"] if isinstance(selected_state, dict) 
 selected_badge = selected_state.get("safety") if isinstance(selected_state, dict) else None
 selected_option_number = st.session_state.get("selected_option_number")
 
-inventory_df = load_waste_df()
+try:
+    inventory_df = load_waste_df()
+except MissingDatasetError as error:
+    st.error(format_missing_dataset_message(error))
+    st.stop()
 export_df = build_candidate_export_table(candidates, inventory_df)
 
 with layout_stack():

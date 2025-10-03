@@ -9,16 +9,18 @@ from pytest_streamlit import StreamlitRunner
 
 from app.modules import mission_overview
 from app.modules.mission_overview import compute_mission_summary
+from app.modules.io import format_missing_dataset_message, MissingDatasetError
 
 
-def _mission_overview_app() -> None:
+def _mission_overview_app(*, missing_dataset: bool = False) -> None:
     import os
     import sys
     from pathlib import Path
     import importlib
 
+    import pandas as pd
     import streamlit as st
-    from app.modules.io import load_waste_df
+    from app.modules.io import MissingDatasetError, load_waste_df
 
     root_env = os.environ.get("REXAI_PROJECT_ROOT")
     root = Path(root_env) if root_env else Path.cwd()
@@ -49,7 +51,15 @@ def _mission_overview_app() -> None:
     try:
         ml_models.get_model_registry = lambda: _RegistryStub()  # type: ignore[assignment]
         ui_blocks.load_theme = lambda **_: None  # type: ignore[assignment]
-        mission_overview.load_inventory_overview = load_waste_df  # type: ignore[assignment]
+        if missing_dataset:
+            missing_path = Path("missing_overview.csv")
+
+            def _raise_missing() -> pd.DataFrame:
+                raise MissingDatasetError(missing_path)
+
+            mission_overview.load_inventory_overview = _raise_missing  # type: ignore[assignment]
+        else:
+            mission_overview.load_inventory_overview = load_waste_df  # type: ignore[assignment]
 
         sys.modules.pop("app.Home", None)
         home_module = importlib.import_module("app.Home")
@@ -111,6 +121,22 @@ def test_inventory_table_and_captions(mission_overview_runner: StreamlitRunner) 
 
     problematic_expected = int(inventory_df["_problematic"].astype(bool).sum())
     assert problematic_expected >= 0
+
+
+def test_home_page_shows_error_for_missing_dataset() -> None:
+    runner = StreamlitRunner(
+        _mission_overview_app, kwargs={"missing_dataset": True}
+    )
+    app = runner.run()
+
+    error_messages = " ".join(block.body for block in app.error)
+    assert "missing_overview.csv" in error_messages
+    assert "python scripts/download_datasets.py" in error_messages
+    expected_message = format_missing_dataset_message(
+        MissingDatasetError(Path("missing_overview.csv"))
+    )
+    assert expected_message in error_messages
+    assert not app.exception
 def _load_inventory_fixture() -> pd.DataFrame:
     data_path = Path(__file__).resolve().parents[2] / "data" / "waste_inventory_sample.csv"
     df = pd.read_csv(data_path)

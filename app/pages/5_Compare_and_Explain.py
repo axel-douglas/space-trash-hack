@@ -20,7 +20,11 @@ from streamlit_sortables import sort_items
 from app.modules.explain import compare_table, score_breakdown
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.ui_blocks import initialise_frontend, load_theme, pill
-from app.modules.io import load_waste_df
+from app.modules.io import (
+    MissingDatasetError,
+    format_missing_dataset_message,
+    load_waste_df,
+)
 
 
 def _generate_storytelling(
@@ -198,7 +202,11 @@ if not cands or not target:
     st.warning("Generá opciones en **3) Generador** primero.")
     st.stop()
 
-inventory_df = load_waste_df()
+try:
+    inventory_df = load_waste_df()
+except MissingDatasetError as error:
+    st.error(format_missing_dataset_message(error))
+    st.stop()
 
 st.title("🧪 Compare & Explain")
 st.caption(

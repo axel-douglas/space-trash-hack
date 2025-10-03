@@ -24,7 +24,11 @@ from app.modules.data_sources import (
     load_regolith_thermal_profiles,
 )
 from app.modules.explain import score_breakdown
-from app.modules.io import load_waste_df
+from app.modules.io import (
+    MissingDatasetError,
+    format_missing_dataset_message,
+    load_waste_df,
+)
 from app.modules.schema import (
     ALUMINIUM_LABEL_COLUMNS,
     ALUMINIUM_NUMERIC_COLUMNS,
@@ -63,7 +67,11 @@ score = cand.get("score", 0.0)
 safety = selected.get("safety", {"level": "—", "detail": ""})
 process_id = cand.get("process_id", "—")
 process_name = cand.get("process_name", "Proceso")
-inventory_df = load_waste_df()
+try:
+    inventory_df = load_waste_df()
+except MissingDatasetError as error:
+    st.error(format_missing_dataset_message(error))
+    st.stop()
 polymer_density_distribution = pd.to_numeric(
     inventory_df.get("pc_density_density_g_per_cm3"), errors="coerce"
 ).dropna()

@@ -4,6 +4,8 @@ from __future__ import annotations
 import copy
 import json
 import math
+import errno
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -18,6 +20,21 @@ from .problematic import problematic_mask
 from .schema import ALUMINIUM_SAMPLE_COLUMNS, POLYMER_SAMPLE_COLUMNS
 
 DATA_DIR = DATA_ROOT
+
+
+class MissingDatasetError(FileNotFoundError):
+    """Raised when a required dataset file is missing from disk."""
+
+    def __init__(self, path: Path | str) -> None:
+        self.path = Path(path)
+        super().__init__(f"No se encontró el dataset requerido: {self.path}")
+
+
+INSTALL_DATA_HINT = "Instalá los datasets ejecutando `python scripts/download_datasets.py`."
+
+
+def format_missing_dataset_message(error: MissingDatasetError) -> str:
+    return f"{error} {INSTALL_DATA_HINT}"
 
 # Archivos que proporcionó NASA (ustedes)
 WASTE_CSV   = DATA_DIR / "waste_inventory_sample.csv"
@@ -36,7 +53,17 @@ PROBLEM_TAGS = {
 def _ensure_exists():
     for p in [WASTE_CSV, PROC_CSV, TARGETS_JSON]:
         if not p.exists():
-            raise FileNotFoundError(f"Falta archivo de datos: {p}")
+            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(p))
+
+
+def _to_missing_dataset_error(
+    exc: FileNotFoundError, default_path: Path
+) -> MissingDatasetError:
+    filename = getattr(exc, "filename", None)
+    if not filename and exc.args:
+        filename = exc.args[0]
+    path = Path(filename) if filename else default_path
+    return MissingDatasetError(path)
 
 @lru_cache(maxsize=1)
 def _load_waste_df_cached() -> pd.DataFrame:
@@ -47,9 +74,11 @@ def _load_waste_df_cached() -> pd.DataFrame:
       material, kg, notes
     y preserva la proveniencia en columnas _source_*.
     """
-    _ensure_exists()
-
-    base_df = pd.read_csv(WASTE_CSV)
+    try:
+        _ensure_exists()
+        base_df = pd.read_csv(WASTE_CSV)
+    except FileNotFoundError as exc:  # pragma: no cover - exercised in error tests
+        raise _to_missing_dataset_error(exc, WASTE_CSV) from exc
     source_snapshot = base_df.copy(deep=True)
 
     string_columns = [
@@ -146,7 +175,14 @@ def _load_waste_df_cached() -> pd.DataFrame:
 
 def load_waste_df() -> pd.DataFrame:
     """Return a defensive copy of the cached waste inventory."""
-    return _load_waste_df_cached().copy(deep=True)
+
+    try:
+        cached = _load_waste_df_cached()
+    except MissingDatasetError:
+        raise
+    except FileNotFoundError as exc:
+        raise _to_missing_dataset_error(exc, WASTE_CSV) from exc
+    return cached.copy(deep=True)
 
 def save_waste_df(df: pd.DataFrame | pl.DataFrame) -> None:
     """
@@ -357,8 +393,11 @@ def format_mission_bundle(
 
 @lru_cache(maxsize=1)
 def _load_process_df_cached() -> pd.DataFrame:
-    _ensure_exists()
-    return pd.read_csv(PROC_CSV)
+    try:
+        _ensure_exists()
+        return pd.read_csv(PROC_CSV)
+    except FileNotFoundError as exc:  # pragma: no cover - exercised in error tests
+        raise _to_missing_dataset_error(exc, PROC_CSV) from exc
 
 
 def load_process_catalog() -> pd.DataFrame:
@@ -367,16 +406,31 @@ def load_process_catalog() -> pd.DataFrame:
 
 @lru_cache(maxsize=1)
 def _load_targets_cached() -> list[dict]:
-    _ensure_exists()
-    return json.loads(TARGETS_JSON.read_text(encoding="utf-8"))
+    try:
+        _ensure_exists()
+        return json.loads(TARGETS_JSON.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:  # pragma: no cover - exercised in error tests
+        raise _to_missing_dataset_error(exc, TARGETS_JSON) from exc
 
 
 def load_targets() -> list[dict]:
-    return copy.deepcopy(_load_targets_cached())
+    try:
+        cached = _load_targets_cached()
+    except MissingDatasetError:
+        raise
+    except FileNotFoundError as exc:
+        raise _to_missing_dataset_error(exc, TARGETS_JSON) from exc
+    return copy.deepcopy(cached)
 
 
 def load_process_df() -> pd.DataFrame:
-    return _load_process_df_cached().copy()
+    try:
+        cached = _load_process_df_cached()
+    except MissingDatasetError:
+        raise
+    except FileNotFoundError as exc:
+        raise _to_missing_dataset_error(exc, PROC_CSV) from exc
+    return cached.copy()
 
 
 def invalidate_waste_cache() -> None:
@@ -398,6 +452,9 @@ def invalidate_all_io_caches() -> None:
 
 
 __all__ = [
+    "MissingDatasetError",
+    "format_missing_dataset_message",
+    "INSTALL_DATA_HINT",
     "load_waste_df",
     "save_waste_df",
     "load_process_df",
