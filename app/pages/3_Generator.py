@@ -910,8 +910,16 @@ if header_badges:
         with column:
             pill(label, kind=kind)
 st.caption(
-    "Rex-AI combina residuos NASA, ejecuta Ax + BoTorch y muestra trazabilidad con métricas"
-    " explicables en cada lote. Ranking ponderado energía↔agua↔crew con penalizaciones de estanqueidad."
+    "Cargá tu objetivo y generá lotes optimizados comparando recursos y riesgos"
+    " con una vista transparente de métricas y penalizaciones."
+)
+
+st.info(
+    "**Flujo recomendado**\n"
+    "1. Configurar objetivo → definí el escenario y los límites críticos.\n"
+    "2. Ajustar filtros → refiná residuos, procesos y penalizaciones según tu estrategia.\n"
+    "3. Generar → ejecutá la IA para evaluar propuestas y priorizar las más sólidas.\n"
+    "4. Revisar resultados → compará riesgos, recursos y sellado antes de decidir."
 )
 
 if playbook_filters_applied:
@@ -977,7 +985,7 @@ with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None
                 "Motor de predicción",
                 ("Modo Rex-AI (ML)", "Modo heurístico"),
                 index=0 if stored_mode == "Modo Rex-AI (ML)" else 1,
-                help="Usá Rex-AI para predicciones ML o quedate con la estimación heurística reproducible.",
+                help="Elegí entre la IA entrenada o la estimación basada en reglas según el tipo de respuesta que necesitás comparar.",
             )
             st.session_state["prediction_mode"] = mode
             use_ml = mode == "Modo Rex-AI (ML)"
@@ -985,18 +993,18 @@ with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None
             control.markdown("#### Ajustar parámetros")
             col_iters, col_recipes = control.columns(2)
             opt_evals = col_iters.slider(
-                "Iteraciones (Ax/BoTorch)",
+                "Iteraciones",
                 0,
                 60,
                 18,
-                help="Cantidad de pasos bayesianos para refinar el lote.",
+                help="Cantidad de propuestas que la IA evaluará antes de mostrarte el lote final.",
             )
             n_candidates = col_recipes.slider(
                 "Recetas a explorar",
                 3,
                 12,
                 6,
-                help="Cantidad de combinaciones candidatas por lote.",
+                help="Cantidad de recetas distintas que se compararán en cada lote generado.",
             )
 
             advanced_warning = (
@@ -1013,7 +1021,7 @@ with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None
                     advanced,
                     "Semilla (opcional)",
                     value=seed_default,
-                    help="Ingresá un entero para repetir exactamente el mismo lote.",
+                    help="Ingresá un entero fijo para reproducir exactamente el mismo lote cuando vuelvas a generar.",
                 )
                 st.session_state["generator_seed_input"] = seed_input
 
