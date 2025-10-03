@@ -1,20 +1,26 @@
 from app.bootstrap import ensure_streamlit_entrypoint
+
 ensure_streamlit_entrypoint(__file__)
 
 import numpy as np
-import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import streamlit as st
 from streamlit_sortables import sort_items
 
 from app.modules.explain import compare_table, score_breakdown
-from app.modules.navigation import render_breadcrumbs, set_active_step
-from app.modules.ui_blocks import initialise_frontend, load_theme, pill, render_brand_header
 from app.modules.io import (
     MissingDatasetError,
     format_missing_dataset_message,
     load_waste_df,
+)
+from app.modules.navigation import render_breadcrumbs, set_active_step
+from app.modules.ui_blocks import (
+    initialise_frontend,
+    load_theme,
+    pill,
+    render_brand_header,
 )
 
 
