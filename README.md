@@ -15,6 +15,16 @@ streamlit run app/Home.py
 ```
 
 No se requieren variables de entorno adicionales para el arranque interactivo.
+Sin embargo, podés personalizar dónde se buscan los artefactos de datos y
+modelos exportando las siguientes variables antes de ejecutar cualquier
+entrypoint:
+
+- `REXAI_DATA_ROOT`: raíz alternativa que reemplaza a `data/` como punto de
+  partida para datasets curados, logs y archivos "gold". Se admite tanto rutas
+  absolutas como relativas o con `~`; siempre se normalizan a un path absoluto.
+- `REXAI_MODELS_DIR`: ubicación explícita para los bundles de modelos. Si no se
+  define, por defecto se usa `<DATA_ROOT>/models`, aprovechando el valor
+  resultante de `REXAI_DATA_ROOT` cuando está presente.
 
 > ⚙️ **Bootstrap obligatorio:** antes de cualquier `import app.*`, cada entrypoint
 > de Streamlit (incluyendo los módulos dentro de `app/pages/`) debe llamar a
