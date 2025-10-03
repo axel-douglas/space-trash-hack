@@ -15,9 +15,10 @@ from pytest_streamlit import StreamlitRunner
 from app.modules.io import format_missing_dataset_message, MissingDatasetError
 
 
-def _results_page_app(*, missing_dataset: bool = False) -> None:
+def _results_page_app(*, missing_dataset: bool = False, inventory=None) -> None:
     import os
     import pandas as pd
+    from types import SimpleNamespace as _SimpleNamespace
     import runpy
     import sys
     import streamlit as st
@@ -32,7 +33,7 @@ def _results_page_app(*, missing_dataset: bool = False) -> None:
 
     st.session_state.clear()
 
-    base_props = {
+    base_props_values = {
         "rigidity": 0.0,
         "tightness": 0.0,
         "energy_kwh": 0.0,
@@ -40,10 +41,11 @@ def _results_page_app(*, missing_dataset: bool = False) -> None:
         "crew_min": 0.0,
         "mass_final_kg": 0.0,
     }
+    base_props = _SimpleNamespace(**base_props_values)
     st.session_state["selected"] = {
         "data": {
             "props": base_props,
-            "heuristic_props": base_props,
+            "heuristic_props": _SimpleNamespace(**base_props_values),
             "confidence_interval": {},
             "uncertainty": {},
             "model_variants": [],
@@ -59,7 +61,13 @@ def _results_page_app(*, missing_dataset: bool = False) -> None:
         },
         "safety": {"level": "OK", "detail": ""},
     }
-    st.session_state["target"] = {"max_energy_kwh": 2.0, "max_water_l": 1.0, "max_crew_min": 60.0}
+    st.session_state["target"] = {
+        "rigidity": 0.0,
+        "tightness": 0.0,
+        "max_energy_kwh": 2.0,
+        "max_water_l": 1.0,
+        "max_crew_min": 60.0,
+    }
 
     import app.modules.ui_blocks as ui_blocks
     import app.modules.navigation as navigation
@@ -84,7 +92,9 @@ def _results_page_app(*, missing_dataset: bool = False) -> None:
 
         io_module.load_waste_df = _raise_missing  # type: ignore[assignment]
     else:
-        io_module.load_waste_df = lambda: pd.DataFrame()  # type: ignore[assignment]
+        io_module.load_waste_df = (
+            lambda: inventory.copy() if inventory is not None else pd.DataFrame()
+        )  # type: ignore[assignment]
 
     results_page = app_dir / "pages" / "4_Results_and_Tradeoffs.py"
 
@@ -193,6 +203,17 @@ def test_results_page_shows_error_for_missing_dataset() -> None:
         MissingDatasetError(Path("missing_results.csv"))
     )
     assert expected_message in error_messages
+    assert not app.exception
+
+
+def test_results_page_renders_without_inventory_material_columns() -> None:
+    inventory = pd.DataFrame({"mass_kg": [10.0, 15.0], "notes": ["a", "b"]})
+    runner = StreamlitRunner(
+        _results_page_app,
+        kwargs={"inventory": inventory},
+    )
+    app = runner.run()
+
     assert not app.exception
 
 
