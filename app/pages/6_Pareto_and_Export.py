@@ -1,14 +1,10 @@
-"""Streamlined Pareto exploration and export centre."""
+from app.bootstrap import ensure_streamlit_entrypoint
+
+ensure_streamlit_entrypoint(__file__)
+
+__doc__ = """Streamlined Pareto exploration and export centre."""
 
 from typing import Iterable
-
-from app.bootstrap import ensure_streamlit_imports
-
-ensure_streamlit_imports(__file__)
-
-from app.bootstrap import ensure_streamlit_path
-
-ensure_streamlit_path(__file__)
 
 import math
 

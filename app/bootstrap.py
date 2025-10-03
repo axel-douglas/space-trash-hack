@@ -7,6 +7,16 @@ from pathlib import Path
 from typing import Iterable
 
 
+def ensure_streamlit_entrypoint(module_file: str | Path) -> Path:
+    """Ensure the Streamlit entrypoint can import ``app`` modules."""
+
+    root = Path(module_file).resolve().parents[2]
+    root_str = str(root)
+    if root_str not in sys.path:
+        sys.path.insert(0, root_str)
+    return root
+
+
 def ensure_streamlit_imports(module_file: str | Path | None = None) -> Path:
     """Ensure entrypoints can import the project without circular hacks."""
 
@@ -66,6 +76,7 @@ def ensure_project_root(start: str | Path | None = None) -> Path:
 
 
 __all__ = [
+    "ensure_streamlit_entrypoint",
     "ensure_project_root",
     "ensure_streamlit_imports",
     "ensure_streamlit_path",

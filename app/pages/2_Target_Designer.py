@@ -1,10 +1,6 @@
-from app.bootstrap import ensure_streamlit_imports
+from app.bootstrap import ensure_streamlit_entrypoint
 
-ensure_streamlit_imports(__file__)
-
-from app.bootstrap import ensure_streamlit_path
-
-ensure_streamlit_path(__file__)
+ensure_streamlit_entrypoint(__file__)
 
 import streamlit as st
 
