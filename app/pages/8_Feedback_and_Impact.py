@@ -134,7 +134,7 @@ with st.form("impact_form"):
         )
         append_impact(entry)
         st.success("Impacto registrado.")
-        st.experimental_rerun()
+        st.rerun()
 
 with st.form("feedback_form"):
     st.subheader("Registrar feedback operativo")
@@ -164,4 +164,4 @@ with st.form("feedback_form"):
         )
         append_feedback(entry)
         st.success("Feedback registrado.")
-        st.experimental_rerun()
+        st.rerun()
