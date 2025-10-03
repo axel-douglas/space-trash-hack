@@ -12,6 +12,7 @@ from datetime import datetime
 import pandas as pd
 import polars as pl
 
+from .dataset_validation import InvalidWasteDatasetError, validate_waste_inventory
 from .generator import prepare_waste_frame
 from .data_sources import official_features_bundle
 from .paths import DATA_ROOT
@@ -105,6 +106,7 @@ def _load_waste_df_cached() -> pd.DataFrame:
     try:
         waste_path = require_waste_csv()
         base_df = pd.read_csv(waste_path)
+        validate_waste_inventory(base_df, dataset_label="el archivo waste_inventory_sample.csv")
     except MissingDatasetError:
         raise
     except FileNotFoundError as exc:  # pragma: no cover - exercised in error tests
@@ -487,6 +489,7 @@ def invalidate_all_io_caches() -> None:
 
 __all__ = [
     "MissingDatasetError",
+    "InvalidWasteDatasetError",
     "format_missing_dataset_message",
     "INSTALL_DATA_HINT",
     "load_waste_df",

@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 
 import app.modules.io as io_module
+from app.modules.dataset_validation import InvalidWasteDatasetError
 from app.modules.io import (
     MissingDatasetError,
     format_missing_dataset_message,
@@ -83,3 +84,67 @@ def test_get_last_modified_missing_path(tmp_path: Path) -> None:
     missing_path = tmp_path / "missing.txt"
 
     assert get_last_modified(missing_path) is None
+
+
+def _write_waste_csv(path: Path, *, mass: float = 1.0) -> None:
+    path.write_text(
+        """id,category,material_family,mass_kg,volume_l,flags
+W1,Plastic,Polymer,{mass},3.5,safe
+""".format(mass=mass),
+        encoding="utf-8",
+    )
+
+
+def _prepare_waste_csv(monkeypatch: pytest.MonkeyPatch, path: Path) -> None:
+    monkeypatch.setattr(io_module, "WASTE_CSV", path)
+    monkeypatch.setattr(io_module, "official_features_bundle", lambda: None)
+    io_module.invalidate_waste_cache()
+
+
+def test_load_waste_df_missing_required_column(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    waste_path = tmp_path / "waste_inventory_sample.csv"
+    waste_path.write_text(
+        """id,category,material_family,volume_l,flags
+W1,Plastic,Polymer,3.5,safe
+""",
+        encoding="utf-8",
+    )
+
+    _prepare_waste_csv(monkeypatch, waste_path)
+
+    with pytest.raises(InvalidWasteDatasetError) as excinfo:
+        load_waste_df()
+
+    assert "Faltan columnas obligatorias" in str(excinfo.value)
+
+
+def test_load_waste_df_invalid_numeric_values(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    waste_path = tmp_path / "waste_inventory_sample.csv"
+    _write_waste_csv(waste_path, mass=-2.0)
+
+    _prepare_waste_csv(monkeypatch, waste_path)
+
+    with pytest.raises(InvalidWasteDatasetError) as excinfo:
+        load_waste_df()
+
+    assert "valores inválidos" in str(excinfo.value)
+
+
+def test_load_waste_df_valid_dataset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    waste_path = tmp_path / "waste_inventory_sample.csv"
+    _write_waste_csv(waste_path, mass=4.0)
+
+    _prepare_waste_csv(monkeypatch, waste_path)
+
+    frame = load_waste_df()
+
+    assert not frame.empty
+    assert float(frame.loc[frame.index[0], "kg"]) == pytest.approx(4.0)
+
+    io_module.invalidate_waste_cache()
