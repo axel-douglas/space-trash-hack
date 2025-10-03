@@ -421,19 +421,37 @@ with st.expander("🛰️ Contexto y trazabilidad", expanded=True):
     latent_text = ", ".join(f"{v:.2f}" for v in latent[:8]) if latent else "—"
 
     st.markdown("**Resumen operativo**")
+    regolith_label = "<abbr title='Martian Global Simulant 1; referencia granulométrica y química para ISRU'>MGS-1</abbr>"
+    autoencoder_label = "<abbr title='Red autoencoder: compresión no supervisada que captura la firma multivariable de la receta'>autoencoder</abbr>"
+    summary_lines = [
+        (
+            f"- **Seguridad operacional**: nivel {safety['level']} · {safety['detail']}. "
+            "Úsalo para priorizar mitigaciones y definir ventanas de trabajo."
+        ),
+        (
+            f"- **Fracción de regolito {regolith_label}**: {int(regolith_pct * 100)}% de la mezcla base. "
+            "Ajusta con esta métrica los ensayos de validación y la logística de tamizado."
+        ),
+        (
+            f"- **Entrenamiento del modelo Rex-AI**: {metadata.get('trained_at', '—')} (vigencia del dataset). "
+            "Consulta esta fecha antes de certificar cambios de proceso."
+        ),
+        (
+            f"- **Cobertura de muestras**: {metadata.get('n_samples', '—')} registros analizados. "
+            "Úsalo para estimar la robustez estadística y planificar nuevos muestreos."
+        ),
+    ]
+    st.markdown("\n".join(summary_lines), unsafe_allow_html=True)
     st.markdown(
-        "\n".join(
-            [
-                f"- **Seguridad**: {safety['level']} · {safety['detail']}",
-                f"- **Regolito MGS-1**: {int(regolith_pct * 100)}%",
-                f"- **Modelo entrenado**: {metadata.get('trained_at', '—')}",
-                f"- **Muestras utilizadas**: {metadata.get('n_samples', '—')}",
-            ]
-        )
+        f"**Materiales mezclados:** {materials_text} · Empléalos como check-list para requisición y trazabilidad interna."
     )
-    st.markdown(f"**Materiales mezclados:** {materials_text}")
-    st.markdown(f"**Fuente IDs NASA:** {ids_text}")
-    st.markdown(f"**Vector latente (autoencoder):** {latent_text}")
+    st.markdown(
+        f"**Fuente IDs NASA:** {ids_text} · Referencia cruzada para auditorías y revisiones de configuración."
+    )
+    st.markdown(
+        f"**Vector latente ({autoencoder_label})**: {latent_text} · Interpreta la proximidad a casos previos antes de aprobar extrapolaciones.",
+        unsafe_allow_html=True,
+    )
     src = getattr(props, "source", "heuristic")
     if src.startswith("rexai"):
         trained_at = metadata.get("trained_at", "?")
@@ -445,6 +463,11 @@ with st.expander("🛰️ Contexto y trazabilidad", expanded=True):
     gran_df = context_data["granulometry"]
     spectra_df = context_data["spectra"]
     thermal_bundle = context_data["thermal"]
+
+    st.caption(
+        "Nota operativa: confronta estas curvas con la recepción de lotes (granulometría, espectros y perfiles térmicos)"
+        " para validar parámetros críticos antes de ajustar recetas o escalado."
+    )
 
     with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None) as lab_grid:
         with layout_block("depth-stack layer-shadow", parent=lab_grid) as gran_panel:
