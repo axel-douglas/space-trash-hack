@@ -355,9 +355,13 @@ def render_overview_dashboard(
     from app.modules.ml_models import get_model_registry
     from app.modules.navigation import render_breadcrumbs, render_stepper, set_active_step
     from app.modules.paths import DATA_ROOT
-    from app.modules.ui_blocks import initialise_frontend, render_brand_header
+    from app.modules.ui_blocks import (
+        configure_page,
+        initialise_frontend,
+        render_brand_header,
+    )
 
-    st.set_page_config(page_title="Mission Overview", page_icon="🛰️", layout="wide")
+    configure_page(page_title="Mission Overview", page_icon="🛰️")
     initialise_frontend()
 
     current_step = set_active_step("home")

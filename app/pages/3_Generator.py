@@ -43,6 +43,7 @@ from app.modules.schema import (
 )
 from app.modules.ui_blocks import (
     action_button,
+    configure_page,
     chipline,
     initialise_frontend,
     layout_block,
@@ -53,7 +54,7 @@ from app.modules.ui_blocks import (
 )
 from app.modules.visualizations import ConvergenceScene
 
-st.set_page_config(page_title="Rex-AI • Generador", page_icon="🤖", layout="wide")
+configure_page(page_title="Rex-AI • Generador", page_icon="🤖")
 initialise_frontend()
 
 current_step = set_active_step("generator")

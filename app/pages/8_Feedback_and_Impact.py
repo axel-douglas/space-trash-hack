@@ -31,13 +31,14 @@ from app.modules.impact import (
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.page_data import build_feedback_summary_table
 from app.modules.ui_blocks import (
+    configure_page,
     initialise_frontend,
     layout_stack,
     render_brand_header,
 )
 from app.modules.utils import safe_int
 
-st.set_page_config(page_title="Feedback & Impact", page_icon="📝", layout="wide")
+configure_page(page_title="Feedback & Impact", page_icon="📝")
 initialise_frontend()
 
 current_step = set_active_step("feedback")

@@ -26,6 +26,7 @@ from app.modules.io import (
 )
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.ui_blocks import (
+    configure_page,
     initialise_frontend,
     pill,
     render_brand_header,
@@ -193,7 +194,7 @@ def _format_reference_value(key: str, value: float) -> str:
 
 
 # ⚠️ Debe ser la PRIMERA llamada de Streamlit en la página
-st.set_page_config(page_title="Comparar & Explicar", page_icon="🧪", layout="wide")
+configure_page(page_title="Comparar & Explicar", page_icon="🧪")
 initialise_frontend()
 current_step = set_active_step("compare")
 
