@@ -5,7 +5,7 @@ import runpy
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Callable
+from typing import Any, Callable
 
 import pandas as pd
 import pytest
@@ -15,7 +15,7 @@ pytest.importorskip("streamlit")
 from pytest_streamlit import StreamlitRunner
 
 
-def _generator_page_app(inventory=None) -> None:
+def _generator_page_app(inventory=None, *, force_control_expander_none: bool = False) -> None:
     import os
     import runpy
     import sys
@@ -37,6 +37,7 @@ def _generator_page_app(inventory=None) -> None:
 
     original_expander = st.expander
     original_delta_enter = DeltaGenerator.__enter__
+    original_control_expander = DeltaGenerator.expander
 
     def _expander_with_value(*args, **kwargs):  # pragma: no cover - UI shim
         delta = original_expander(*args, **kwargs)
@@ -58,6 +59,20 @@ def _generator_page_app(inventory=None) -> None:
         return _Wrapper(delta)
 
     st.expander = _expander_with_value  # type: ignore[assignment]
+
+    class _NullExpander:
+        def __enter__(self):  # pragma: no cover - UI shim
+            return None
+
+        def __exit__(self, exc_type, exc, tb):  # pragma: no cover - UI shim
+            return False
+
+    def _control_expander_none(self, *args, **kwargs):  # pragma: no cover - UI shim
+        original_control_expander(self, *args, **kwargs)
+        return _NullExpander()
+
+    if force_control_expander_none:
+        DeltaGenerator.expander = _control_expander_none  # type: ignore[assignment]
 
     def _delta_enter(self):  # pragma: no cover - UI shim
         result = original_delta_enter(self)
@@ -211,6 +226,7 @@ def _generator_page_app(inventory=None) -> None:
         runpy.run_path(str(generator_page), run_name="__main__")
     finally:
         DeltaGenerator.__enter__ = original_delta_enter  # type: ignore[assignment]
+        DeltaGenerator.expander = original_control_expander  # type: ignore[assignment]
         st.expander = original_expander  # type: ignore[assignment]
         ui_blocks.load_theme = original_load_theme  # type: ignore[assignment]
         io_module.load_waste_df = original_waste_loader  # type: ignore[assignment]
@@ -226,17 +242,19 @@ def _generator_page_app(inventory=None) -> None:
 
 
 @pytest.fixture
-def run_generator_page() -> Callable[[pd.DataFrame | None], object]:
+def run_generator_page() -> Callable[..., object]:
     os.environ.setdefault("REXAI_PROJECT_ROOT", str(Path(__file__).resolve().parents[2]))
 
-    def _run(inventory: pd.DataFrame | None) -> object:
-        runner = StreamlitRunner(_generator_page_app, kwargs={"inventory": inventory})
+    def _run(inventory: pd.DataFrame | None, **extra: Any) -> object:
+        call_kwargs = {"inventory": inventory}
+        call_kwargs.update(extra)
+        runner = StreamlitRunner(_generator_page_app, kwargs=call_kwargs)
         return runner.run()
 
     return _run
 
 
-def test_generator_page_renders_histograms_with_inventory(run_generator_page: Callable[[pd.DataFrame | None], object]) -> None:
+def test_generator_page_renders_histograms_with_inventory(run_generator_page: Callable[..., object]) -> None:
     inventory = pd.DataFrame(
         {
             "id": ["poly-1", "alu-1"],
@@ -266,7 +284,7 @@ def test_generator_page_renders_histograms_with_inventory(run_generator_page: Ca
 
 
 def test_generator_page_warns_when_inventory_missing_columns(
-    run_generator_page: Callable[[pd.DataFrame | None], object]
+    run_generator_page: Callable[..., object]
 ) -> None:
     inventory = pd.DataFrame({"id": ["poly-1"]})
 
@@ -275,4 +293,23 @@ def test_generator_page_warns_when_inventory_missing_columns(
     info_messages = " ".join(block.body for block in app.info)
     assert "No hay densidades de polímeros en el inventario actual para comparar." in info_messages
     assert "No hay datos de tracción de aluminio en el inventario actual para comparar." in info_messages
+
+
+def test_generator_page_falls_back_when_expander_missing(
+    run_generator_page: Callable[..., object]
+) -> None:
+    app = run_generator_page(None, force_control_expander_none=True)
+
+    warning_messages = " ".join(block.body for block in app.warning)
+    assert "modo expandido" in warning_messages
+
+
+def test_generator_page_renders_without_inventory(
+    run_generator_page: Callable[..., object]
+) -> None:
+    app = run_generator_page(None)
+
+    # Expect at least the generator header to render even with minimal data.
+    headers = " ".join(block.body for block in app.header)
+    assert "Generador asistido por IA" in headers
 
