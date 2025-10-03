@@ -7,6 +7,7 @@ from datetime import datetime
 
 import pandas as pd
 import pytest
+import polars as pl
 
 import app.modules.io as io_module
 from app.modules.dataset_validation import InvalidWasteDatasetError
@@ -17,6 +18,7 @@ from app.modules.io import (
     load_process_df,
     load_targets,
     load_waste_df,
+    save_waste_df,
 )
 from app.modules.problematic import problematic_mask
 
@@ -148,3 +150,64 @@ def test_load_waste_df_valid_dataset(
     assert float(frame.loc[frame.index[0], "kg"]) == pytest.approx(4.0)
 
     io_module.invalidate_waste_cache()
+
+
+def test_save_waste_df_creates_backup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    waste_path = tmp_path / "waste_inventory_sample.csv"
+    _write_waste_csv(waste_path, mass=1.5)
+
+    _prepare_waste_csv(monkeypatch, waste_path)
+
+    backup_path = waste_path.with_suffix(waste_path.suffix + ".bak")
+
+    data = pd.DataFrame(
+        [
+            {
+                "id": "W9",
+                "category": "Metal",
+                "material_family": "Al",
+                "mass_kg": 3.25,
+                "volume_l": 0.8,
+                "flags": "safe",
+            }
+        ]
+    )
+
+    save_waste_df(data)
+
+    assert waste_path.read_text(encoding="utf-8").count("3.25") == 1
+    assert backup_path.exists()
+    assert "1.5" in backup_path.read_text(encoding="utf-8")
+
+
+def test_save_waste_df_failure_preserves_original(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    waste_path = tmp_path / "waste_inventory_sample.csv"
+    _write_waste_csv(waste_path, mass=2.75)
+
+    _prepare_waste_csv(monkeypatch, waste_path)
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(pl.DataFrame, "write_csv", _boom)
+
+    data = pd.DataFrame(
+        [
+            {
+                "id": "W1",
+                "category": "Plastic",
+                "material_family": "Polymer",
+                "mass_kg": 9.0,
+                "volume_l": 1.0,
+                "flags": "updated",
+            }
+        ]
+    )
+
+    with pytest.raises(RuntimeError):
+        save_waste_df(data)
+
+    assert waste_path.read_text(encoding="utf-8").count("2.75") == 1
+    assert not waste_path.with_suffix(waste_path.suffix + ".bak").exists()
