@@ -11,7 +11,6 @@ import pytest
 
 PAGE_MODULES = [
     "app.Home",
-    "app.pages.0_Mission_Overview",
     "app.pages.2_Target_Designer",
     "app.pages.3_Generator",
     "app.pages.4_Results_and_Tradeoffs",

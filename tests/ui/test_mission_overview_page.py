@@ -1,40 +1,29 @@
+from __future__ import annotations
+
 import os
-import re
-import sys
 from pathlib import Path
+from typing import Callable
 
 import pandas as pd
 import pytest
-from pytest_streamlit import StreamlitRunner
+from streamlit.testing.v1 import AppTest
 
 from app.modules import mission_overview
 from app.modules.mission_overview import compute_mission_summary
-from app.modules.io import format_missing_dataset_message, MissingDatasetError
+from app.modules.io import MissingDatasetError, format_missing_dataset_message
 
 
-def _mission_overview_app(*, missing_dataset: bool = False) -> None:
-    import os
-    import sys
-    from pathlib import Path
-    import importlib
+def _run_home_app(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    inventory_loader: Callable[[], pd.DataFrame],
+) -> AppTest:
+    """Execute ``streamlit run app/Home.py`` through ``AppTest`` with patches."""
 
-    import pandas as pd
+    from app.modules import ml_models, ui_blocks
     import streamlit as st
-    from app.modules.io import MissingDatasetError, load_waste_df
 
-    root_env = os.environ.get("REXAI_PROJECT_ROOT")
-    root = Path(root_env) if root_env else Path.cwd()
-    app_dir = root / "app"
-    for candidate in (root, app_dir):
-        if str(candidate) not in sys.path:
-            sys.path.insert(0, str(candidate))
-
-    original_page_config = st.set_page_config
-    st.set_page_config = lambda *args, **kwargs: None
-
-    import app.modules.ml_models as ml_models
-    import app.modules.ui_blocks as ui_blocks
-    import app.modules.mission_overview as mission_overview
+    os.environ.setdefault("REXAI_PROJECT_ROOT", str(Path(__file__).resolve().parents[2]))
 
     class _RegistryStub:
         metadata = {
@@ -44,50 +33,26 @@ def _mission_overview_app(*, missing_dataset: bool = False) -> None:
         }
         ready = True
 
-    original_registry = ml_models.get_model_registry
-    original_load_theme = ui_blocks.load_theme
-    original_inventory_loader = mission_overview.load_inventory_overview
+    monkeypatch.setattr(ml_models, "get_model_registry", lambda: _RegistryStub(), raising=False)
+    monkeypatch.setattr(ui_blocks, "load_theme", lambda **_: None, raising=False)
+    monkeypatch.setattr(st, "set_page_config", lambda *args, **kwargs: None, raising=False)
 
-    try:
-        ml_models.get_model_registry = lambda: _RegistryStub()  # type: ignore[assignment]
-        ui_blocks.load_theme = lambda **_: None  # type: ignore[assignment]
-        if missing_dataset:
-            missing_path = Path("missing_overview.csv")
+    original_dashboard = mission_overview.render_overview_dashboard
 
-            def _raise_missing() -> pd.DataFrame:
-                raise MissingDatasetError(missing_path)
+    def _render_override() -> None:
+        return original_dashboard(inventory_loader=inventory_loader)
 
-            mission_overview.load_inventory_overview = _raise_missing  # type: ignore[assignment]
-        else:
-            mission_overview.load_inventory_overview = load_waste_df  # type: ignore[assignment]
+    monkeypatch.setattr(mission_overview, "render_overview_dashboard", _render_override, raising=False)
 
-        sys.modules.pop("app.Home", None)
-        home_module = importlib.import_module("app.Home")
-        home_module.render_page()
-    finally:
-        ml_models.get_model_registry = original_registry  # type: ignore[assignment]
-        ui_blocks.load_theme = original_load_theme  # type: ignore[assignment]
-        mission_overview.load_inventory_overview = original_inventory_loader  # type: ignore[assignment]
-        st.set_page_config = original_page_config
+    app_path = Path(__file__).resolve().parents[2] / "app" / "Home.py"
+    app_test = AppTest.from_file(str(app_path))
+    return app_test.run()
 
 
-@pytest.fixture
-def mission_overview_runner() -> StreamlitRunner:
-    os.environ.setdefault("REXAI_PROJECT_ROOT", str(Path(__file__).resolve().parents[2]))
-    return StreamlitRunner(_mission_overview_app)
-
-
-def _extract_number(text: str) -> float | None:
-    match = re.search(r"[-+]?\d*\.?\d+", text)
-    if not match:
-        return None
-    return float(match.group())
-
-
-def test_mission_metrics_reflect_inventory(mission_overview_runner: StreamlitRunner) -> None:
-    app = mission_overview_runner.run()
-
+def test_mission_metrics_reflect_inventory(monkeypatch: pytest.MonkeyPatch) -> None:
     inventory_df = _load_inventory_fixture()
+    app = _run_home_app(monkeypatch, inventory_loader=lambda: inventory_df.copy(deep=True))
+
     summary = compute_mission_summary(inventory_df)
 
     metric_labels = {metric.label for metric in app.metric}
@@ -97,17 +62,16 @@ def test_mission_metrics_reflect_inventory(mission_overview_runner: StreamlitRun
     assert summary["energy_kwh"] > 0
 
 
-def test_model_section_displays_ready_status(mission_overview_runner: StreamlitRunner) -> None:
-    app = mission_overview_runner.run()
+def test_model_section_displays_ready_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    inventory_df = _load_inventory_fixture()
+    app = _run_home_app(monkeypatch, inventory_loader=lambda: inventory_df.copy(deep=True))
 
     model_metric = next(metric for metric in app.metric if metric.label == "Estado del modelo")
     assert "Entrenado" in (model_metric.delta or "")
     assert model_metric.value.startswith("✅")
 
 
-def test_inventory_table_and_captions(mission_overview_runner: StreamlitRunner) -> None:
-    _ = mission_overview_runner  # ensure environment hooks run for downstream pages
-
+def test_inventory_table_and_captions() -> None:
     inventory_df = _load_inventory_fixture()
     assert not inventory_df.empty
 
@@ -123,20 +87,22 @@ def test_inventory_table_and_captions(mission_overview_runner: StreamlitRunner) 
     assert problematic_expected >= 0
 
 
-def test_home_page_shows_error_for_missing_dataset() -> None:
-    runner = StreamlitRunner(
-        _mission_overview_app, kwargs={"missing_dataset": True}
-    )
-    app = runner.run()
+def test_home_page_shows_error_for_missing_dataset(monkeypatch: pytest.MonkeyPatch) -> None:
+    missing_path = Path("missing_overview.csv")
+
+    def _raise_missing() -> pd.DataFrame:
+        raise MissingDatasetError(missing_path)
+
+    app = _run_home_app(monkeypatch, inventory_loader=_raise_missing)
 
     error_messages = " ".join(block.body for block in app.error)
     assert "missing_overview.csv" in error_messages
     assert "python scripts/download_datasets.py" in error_messages
-    expected_message = format_missing_dataset_message(
-        MissingDatasetError(Path("missing_overview.csv"))
-    )
+    expected_message = format_missing_dataset_message(MissingDatasetError(missing_path))
     assert expected_message in error_messages
     assert not app.exception
+
+
 def _load_inventory_fixture() -> pd.DataFrame:
     data_path = Path(__file__).resolve().parents[2] / "data" / "waste_inventory_sample.csv"
     df = pd.read_csv(data_path)

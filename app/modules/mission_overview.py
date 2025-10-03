@@ -16,7 +16,7 @@ that they can be reused from multiple pages without duplicating markup.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 import pandas as pd
 import streamlit as st
@@ -24,6 +24,7 @@ import streamlit as st
 from app.modules.io import (
     MissingDatasetError,
     format_missing_dataset_message,
+    get_last_modified,
     load_waste_df,
 )
 
@@ -336,4 +337,80 @@ def render_material_summary(
             hide_index=True,
             use_container_width=True,
         )
+
+
+def _resolve_inventory_loader(
+    inventory_loader: Callable[[], pd.DataFrame] | None = None,
+) -> pd.DataFrame:
+    if inventory_loader is None:
+        return load_inventory_overview()
+    return inventory_loader()
+
+
+def render_overview_dashboard(
+    *, inventory_loader: Callable[[], pd.DataFrame] | None = None
+) -> None:
+    """Render the combined mission overview dashboard used on the home page."""
+
+    from app.modules.ml_models import get_model_registry
+    from app.modules.navigation import render_breadcrumbs, render_stepper, set_active_step
+    from app.modules.paths import DATA_ROOT
+    from app.modules.ui_blocks import initialise_frontend, load_theme
+
+    st.set_page_config(page_title="Mission Overview", page_icon="🛰️", layout="wide")
+    initialise_frontend()
+
+    current_step = set_active_step("overview")
+    load_theme(show_hud=False)
+
+    render_breadcrumbs(current_step)
+    render_stepper(current_step)
+
+    st.title("0) Mission Overview")
+
+    try:
+        inventory_df = _resolve_inventory_loader(inventory_loader)
+    except MissingDatasetError as error:
+        st.error(format_missing_dataset_message(error))
+        st.stop()
+        return
+
+    mission_metrics = compute_mission_summary(inventory_df)
+    render_mission_objective(mission_metrics)
+
+    registry = get_model_registry()
+    metadata = getattr(registry, "metadata", {}) if registry else {}
+    model_summary = summarize_model_state(metadata)
+    render_model_health(model_summary)
+
+    if inventory_df is None or inventory_df.empty:
+        st.info("No se encontró inventario para la misión actual.")
+        return
+
+    categories_column = inventory_df.get("category")
+    unique_categories: list[str] = []
+    if categories_column is not None:
+        categories: Iterable[str] = (
+            str(value).strip() for value in categories_column if str(value).strip()
+        )
+        unique_categories = sorted({category for category in categories})
+
+    problematic_column = inventory_df.get("_problematic")
+    problematic = 0
+    if problematic_column is not None:
+        problematic = int(pd.Series(problematic_column).astype(bool).sum())
+
+    if unique_categories:
+        categories_label = ", ".join(unique_categories[:5])
+        if len(unique_categories) > 5:
+            categories_label += "…"
+        st.caption(f"Categorías: {categories_label}")
+    st.caption(f"Problemáticos detectados: {problematic}")
+
+    data_path = DATA_ROOT / "waste_inventory_sample.csv"
+    last_modified = get_last_modified(data_path)
+    if last_modified:
+        st.caption(last_modified.strftime("Actualizado: %Y-%m-%d %H:%M"))
+
+    render_material_summary(inventory_df, max_rows=20)
 
