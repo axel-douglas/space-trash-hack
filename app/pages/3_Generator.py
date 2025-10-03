@@ -1,6 +1,10 @@
 from contextlib import contextmanager
 from typing import Any, Generator, Mapping
 
+from app.bootstrap import ensure_streamlit_imports
+
+ensure_streamlit_imports(__file__)
+
 from app.bootstrap import ensure_streamlit_path
 
 ensure_streamlit_path(__file__)

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
+import sys
 
 import pytest
 
@@ -28,3 +30,11 @@ def test_page_module_importable(module_name: str) -> None:
     spec = importlib.util.find_spec(module_name)
     assert spec is not None, f"Expected to discover module '{module_name}'"
     assert spec.loader is not None, f"Expected loader for module '{module_name}'"
+    try:
+        module = importlib.import_module(module_name)
+    except ModuleNotFoundError as error:  # pragma: no cover - explicit failure path
+        pytest.fail(f"Unexpected ModuleNotFoundError importing '{module_name}': {error}")
+    except Exception:
+        module = sys.modules.get(module_name)
+    if module is not None:
+        assert module.__name__ == module_name

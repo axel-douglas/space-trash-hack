@@ -7,6 +7,22 @@ from pathlib import Path
 from typing import Iterable
 
 
+def ensure_streamlit_imports(module_file: str | Path | None = None) -> Path:
+    """Ensure entrypoints can import the project without circular hacks."""
+
+    resolved = Path(module_file) if module_file is not None else Path(__file__)
+    resolved = resolved.resolve()
+    parents = resolved.parents
+    try:
+        root = parents[2]
+    except IndexError:  # pragma: no cover - defensive fallback
+        root = parents[-1]
+    root_str = str(root)
+    if root_str not in sys.path:
+        sys.path.insert(0, root_str)
+    return root
+
+
 def _candidate_roots(start: Path) -> Iterable[Path]:
     """Yield candidate roots from ``start`` up to the filesystem root."""
 
@@ -49,4 +65,8 @@ def ensure_project_root(start: str | Path | None = None) -> Path:
     return ensure_streamlit_path(start)
 
 
-__all__ = ["ensure_project_root", "ensure_streamlit_path"]
+__all__ = [
+    "ensure_project_root",
+    "ensure_streamlit_imports",
+    "ensure_streamlit_path",
+]
