@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import os
-import runpy
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Callable
@@ -14,13 +12,13 @@ pytest.importorskip("streamlit")
 
 from pytest_streamlit import StreamlitRunner
 
+from app.bootstrap import ensure_project_root
 from app.modules.io import format_missing_dataset_message, MissingDatasetError
 
 
 def _compare_page_app(*, missing_dataset: bool = False) -> None:
     import os
     import runpy
-    import sys
     import types
     from pathlib import Path
     from types import SimpleNamespace
@@ -31,11 +29,9 @@ def _compare_page_app(*, missing_dataset: bool = False) -> None:
     import streamlit as st
 
     root_env = os.environ.get("REXAI_PROJECT_ROOT")
-    root = Path(root_env) if root_env else Path.cwd()
+    start = Path(root_env) if root_env else Path(__file__).resolve()
+    root = ensure_project_root(start)
     app_dir = root / "app"
-    for candidate in (root, app_dir):
-        if str(candidate) not in sys.path:
-            sys.path.insert(0, str(candidate))
 
     original_page_config = st.set_page_config
     st.set_page_config = lambda *args, **kwargs: None

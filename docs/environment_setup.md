@@ -42,6 +42,19 @@ Training pipeline para Rex-AI
 
 Los *warnings* de Streamlit (`missing ScriptRunContext`) son esperados cuando se ejecuta fuera de `streamlit run` y no afectan la carga del módulo.
 
+> 🔁 **Import helper oficial**: evitá añadir rutas manuales en los scripts CLI
+> o en las pruebas. Llama a `ensure_project_root(__file__)` antes de importar
+> módulos de `app`:
+>
+> ```python
+> from app.bootstrap import ensure_project_root
+>
+> PROJECT_ROOT = ensure_project_root(__file__)
+> ```
+>
+> Esto mantiene estable la resolución de `app.*` y evita reintroducir hacks
+> circulares en `sys.path`.
+
 ## 3. Próximos pasos
 
 1. Evaluar si es necesario fijar versiones adicionales (p. ej. `torch==2.4.x`) antes de entrenar modelos TabTransformer.

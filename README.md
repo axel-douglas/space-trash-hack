@@ -29,6 +29,18 @@ No se requieren variables de entorno adicionales para el arranque interactivo.
 > Esto fuerza la inclusión de la raíz del repositorio en `sys.path` cuando se
 > ejecutan archivos sueltos con `streamlit run` o `python app/...` y evita los
 > `ModuleNotFoundError` al importar `app.*`.
+>
+> 🧪 **Scripts y tests**: para utilidades CLI o fixtures de Pytest, usa
+> `ensure_project_root(__file__)` en vez de manipular `sys.path` a mano:
+>
+> ```python
+> from app.bootstrap import ensure_project_root
+>
+> PROJECT_ROOT = ensure_project_root(__file__)
+> ```
+>
+> Así mantenemos un único helper oficial para exponer el paquete `app` sin
+> reintroducir hacks circulares.
 
 El script `app/Home.py` centraliza la vista de *Mission Overview* y actúa como
 único entrypoint interactivo, manteniendo alineada la pantalla principal con el

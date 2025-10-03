@@ -6,6 +6,8 @@ pytest.importorskip("streamlit")
 
 from pytest_streamlit import StreamlitRunner
 
+from app.bootstrap import ensure_project_root
+
 
 def _feedback_page_app(
     *,
@@ -16,7 +18,6 @@ def _feedback_page_app(
 ) -> None:
     import os
     import runpy
-    import sys
     from pathlib import Path
     from types import SimpleNamespace
 
@@ -24,11 +25,9 @@ def _feedback_page_app(
     import streamlit as st
 
     root_env = os.environ.get("REXAI_PROJECT_ROOT")
-    root = Path(root_env) if root_env else Path.cwd()
+    start = Path(root_env) if root_env else Path(__file__).resolve()
+    root = ensure_project_root(start)
     app_dir = root / "app"
-    for candidate in (root, app_dir):
-        if str(candidate) not in sys.path:
-            sys.path.insert(0, str(candidate))
 
     st.session_state.clear()
 
