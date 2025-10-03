@@ -1078,7 +1078,7 @@ with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None
                 st.session_state[generator_state_key] = "loading"
                 st.session_state[generator_trigger_key] = True
                 st.session_state.pop(generator_error_key, None)
-                st.experimental_rerun()
+                st.rerun()
 
             button_state_now = st.session_state.get(generator_state_key)
             if button_error and button_state_now == "error":
