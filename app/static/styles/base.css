@@ -190,12 +190,13 @@ table {
 }
 
 .mission-brand-header {
-  --mission-brand-width: clamp(120px, 18vw, 168px);
+  --mission-brand-width: clamp(108px, 12vw, 156px);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--mission-space-4xs);
+  width: var(--mission-brand-width);
+  gap: var(--mission-space-2xs);
   text-align: center;
   margin-block: var(--mission-space-lg);
   padding: 0;
@@ -203,7 +204,7 @@ table {
 }
 
 .mission-brand-header__logo {
-  width: var(--mission-brand-width);
+  width: 100%;
 }
 
 .mission-brand-header__logo img {
@@ -215,11 +216,11 @@ table {
 
 .mission-brand-header__tagline {
   display: block;
-  width: var(--mission-brand-width);
-  margin: var(--mission-space-4xs) auto 0;
-  font-size: 0.72rem;
+  width: 100%;
+  margin: var(--mission-space-2xs) auto 0;
+  font-size: 0.68rem;
   font-weight: 600;
-  letter-spacing: 0.22em;
+  letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--mission-color-muted);
 }
