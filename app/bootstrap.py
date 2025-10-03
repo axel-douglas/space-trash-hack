@@ -11,7 +11,7 @@ def ensure_streamlit_entrypoint(module_file: str | Path) -> Path:
     """Ensure the Streamlit entrypoint can import ``app`` modules."""
 
     module_path = Path(module_file).resolve()
-    root = _find_project_root(module_path.parent)
+    root = _find_project_root(module_path)
     root_str = str(root)
     if root_str not in sys.path:
         sys.path.insert(0, root_str)
@@ -29,11 +29,16 @@ def _candidate_roots(start: Path) -> Iterable[Path]:
 def _find_project_root(start: Path) -> Path:
     """Locate the repository root given a starting path within the project."""
 
+    last_candidate: Path | None = None
     for candidate in _candidate_roots(start):
-        app_dir = candidate / "app"
+        base = candidate if candidate.is_dir() else candidate.parent
+        last_candidate = base
+        app_dir = base / "app"
         if app_dir.is_dir() and (app_dir / "__init__.py").is_file():
-            return candidate
-    return start.resolve().parents[-1]
+            return base
+    if last_candidate is None:
+        raise RuntimeError("Unable to determine project root")
+    return last_candidate
 
 
 def ensure_project_root(start: str | Path | None = None) -> Path:
