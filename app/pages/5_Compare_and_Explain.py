@@ -523,13 +523,36 @@ with tab1:
     # Resumen del candidato
     cL, cR = st.columns([1.2, 1.0])
     with cL:
-        st.markdown(f"**Proceso:** {c['process_id']} — {c['process_name']}")
-        st.markdown(f"**Materiales:** {', '.join(c['materials'])}")
-        st.markdown(f"**Pesos:** {c['weights']}")
-        st.markdown(f"**Score:** {c['score']:.2f}")
+        st.markdown(f"#### Candidato #{int(pick)} — {c['process_name']}")
+        st.caption(f"Proceso {c['process_id']} · Materiales: {', '.join(c['materials'])}")
+
         p = c["props"]
-        st.markdown(f"**Predicción** → Rigidez {p.rigidity:.2f} | Estanqueidad {p.tightness:.2f} | Masa {p.mass_final_kg:.2f} kg")
-        st.markdown(f"**Recursos** → Energía {p.energy_kwh:.2f} kWh | Agua {p.water_l:.2f} L | Crew {p.crew_min:.0f} min")
+        primary_metrics = st.columns(3)
+        with primary_metrics[0]:
+            st.metric("Score", f"{c['score']:.2f}")
+        with primary_metrics[1]:
+            st.metric("Rigidez", f"{p.rigidity:.2f}")
+        with primary_metrics[2]:
+            st.metric("Estanqueidad", f"{p.tightness:.2f}")
+
+        resource_metrics = st.columns(3)
+        with resource_metrics[0]:
+            st.metric("Energía (kWh)", f"{p.energy_kwh:.2f}")
+        with resource_metrics[1]:
+            st.metric("Agua (L)", f"{p.water_l:.2f}")
+        with resource_metrics[2]:
+            st.metric("Crew (min)", f"{p.crew_min:.0f}")
+
+        st.metric("Masa final (kg)", f"{p.mass_final_kg:.2f}")
+
+        weights_series = pd.Series(c["weights"], name="Peso")
+        weights_df = (
+            weights_series.rename_axis("Factor").reset_index()
+            if not weights_series.empty
+            else pd.DataFrame({"Factor": [], "Peso": []})
+        )
+        st.dataframe(weights_df, use_container_width=True, hide_index=True)
+
         # Pills de ajuste a límites
         pill_markup: list[str] = []
         limits = [

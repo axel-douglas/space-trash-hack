@@ -125,20 +125,13 @@ def card(title: str, body: str = "", *, render: bool = True) -> str:
     return markup
 
 
+
 _PILL_KINDS = {
     "ok": "Rango nominal",
     "warn": "Monitoreo",
     "risk": "Riesgo",
     "info": "Referencia informativa",
     "accent": "Etiqueta destacada",
-}
-
-_PILL_COLORS: dict[str, tuple[str, str]] = {
-    "ok": ("var(--mission-color-positive-soft)", "var(--mission-color-positive)"),
-    "warn": ("var(--mission-color-warning-soft)", "var(--mission-color-warning)"),
-    "risk": ("var(--mission-color-critical-soft)", "var(--mission-color-critical)"),
-    "info": ("var(--mission-color-panel)", "var(--mission-color-accent)"),
-    "accent": ("var(--mission-color-accent-soft)", "var(--mission-color-accent)"),
 }
 
 _CHIP_TONES: dict[str, tuple[str, str]] = {
@@ -155,7 +148,7 @@ _CHIP_TONES: dict[str, tuple[str, str]] = {
 
 def pill(
     label: str,
-    kind: Literal["ok", "warn", "risk"] = "ok",
+    kind: Literal["ok", "warn", "risk", "info", "accent"] = "ok",
     *,
     render: bool = True,
 ) -> str:
@@ -163,25 +156,14 @@ def pill(
 
     load_theme(show_hud=False)
     tone = kind if kind in _PILL_KINDS else "ok"
-    bg_color, fg_color = _PILL_COLORS.get(tone, _PILL_COLORS["ok"])
-    base_style = (
-        "display:inline-flex; align-items:center; justify-content:center; "
-        "gap: var(--mission-space-2xs); padding: 0.35rem 0.9rem; border-radius: 999px; "
-        "font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; "
-        "font-size: 0.78rem;"
-    )
-    style = (
-        f"{base_style} background-color: var(--mission-pill-bg, {bg_color}); "
-        f"color: var(--mission-pill-fg, {fg_color}); "
-        f"border: var(--mission-line-weight) solid var(--mission-pill-fg, {fg_color});"
-    )
     title_attr = escape(_PILL_KINDS[tone])
     tone_attr = escape(tone)
+    label_html = escape(label)
     markup = (
-        f"<span data-mission-pill='{tone}' data-lab-pill='{tone}' data-kind='{tone_attr}' "
-        f"style=\"{style}\" title=\"{title_attr}\">"
-        f"{escape(label)}"
-        "</span>"
+        f"<span class='mission-pill mission-pill--{tone_attr}' "
+        f"data-mission-pill='{tone_attr}' data-lab-pill='{tone_attr}' "
+        f"data-kind='{tone_attr}' title='{title_attr}'>"
+        f"{label_html}</span>"
     )
     if render:
         st.markdown(markup, unsafe_allow_html=True)
