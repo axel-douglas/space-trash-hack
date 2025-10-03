@@ -173,6 +173,7 @@ table {
   border-color: var(--mission-color-critical);
 }
 
+/* Informational tone emphasises the analytical accent colour. */
 [data-mission-pill="info"],
 .mission-pill--info {
   background-color: var(--mission-color-panel);
@@ -180,11 +181,12 @@ table {
   border-color: var(--mission-color-accent);
 }
 
+/* Accent tone highlights key tags with stronger borders. */
 [data-mission-pill="accent"],
 .mission-pill--accent {
   background-color: var(--mission-color-accent-soft);
   color: var(--mission-color-surface);
-  border-color: var(--mission-color-accent-soft);
+  border-color: var(--mission-color-accent);
 }
 
 :focus-visible {

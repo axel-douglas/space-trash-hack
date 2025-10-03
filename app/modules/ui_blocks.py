@@ -126,7 +126,10 @@ def card(title: str, body: str = "", *, render: bool = True) -> str:
 
 
 
-_PILL_KINDS = {
+PillKind = Literal["ok", "warn", "risk", "info", "accent"]
+
+
+_PILL_KINDS: dict[PillKind, str] = {
     "ok": "Rango nominal",
     "warn": "Monitoreo",
     "risk": "Riesgo",
@@ -148,7 +151,7 @@ _CHIP_TONES: dict[str, tuple[str, str]] = {
 
 def pill(
     label: str,
-    kind: Literal["ok", "warn", "risk", "info", "accent"] = "ok",
+    kind: PillKind = "ok",
     *,
     render: bool = True,
 ) -> str:
