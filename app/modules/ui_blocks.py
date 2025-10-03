@@ -102,37 +102,37 @@ def inject_css(show_hud: bool = False) -> None:
 
 
 def render_brand_header(
-    tagline: str | None = None,
+    tagline: str | None = "Interplanetary Recycling",
     *,
     alt_text: str = "RexAI mission control logo",
 ) -> None:
-    """Render the RexAI logo and tagline centred within the layout."""
+    """Render the RexAI logo and optional tagline centred within the layout."""
 
     load_theme(show_hud=False)
 
-    resolved_tagline = tagline or "Inteligencia de misión para residuos orbitales."
     logo_path = _static_path(_BRAND_LOGO_FILENAME)
     data_uri = _encode_svg_base64(logo_path)
     alt_attr = escape(alt_text) if alt_text else ""
 
     if data_uri is None:
-        markup = (
-            f"<div class='mission-brand-header'>"
-            f"<div class='mission-brand-header__logo'>"
-            f"<img src='{escape(str(logo_path))}' alt='{alt_attr}' />"
-            f"</div>"
-            f"<p class='mission-brand-header__tagline'>{escape(resolved_tagline)}</p>"
-            f"</div>"
-        )
+        logo_markup = f"<img src='{escape(str(logo_path))}' alt='{alt_attr}' />"
     else:
-        markup = (
-            f"<div class='mission-brand-header'>"
-            f"<div class='mission-brand-header__logo'>"
-            f"<img src='{data_uri}' alt='{alt_attr}' />"
-            f"</div>"
-            f"<p class='mission-brand-header__tagline'>{escape(resolved_tagline)}</p>"
-            f"</div>"
+        logo_markup = f"<img src='{data_uri}' alt='{alt_attr}' />"
+
+    tagline_markup = ""
+    if tagline:
+        tagline_markup = (
+            f"<p class='mission-brand-header__tagline'>{escape(tagline)}</p>"
         )
+
+    markup = (
+        "<div class='mission-brand-header'>"
+        "<div class='mission-brand-header__logo'>"
+        f"{logo_markup}"
+        "</div>"
+        f"{tagline_markup}"
+        "</div>"
+    )
 
     st.markdown(markup, unsafe_allow_html=True)
 

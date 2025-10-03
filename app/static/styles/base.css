@@ -194,30 +194,33 @@ table {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--mission-space-xs);
+  gap: var(--mission-space-sm);
   text-align: center;
   margin-block: var(--mission-space-lg);
   padding: var(--mission-space-md) var(--mission-space-lg);
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid rgba(11, 21, 38, 0.12);
+  background: var(--mission-color-text);
   border-radius: var(--mission-radius-md);
-  box-shadow: 0 8px 24px rgba(11, 21, 38, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 12px 28px rgba(11, 21, 38, 0.28);
+  color: var(--mission-color-surface);
 }
 
 .mission-brand-header__logo img {
   display: block;
-  width: min(220px, 60vw);
+  width: min(180px, 45vw);
   height: auto;
-  filter: drop-shadow(0 4px 12px rgba(11, 21, 38, 0.15));
+  margin: 0;
+  filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.35));
 }
 
 .mission-brand-header__tagline {
-  margin: 0;
-  font-size: 0.95rem;
+  margin: var(--mission-space-2xs) 0 0;
+  font-size: 0.82rem;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--mission-color-text);
+  color: var(--mission-color-surface);
+  opacity: 0.9;
 }
 
 :focus-visible {
