@@ -19,20 +19,45 @@ class MissionStep:
 
 
 MISSION_STEPS: tuple[MissionStep, ...] = (
-    MissionStep("overview", "Overview", "Home", "Panorama general de la misión"),
-    MissionStep("target", "Target (legacy)", "2_Target_Designer", "Definir objetivos (legacy)"),
-    MissionStep("generator", "Generador (legacy)", "3_Generator", "Recetas asistidas (legacy)"),
+    MissionStep("home", "Home", "Home", "Panel principal de la misión"),
+    MissionStep("target", "Definir objetivo", "2_Target_Designer", "Configura las metas de la misión"),
+    MissionStep("generator", "Generador asistido", "3_Generator", "Explora candidatos sugeridos por IA"),
     MissionStep(
         "results",
-        "Resultados (legacy)",
+        "Resultados y trade-offs",
         "4_Results_and_Tradeoffs",
-        "Trade-offs y métricas (legacy)",
+        "Evalúa resultados y métricas clave",
     ),
-    MissionStep("compare", "Comparar (legacy)", "5_Compare_and_Explain", "Explicabilidad (legacy)"),
-    MissionStep("export", "Export (legacy)", "6_Pareto_and_Export", "Pareto y export (legacy)"),
-    MissionStep("playbooks", "Playbooks (legacy)", "7_Scenario_Playbooks", "Escenarios (legacy)"),
-    MissionStep("feedback", "Feedback (legacy)", "8_Feedback_and_Impact", "Impacto y retraining (legacy)"),
-    MissionStep("capacity", "Capacidad (legacy)", "9_Capacity_Simulator", "Simulación (legacy)"),
+    MissionStep(
+        "compare",
+        "Compare & Explain",
+        "5_Compare_and_Explain",
+        "Compara alternativas y explica decisiones",
+    ),
+    MissionStep(
+        "export",
+        "Pareto & Export",
+        "6_Pareto_and_Export",
+        "Prepara entregables y exporta datos",
+    ),
+    MissionStep(
+        "playbooks",
+        "Scenario Playbooks",
+        "7_Scenario_Playbooks",
+        "Crea playbooks con filtros predefinidos",
+    ),
+    MissionStep(
+        "feedback",
+        "Feedback & Impact",
+        "8_Feedback_and_Impact",
+        "Recoge feedback y mide impacto",
+    ),
+    MissionStep(
+        "capacity",
+        "Capacity Simulator",
+        "9_Capacity_Simulator",
+        "Simula capacidad y recursos disponibles",
+    ),
 )
 
 _STEP_LOOKUP = {step.key: step for step in MISSION_STEPS}
@@ -62,11 +87,12 @@ def set_active_step(step_key: str) -> MissionStep:
 def breadcrumb_labels(step: MissionStep, extra: Sequence[str] | None = None) -> list[str]:
     """Compute the textual breadcrumb trail for ``step``.
 
-    The resulting list always starts with ``Home`` and ends with the active step.
-    Additional labels can be appended through ``extra``.
+    The resulting list ends with the active step and includes every previous
+    milestone in the mission flow. Additional labels can be appended through
+    ``extra``.
     """
 
-    labels: list[str] = ["Home"]
+    labels: list[str] = []
     for candidate in MISSION_STEPS:
         labels.append(candidate.label)
         if candidate.key == step.key:
