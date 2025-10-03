@@ -58,7 +58,10 @@ def _read_css_bundle() -> str:
         return ""
 
 
-def _inject_css_once() -> None:
+def load_theme(*, show_hud: bool = True) -> None:
+    """Inject the lightweight NASA-inspired base stylesheet."""
+
+    del show_hud  # compatibility no-op
     css = _read_css_bundle()
     if not css:
         return
@@ -69,18 +72,6 @@ def _inject_css_once() -> None:
 
     st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
     st.session_state[_THEME_HASH_KEY] = css_hash
-
-
-
-
-
-
-
-def load_theme(*, show_hud: bool = True) -> None:
-    """Inject the lightweight NASA-inspired base stylesheet."""
-
-    del show_hud  # compatibility no-op
-    _inject_css_once()
 
 
 def initialise_frontend() -> None:

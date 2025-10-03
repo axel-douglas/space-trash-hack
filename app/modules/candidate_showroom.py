@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from app.modules.safety import check_safety, safety_badge
-from app.modules.ui_blocks import action_button
+from app.modules.ui_blocks import action_button, chipline, pill
 
 _SUCCESS_KEY = "__candidate_showroom_success__"
 _MODAL_KEY = "showroom_modal"
@@ -298,12 +298,14 @@ def _render_candidate_table(
     active_filters.extend(resource_labels)
 
     if only_safe or active_filters:
-        captions: list[str] = []
+        st.caption("Filtros activos")
+        chips: list[dict[str, str]] = []
         if only_safe:
-            captions.append("Filtro de seguridad activo")
-        if active_filters:
-            captions.append("; ".join(active_filters))
-        st.caption(" · ".join(captions))
+            chips.append({"label": "Sólo seguros", "icon": "🛡️", "tone": "positive"})
+        for label in active_filters:
+            icon = "🎯" if label.startswith("Score") else "⚙️"
+            chips.append({"label": label, "icon": icon, "tone": "info"})
+        chipline(chips)
 
     table_payload: list[dict[str, Any]] = []
     for rank, row in enumerate(rows, start=1):
@@ -365,16 +367,17 @@ def _render_candidate_actions(
         badge_cols[1].metric("Rigidez", f"{row['rigidity']:.2f}")
         badge_cols[2].metric("Consumo", f"{row['energy']:.2f} kWh")
 
-        detail_cols = st.columns(3)
+        detail_cols = st.columns(2)
         detail_cols[0].metric("Agua", f"{row['water']:.2f} L")
         detail_cols[1].metric("Crew", f"{row['crew']:.1f} min")
+
         safety_label = "Seguro" if row["is_safe"] else "Riesgo"
-        detail_cols[2].metric("Seguridad", safety_label)
+        pill(f"Seguridad: {safety_label}", kind="ok" if row["is_safe"] else "risk")
         st.caption(badge.get("detail", ""))
 
         badges = row.get("badges", [])
         if badges:
-            st.caption("Etiquetas: " + " · ".join(badges))
+            chipline(badges)
 
         candidate_key = row["key"]
         modal_key = st.session_state.get(_MODAL_KEY)
