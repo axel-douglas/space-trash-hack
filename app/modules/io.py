@@ -4,8 +4,6 @@ from __future__ import annotations
 import copy
 import json
 import math
-import errno
-import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -62,10 +60,28 @@ PROBLEM_TAGS = {
     "struts": "Estructuras/estrús Al",
 }
 
-def _ensure_exists():
-    for p in [WASTE_CSV, PROC_CSV, TARGETS_JSON]:
-        if not p.exists():
-            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(p))
+def _require_path(path: Path) -> Path:
+    if not path.exists():
+        raise MissingDatasetError(path)
+    return path
+
+
+def require_waste_csv() -> Path:
+    """Ensure the waste inventory dataset is present on disk."""
+
+    return _require_path(WASTE_CSV)
+
+
+def require_process_csv() -> Path:
+    """Ensure the process catalog dataset is present on disk."""
+
+    return _require_path(PROC_CSV)
+
+
+def require_targets_json() -> Path:
+    """Ensure the mission targets presets dataset is present on disk."""
+
+    return _require_path(TARGETS_JSON)
 
 
 def _to_missing_dataset_error(
@@ -87,8 +103,10 @@ def _load_waste_df_cached() -> pd.DataFrame:
     y preserva la proveniencia en columnas _source_*.
     """
     try:
-        _ensure_exists()
-        base_df = pd.read_csv(WASTE_CSV)
+        waste_path = require_waste_csv()
+        base_df = pd.read_csv(waste_path)
+    except MissingDatasetError:
+        raise
     except FileNotFoundError as exc:  # pragma: no cover - exercised in error tests
         raise _to_missing_dataset_error(exc, WASTE_CSV) from exc
     source_snapshot = base_df.copy(deep=True)
@@ -406,8 +424,10 @@ def format_mission_bundle(
 @lru_cache(maxsize=1)
 def _load_process_df_cached() -> pd.DataFrame:
     try:
-        _ensure_exists()
-        return pd.read_csv(PROC_CSV)
+        process_path = require_process_csv()
+        return pd.read_csv(process_path)
+    except MissingDatasetError:
+        raise
     except FileNotFoundError as exc:  # pragma: no cover - exercised in error tests
         raise _to_missing_dataset_error(exc, PROC_CSV) from exc
 
@@ -419,8 +439,10 @@ def load_process_catalog() -> pd.DataFrame:
 @lru_cache(maxsize=1)
 def _load_targets_cached() -> list[dict]:
     try:
-        _ensure_exists()
-        return json.loads(TARGETS_JSON.read_text(encoding="utf-8"))
+        targets_path = require_targets_json()
+        return json.loads(targets_path.read_text(encoding="utf-8"))
+    except MissingDatasetError:
+        raise
     except FileNotFoundError as exc:  # pragma: no cover - exercised in error tests
         raise _to_missing_dataset_error(exc, TARGETS_JSON) from exc
 
