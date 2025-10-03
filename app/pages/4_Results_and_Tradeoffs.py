@@ -19,7 +19,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from app.modules.navigation import render_breadcrumbs, set_active_step
-from app.modules.ui_blocks import initialise_frontend, layout_block, load_theme
+from app.modules.ui_blocks import initialise_frontend, layout_block, load_theme, render_brand_header
 
 from app.modules.data_sources import (
     load_regolith_granulometry,
@@ -46,6 +46,8 @@ initialise_frontend()
 current_step = set_active_step("results")
 
 load_theme()
+
+render_brand_header()
 
 render_breadcrumbs(current_step)
 

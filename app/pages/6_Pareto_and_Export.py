@@ -33,7 +33,13 @@ from app.modules.page_data import (
     build_material_summary_table,
 )
 from app.modules.safety import check_safety, safety_badge
-from app.modules.ui_blocks import action_button, initialise_frontend, layout_stack, load_theme
+from app.modules.ui_blocks import (
+    action_button,
+    initialise_frontend,
+    layout_stack,
+    load_theme,
+    render_brand_header,
+)
 from app.modules.utils import safe_int
 
 
@@ -43,6 +49,8 @@ initialise_frontend()
 current_step = set_active_step("export")
 
 load_theme()
+
+render_brand_header()
 
 render_breadcrumbs(current_step)
 

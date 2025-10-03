@@ -30,7 +30,7 @@ from app.modules.impact import (
 )
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.page_data import build_feedback_summary_table
-from app.modules.ui_blocks import initialise_frontend, layout_stack, load_theme
+from app.modules.ui_blocks import initialise_frontend, layout_stack, load_theme, render_brand_header
 from app.modules.utils import safe_int
 
 
@@ -40,6 +40,8 @@ initialise_frontend()
 current_step = set_active_step("feedback")
 
 load_theme()
+
+render_brand_header()
 
 render_breadcrumbs(current_step)
 

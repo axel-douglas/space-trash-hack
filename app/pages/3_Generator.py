@@ -41,6 +41,7 @@ from app.modules.ui_blocks import (
     load_theme,
     micro_divider,
     pill,
+    render_brand_header,
 )
 from app.modules.visualizations import ConvergenceScene
 from app.modules.schema import (
@@ -57,6 +58,8 @@ initialise_frontend()
 current_step = set_active_step("generator")
 
 load_theme()
+
+render_brand_header()
 
 render_breadcrumbs(current_step)
 

@@ -20,7 +20,7 @@ from streamlit_sortables import sort_items
 
 from app.modules.explain import compare_table, score_breakdown
 from app.modules.navigation import render_breadcrumbs, set_active_step
-from app.modules.ui_blocks import initialise_frontend, load_theme, pill
+from app.modules.ui_blocks import initialise_frontend, load_theme, pill, render_brand_header
 from app.modules.io import (
     MissingDatasetError,
     format_missing_dataset_message,
@@ -194,6 +194,8 @@ initialise_frontend()
 current_step = set_active_step("compare")
 
 load_theme()
+
+render_brand_header()
 
 render_breadcrumbs(current_step)
 # ======== estado requerido ========

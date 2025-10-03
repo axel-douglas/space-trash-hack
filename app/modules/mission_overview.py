@@ -355,13 +355,14 @@ def render_overview_dashboard(
     from app.modules.ml_models import get_model_registry
     from app.modules.navigation import render_breadcrumbs, render_stepper, set_active_step
     from app.modules.paths import DATA_ROOT
-    from app.modules.ui_blocks import initialise_frontend, load_theme
+    from app.modules.ui_blocks import initialise_frontend, load_theme, render_brand_header
 
     st.set_page_config(page_title="Mission Overview", page_icon="🛰️", layout="wide")
     initialise_frontend()
 
     current_step = set_active_step("home")
     load_theme(show_hud=False)
+    render_brand_header()
 
     render_breadcrumbs(current_step)
     render_stepper(current_step)

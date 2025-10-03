@@ -189,6 +189,37 @@ table {
   border-color: var(--mission-color-accent);
 }
 
+.mission-brand-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--mission-space-xs);
+  text-align: center;
+  margin-block: var(--mission-space-lg);
+  padding: var(--mission-space-md) var(--mission-space-lg);
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(11, 21, 38, 0.12);
+  border-radius: var(--mission-radius-md);
+  box-shadow: 0 8px 24px rgba(11, 21, 38, 0.08);
+}
+
+.mission-brand-header__logo img {
+  display: block;
+  width: min(220px, 60vw);
+  height: auto;
+  filter: drop-shadow(0 4px 12px rgba(11, 21, 38, 0.15));
+}
+
+.mission-brand-header__tagline {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mission-color-text);
+}
+
 :focus-visible {
   outline: 2px solid var(--mission-color-accent);
   outline-offset: 2px;
