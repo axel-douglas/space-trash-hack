@@ -1,3 +1,5 @@
+from collections.abc import Mapping
+
 from app.bootstrap import ensure_streamlit_path
 
 ensure_streamlit_path(__file__)
@@ -64,18 +66,37 @@ try:
 except MissingDatasetError as error:
     st.error(format_missing_dataset_message(error))
     st.stop()
-polymer_density_distribution = pd.to_numeric(
-    inventory_df.get("pc_density_density_g_per_cm3"), errors="coerce"
-).dropna()
-polymer_tensile_distribution = pd.to_numeric(
-    inventory_df.get("pc_mechanics_tensile_strength_mpa"), errors="coerce"
-).dropna()
-aluminium_tensile_distribution = pd.to_numeric(
-    inventory_df.get("aluminium_tensile_strength_mpa"), errors="coerce"
-).dropna()
-aluminium_yield_distribution = pd.to_numeric(
-    inventory_df.get("aluminium_yield_strength_mpa"), errors="coerce"
-).dropna()
+
+
+def _numeric_series(
+    df: pd.DataFrame | Mapping[str, object] | None, column: str
+) -> pd.Series:
+    if isinstance(df, Mapping):
+        candidate = df.get(column)
+        if isinstance(candidate, pd.DataFrame):
+            df = candidate
+        else:
+            return pd.Series(dtype=float)
+
+    if not isinstance(df, pd.DataFrame) or column not in df.columns:
+        return pd.Series(dtype=float)
+
+    series = pd.to_numeric(df[column], errors="coerce")
+    return series.dropna()
+
+
+polymer_density_distribution = _numeric_series(
+    inventory_df, "pc_density_density_g_per_cm3"
+)
+polymer_tensile_distribution = _numeric_series(
+    inventory_df, "pc_mechanics_tensile_strength_mpa"
+)
+aluminium_tensile_distribution = _numeric_series(
+    inventory_df, "aluminium_tensile_strength_mpa"
+)
+aluminium_yield_distribution = _numeric_series(
+    inventory_df, "aluminium_yield_strength_mpa"
+)
 
 
 def _get_value(source, attr, default=0.0):
