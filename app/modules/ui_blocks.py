@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from functools import lru_cache
 from contextlib import contextmanager
 from html import escape
 from pathlib import Path
@@ -47,6 +48,7 @@ _THEME_HASH_KEY = "__rexai_theme_hash__"
 _BRAND_LOGO_FILENAME = "logo_rexai.svg"
 
 
+@lru_cache(maxsize=None)
 def _encode_svg_base64(path: Path) -> str | None:
     try:
         svg_markup = path.read_text(encoding="utf-8")
@@ -113,6 +115,19 @@ def inject_css(show_hud: bool = False) -> None:
     load_theme(show_hud=show_hud)
 
 
+def _get_logo_markup(*, alt_text: str = "RexAI mission control logo") -> str:
+    logo_path = _static_path(_BRAND_LOGO_FILENAME)
+    data_uri = _encode_svg_base64(logo_path)
+    alt_attr = escape(alt_text) if alt_text else ""
+
+    if data_uri is None:
+        src = escape(str(logo_path))
+    else:
+        src = data_uri
+
+    return f"<img src='{src}' alt='{alt_attr}' />"
+
+
 def render_brand_header(
     tagline: str | None = "Interplanetary Recycling",
     *,
@@ -122,14 +137,7 @@ def render_brand_header(
 
     load_theme(show_hud=False)
 
-    logo_path = _static_path(_BRAND_LOGO_FILENAME)
-    data_uri = _encode_svg_base64(logo_path)
-    alt_attr = escape(alt_text) if alt_text else ""
-
-    if data_uri is None:
-        logo_markup = f"<img src='{escape(str(logo_path))}' alt='{alt_attr}' />"
-    else:
-        logo_markup = f"<img src='{data_uri}' alt='{alt_attr}' />"
+    logo_markup = _get_logo_markup(alt_text=alt_text)
 
     tagline_markup = ""
     if tagline:

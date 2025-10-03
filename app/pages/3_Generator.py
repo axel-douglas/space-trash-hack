@@ -25,9 +25,12 @@ from app.modules.process_planner import choose_process
 from app.modules.safety import check_safety, safety_badge
 from app.modules.schema import (
     ALUMINIUM_LABEL_COLUMNS,
+    ALUMINIUM_LABEL_MAP,
     ALUMINIUM_NUMERIC_COLUMNS,
     POLYMER_LABEL_COLUMNS,
+    POLYMER_LABEL_MAP,
     POLYMER_METRIC_COLUMNS,
+    numeric_series,
 )
 from app.modules.ui_blocks import (
     action_button,
@@ -71,22 +74,6 @@ TARGET_DISPLAY = {
     "water_l": "Agua (L)",
     "crew_min": "Crew (min)",
 }
-
-POLYMER_LABEL_MAP = {
-    "density_g_cm3": "ρ ref (g/cm³)",
-    "tensile_mpa": "σₜ ref (MPa)",
-    "modulus_gpa": "E ref (GPa)",
-    "glass_c": "Tg (°C)",
-    "ignition_c": "Ignición (°C)",
-    "burn_min": "Burn (min)",
-}
-
-ALUMINIUM_LABEL_MAP = {
-    "tensile_mpa": "σₜ ref (MPa)",
-    "yield_mpa": "σᵧ ref (MPa)",
-    "elongation_pct": "ε ref (%)",
-}
-
 
 @contextmanager
 def _optional_container_expander(
@@ -153,23 +140,6 @@ def _safe_float(value: object) -> float | None:
     if math.isnan(number):
         return None
     return number
-
-
-def _numeric_series(
-    df: pd.DataFrame | Mapping[str, object] | None, column: str
-) -> pd.Series:
-    if isinstance(df, Mapping):
-        candidate = df.get(column)
-        if isinstance(candidate, pd.DataFrame):
-            df = candidate
-        else:
-            return pd.Series([], dtype=float)
-
-    if not isinstance(df, pd.DataFrame) or column not in df.columns:
-        return pd.Series([], dtype=float)
-
-    series = pd.to_numeric(df[column], errors="coerce")
-    return series.dropna()
 
 
 def _format_number(value: object, precision: int = 2) -> str:
@@ -964,16 +934,16 @@ try:
 except MissingDatasetError as error:
     st.error(format_missing_dataset_message(error))
     st.stop()
-polymer_density_distribution = _numeric_series(
+polymer_density_distribution = numeric_series(
     waste_df, "pc_density_density_g_per_cm3"
 )
-polymer_tensile_distribution = _numeric_series(
+polymer_tensile_distribution = numeric_series(
     waste_df, "pc_mechanics_tensile_strength_mpa"
 )
-aluminium_tensile_distribution = _numeric_series(
+aluminium_tensile_distribution = numeric_series(
     waste_df, "aluminium_tensile_strength_mpa"
 )
-aluminium_yield_distribution = _numeric_series(
+aluminium_yield_distribution = numeric_series(
     waste_df, "aluminium_yield_strength_mpa"
 )
 proc_filtered = choose_process(

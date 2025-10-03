@@ -1,4 +1,11 @@
-"""Shared schema constants for external reference columns."""
+"""Shared schema constants and helpers for material profile data."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+
+import pandas as pd
+
 
 POLYMER_SAMPLE_COLUMNS: tuple[str, ...] = (
     "pc_density_sample_label",
@@ -54,4 +61,44 @@ ALUMINIUM_LABEL_COLUMNS: tuple[str, ...] = (
     "aluminium_processing_route",
     "aluminium_class_id",
 )
+
+
+POLYMER_LABEL_MAP: dict[str, str] = {
+    "density_g_cm3": "ρ ref (g/cm³)",
+    "tensile_mpa": "σₜ ref (MPa)",
+    "modulus_gpa": "E ref (GPa)",
+    "glass_c": "Tg (°C)",
+    "ignition_c": "Ignición (°C)",
+    "burn_min": "Burn (min)",
+}
+
+ALUMINIUM_LABEL_MAP: dict[str, str] = {
+    "tensile_mpa": "σₜ ref (MPa)",
+    "yield_mpa": "σᵧ ref (MPa)",
+    "elongation_pct": "ε ref (%)",
+}
+
+
+def numeric_series(
+    df: pd.DataFrame | Mapping[str, object] | None, column: str
+) -> pd.Series:
+    """Return a cleaned numeric series for the requested ``column``.
+
+    The helper accepts either a :class:`pandas.DataFrame` or a mapping that
+    contains a DataFrame for the given key. Non-numeric entries are coerced and
+    missing values are dropped to simplify downstream visualisations.
+    """
+
+    if isinstance(df, Mapping):
+        candidate = df.get(column)
+        if isinstance(candidate, pd.DataFrame):
+            df = candidate
+        else:
+            return pd.Series(dtype=float)
+
+    if not isinstance(df, pd.DataFrame) or column not in df.columns:
+        return pd.Series(dtype=float)
+
+    series = pd.to_numeric(df[column], errors="coerce")
+    return series.dropna()
 
