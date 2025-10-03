@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import os
-import runpy
-import sys
 from pathlib import Path
 
 import pandas as pd
@@ -12,6 +10,7 @@ pytest.importorskip("streamlit")
 
 from pytest_streamlit import StreamlitRunner
 
+from app.bootstrap import ensure_project_root
 from app.modules.io import format_missing_dataset_message, MissingDatasetError
 
 
@@ -20,16 +19,13 @@ def _results_page_app(*, missing_dataset: bool = False, inventory=None) -> None:
     import pandas as pd
     from types import SimpleNamespace as _SimpleNamespace
     import runpy
-    import sys
     import streamlit as st
     from pathlib import Path
 
     root_env = os.environ.get("REXAI_PROJECT_ROOT")
-    root = Path(root_env) if root_env else Path.cwd()
+    start = Path(root_env) if root_env else Path(__file__).resolve()
+    root = ensure_project_root(start)
     app_dir = root / "app"
-    for candidate in (root, app_dir):
-        if str(candidate) not in sys.path:
-            sys.path.insert(0, str(candidate))
 
     st.session_state.clear()
 
@@ -114,18 +110,15 @@ def _pareto_page_app(
     import os
     import pandas as pd
     import runpy
-    import sys
     from pathlib import Path
     from types import SimpleNamespace
 
     import streamlit as st
 
     root_env = os.environ.get("REXAI_PROJECT_ROOT")
-    root = Path(root_env) if root_env else Path.cwd()
+    start = Path(root_env) if root_env else Path(__file__).resolve()
+    root = ensure_project_root(start)
     app_dir = root / "app"
-    for candidate in (root, app_dir):
-        if str(candidate) not in sys.path:
-            sys.path.insert(0, str(candidate))
 
     st.session_state.clear()
 

@@ -32,14 +32,22 @@ from typing import Dict, Iterable, List, Mapping, Sequence
 import sys
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+
+try:
+    from app.bootstrap import ensure_project_root
+except ModuleNotFoundError:  # pragma: no cover - defensive import path fix
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(REPO_ROOT))
+    from app.bootstrap import ensure_project_root
+
+REPO_ROOT = ensure_project_root(REPO_ROOT)
 
 import numpy as np
 import pandas as pd
 
 from app.modules.generator import compute_feature_vector, heuristic_props, prepare_waste_frame
 from app.modules.ml_models import ModelRegistry
+
 DATA_DIR = REPO_ROOT / "data"
 WASTE_SAMPLE = DATA_DIR / "waste_inventory_sample.csv"
 PROCESS_CATALOG = DATA_DIR / "process_catalog.csv"
