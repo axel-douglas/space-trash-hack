@@ -158,9 +158,18 @@ def _safe_float(value: object) -> float | None:
     return number
 
 
-def _numeric_series(df: pd.DataFrame | None, column: str) -> pd.Series:
+def _numeric_series(
+    df: pd.DataFrame | Mapping[str, object] | None, column: str
+) -> pd.Series:
+    if isinstance(df, Mapping):
+        candidate = df.get(column)
+        if isinstance(candidate, pd.DataFrame):
+            df = candidate
+        else:
+            return pd.Series([], dtype=float)
+
     if not isinstance(df, pd.DataFrame) or column not in df.columns:
-        return pd.Series(dtype="float64")
+        return pd.Series([], dtype=float)
 
     series = pd.to_numeric(df[column], errors="coerce")
     return series.dropna()
