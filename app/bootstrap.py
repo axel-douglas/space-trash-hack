@@ -4,22 +4,49 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Iterable
 
 
-def ensure_project_root() -> Path:
+def _candidate_roots(start: Path) -> Iterable[Path]:
+    """Yield candidate roots from ``start`` up to the filesystem root."""
+
+    resolved = start.resolve()
+    yield resolved
+    yield from resolved.parents
+
+
+def _find_project_root(start: Path) -> Path:
+    """Locate the repository root given a starting path within the project."""
+
+    for candidate in _candidate_roots(start):
+        app_dir = candidate / "app"
+        if app_dir.is_dir() and (app_dir / "__init__.py").is_file():
+            return candidate
+    return start.resolve().parents[-1]
+
+
+def ensure_streamlit_path(start: str | Path | None = None) -> Path:
     """Ensure the repository root is present on ``sys.path``.
 
-    Streamlit executes scripts as modules, and when running standalone files
-    the repository root might be missing from ``sys.path``. This helper makes
-    sure the absolute path two levels above this file (the project root) is
-    inserted so imports like ``app.modules`` succeed reliably.
+    Parameters
+    ----------
+    start:
+        Optional path used to determine where the search should begin. When
+        ``None`` (the default) it falls back to the location of this module.
     """
 
-    root = Path(__file__).resolve().parents[1]
+    base = Path(start) if start is not None else Path(__file__)
+    root = _find_project_root(base)
     root_str = str(root)
     if root_str not in sys.path:
         sys.path.insert(0, root_str)
     return root
 
 
-__all__ = ["ensure_project_root"]
+def ensure_project_root(start: str | Path | None = None) -> Path:
+    """Backward compatible alias for :func:`ensure_streamlit_path`."""
+
+    return ensure_streamlit_path(start)
+
+
+__all__ = ["ensure_project_root", "ensure_streamlit_path"]
