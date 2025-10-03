@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime
 
 import pandas as pd
 import pytest
@@ -11,6 +12,7 @@ import app.modules.io as io_module
 from app.modules.io import (
     MissingDatasetError,
     format_missing_dataset_message,
+    get_last_modified,
     load_process_df,
     load_targets,
     load_waste_df,
@@ -64,3 +66,20 @@ def test_load_targets_raises_missing_dataset(monkeypatch: pytest.MonkeyPatch, tm
         load_targets()
 
     assert excinfo.value.path == missing_path
+
+
+def test_get_last_modified_returns_timestamp(tmp_path: Path) -> None:
+    file_path = tmp_path / "timestamp.txt"
+    file_path.write_text("sample")
+
+    timestamp = get_last_modified(file_path)
+
+    assert isinstance(timestamp, datetime)
+    assert timestamp is not None
+    assert pytest.approx(file_path.stat().st_mtime, rel=1e-3) == timestamp.timestamp()
+
+
+def test_get_last_modified_missing_path(tmp_path: Path) -> None:
+    missing_path = tmp_path / "missing.txt"
+
+    assert get_last_modified(missing_path) is None
