@@ -88,7 +88,7 @@ def test_inventory_table_and_captions() -> None:
 
 
 def test_home_page_shows_error_for_missing_dataset(monkeypatch: pytest.MonkeyPatch) -> None:
-    missing_path = Path("missing_overview.csv")
+    missing_path = Path("missing_home_inventory.csv")
 
     def _raise_missing() -> pd.DataFrame:
         raise MissingDatasetError(missing_path)
@@ -96,7 +96,7 @@ def test_home_page_shows_error_for_missing_dataset(monkeypatch: pytest.MonkeyPat
     app = _run_home_app(monkeypatch, inventory_loader=_raise_missing)
 
     error_messages = " ".join(block.body for block in app.error)
-    assert "missing_overview.csv" in error_messages
+    assert "missing_home_inventory.csv" in error_messages
     assert "python scripts/download_datasets.py" in error_messages
     expected_message = format_missing_dataset_message(MissingDatasetError(missing_path))
     assert expected_message in error_messages

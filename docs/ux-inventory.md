@@ -1,7 +1,7 @@
 # UX Inventory Builder
 
-## Overview
-The inventory builder page now combines Streamlit layout primitives with an AG Grid-based editor to provide a hybrid workspace optimised for astronaut operations.
+## Home inventory workspace
+The inventory builder now lives on the Home flow and combines Streamlit layout primitives with an AG Grid-based editor to provide a hybrid workspace optimised for astronaut operations.
 
 ## Hybrid grid experience
 - **Tesla-style validation colours**: mass and volume columns display a teal-to-red gradient that highlights invalid or negative values instantly.
