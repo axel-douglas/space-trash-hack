@@ -83,20 +83,20 @@ def load_theme(*, show_hud: bool = True) -> None:
         return
 
     css_hash = hashlib.sha256(css.encode("utf-8")).hexdigest()
-    if st.session_state.get(_THEME_HASH_KEY) == css_hash:
-        return
 
     st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+
     st.session_state[_THEME_HASH_KEY] = css_hash
 
 
 def initialise_frontend(*, force: bool = False) -> None:
     """Prepare the visual styling for Streamlit pages.
 
-    This helper ensures the shared theme is applied, so pages do not need to
-    call :func:`load_theme` immediately afterwards. When ``force`` is ``True``
-    the cached theme hash is cleared so the stylesheet is re-injected on the
-    next call.
+    This helper ensures the shared theme is applied on every invocation, so
+    pages do not need to call :func:`load_theme` immediately afterwards. When
+    ``force`` is ``True`` the cached theme hash used for change detection is
+    cleared before reapplying the stylesheet for compatibility with callers
+    that expect a reset.
     """
 
     if force:
