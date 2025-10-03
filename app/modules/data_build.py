@@ -22,6 +22,7 @@ import numpy as np
 import pandas as pd
 
 from app.modules import generator
+from app.modules.dataset_validation import validate_waste_inventory
 from app.modules.data_sources import REGOLITH_CHARACTERIZATION
 from app.modules.data_pipeline import GoldFeatureRow, GoldLabelRow
 from app.modules.model_training import FEATURE_COLUMNS
@@ -88,6 +89,7 @@ class GoldRecord:
 
 def _load_inventory() -> pd.DataFrame:
     inventory = pd.read_csv(RAW_DIR / "nasa_waste_inventory.csv")
+    validate_waste_inventory(inventory, dataset_label="el archivo nasa_waste_inventory.csv")
     prepared = generator.prepare_waste_frame(inventory)
     return prepared
 
