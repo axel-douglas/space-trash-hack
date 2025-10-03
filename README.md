@@ -30,9 +30,9 @@ No se requieren variables de entorno adicionales para el arranque interactivo.
 > ejecutan archivos sueltos con `streamlit run` o `python app/...` y evita los
 > `ModuleNotFoundError` al importar `app.*`.
 
-El script `app/Home.py` renderiza la misma vista de *Mission Overview* que la
-entrada multipágina `app/pages/0_Mission_Overview.py`, de modo que la pantalla
-principal y el paso "Overview" permanecen sincronizados.
+El script `app/Home.py` centraliza la vista de *Mission Overview* y actúa como
+único entrypoint interactivo, manteniendo alineada la pantalla principal con el
+paso "Overview" de la navegación multipaso.
 
 ## Módulos principales
 
