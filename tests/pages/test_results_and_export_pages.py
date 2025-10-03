@@ -108,13 +108,17 @@ def _results_page_app(*, missing_dataset: bool = False, inventory=None) -> None:
         io_module.load_waste_df = original_loader  # type: ignore[assignment]
 
 
-def _pareto_page_app(*, missing_dataset: bool = False) -> None:
+def _pareto_page_app(
+    *, missing_dataset: bool = False, selected_option=None, set_option: bool = False
+) -> None:
     import os
     import pandas as pd
     import runpy
     import sys
-    import streamlit as st
     from pathlib import Path
+    from types import SimpleNamespace
+
+    import streamlit as st
 
     root_env = os.environ.get("REXAI_PROJECT_ROOT")
     root = Path(root_env) if root_env else Path.cwd()
@@ -125,14 +129,14 @@ def _pareto_page_app(*, missing_dataset: bool = False) -> None:
 
     st.session_state.clear()
 
-    base_props = {
-        "energy_kwh": 0.0,
-        "water_l": 0.0,
-        "crew_min": 0.0,
-        "mass_final_kg": 0.0,
-        "rigidity": 0.0,
-        "tightness": 0.0,
-    }
+    base_props = SimpleNamespace(
+        energy_kwh=0.0,
+        water_l=0.0,
+        crew_min=0.0,
+        mass_final_kg=0.0,
+        rigidity=0.0,
+        tightness=0.0,
+    )
     st.session_state["candidates"] = [
         {
             "materials": [],
@@ -154,6 +158,8 @@ def _pareto_page_app(*, missing_dataset: bool = False) -> None:
         },
         "safety": {"level": "OK", "detail": ""},
     }
+    if set_option:
+        st.session_state["selected_option_number"] = selected_option
 
     import app.modules.ui_blocks as ui_blocks
     import app.modules.navigation as navigation
@@ -228,4 +234,21 @@ def test_pareto_page_shows_error_for_missing_dataset() -> None:
         MissingDatasetError(Path("missing_pareto.csv"))
     )
     assert expected_message in error_messages
+    assert not app.exception
+
+
+def test_pareto_page_handles_missing_selected_option_number() -> None:
+    runner = StreamlitRunner(_pareto_page_app, kwargs={"set_option": False})
+    app = runner.run()
+
+    assert not app.exception
+
+
+def test_pareto_page_handles_malformed_selected_option_number() -> None:
+    runner = StreamlitRunner(
+        _pareto_page_app,
+        kwargs={"selected_option": "invalid-index", "set_option": True},
+    )
+    app = runner.run()
+
     assert not app.exception
