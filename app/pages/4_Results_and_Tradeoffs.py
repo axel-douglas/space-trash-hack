@@ -1,12 +1,8 @@
+from app.bootstrap import ensure_streamlit_entrypoint
+
+ensure_streamlit_entrypoint(__file__)
+
 from collections.abc import Mapping
-
-from app.bootstrap import ensure_streamlit_imports
-
-ensure_streamlit_imports(__file__)
-
-from app.bootstrap import ensure_streamlit_path
-
-ensure_streamlit_path(__file__)
 
 import altair as alt
 import pandas as pd

@@ -1,14 +1,10 @@
-"""Consolidated feedback capture and mission impact tracking."""
+from app.bootstrap import ensure_streamlit_entrypoint
+
+ensure_streamlit_entrypoint(__file__)
+
+__doc__ = """Consolidated feedback capture and mission impact tracking."""
 
 from datetime import datetime
-
-from app.bootstrap import ensure_streamlit_imports
-
-ensure_streamlit_imports(__file__)
-
-from app.bootstrap import ensure_streamlit_path
-
-ensure_streamlit_path(__file__)
 
 import pandas as pd
 import streamlit as st

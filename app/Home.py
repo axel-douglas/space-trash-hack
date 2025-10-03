@@ -1,16 +1,10 @@
-"""Streamlit entrypoint that mirrors the mission overview page."""
+from app.bootstrap import ensure_streamlit_entrypoint
 
-from __future__ import annotations
+ensure_streamlit_entrypoint(__file__)
+
+__doc__ = """Streamlit entrypoint that mirrors the mission overview page."""
 
 from typing import Iterable
-
-from app.bootstrap import ensure_streamlit_imports
-
-ensure_streamlit_imports(__file__)
-
-from app.bootstrap import ensure_streamlit_path
-
-ensure_streamlit_path(__file__)
 
 import streamlit as st
 

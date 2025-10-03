@@ -1,12 +1,8 @@
-"""Lightweight capacity simulator driven by shared helpers."""
+from app.bootstrap import ensure_streamlit_entrypoint
 
-from app.bootstrap import ensure_streamlit_imports
+ensure_streamlit_entrypoint(__file__)
 
-ensure_streamlit_imports(__file__)
-
-from app.bootstrap import ensure_streamlit_path
-
-ensure_streamlit_path(__file__)
+__doc__ = """Lightweight capacity simulator driven by shared helpers."""
 
 import pandas as pd
 import streamlit as st

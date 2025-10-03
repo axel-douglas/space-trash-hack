@@ -17,27 +17,18 @@ streamlit run app/Home.py
 No se requieren variables de entorno adicionales para el arranque interactivo.
 
 > ⚙️ **Bootstrap obligatorio:** antes de cualquier `import app.*`, cada entrypoint
-> de Streamlit (incluyendo los módulos dentro de `app/pages/`) debe añadir el
-> proyecto al `sys.path` y luego ejecutar `ensure_project_root()`:
+> de Streamlit (incluyendo los módulos dentro de `app/pages/`) debe llamar a
+> `ensure_streamlit_entrypoint(__file__)`:
 >
 > ```python
-> import sys
-> from pathlib import Path
+> from app.bootstrap import ensure_streamlit_entrypoint
 >
-> project_root = Path(__file__).resolve().parents[1]
-> project_root_str = str(project_root)
-> if project_root_str not in sys.path:
->     sys.path.insert(0, project_root_str)
->
-> from app.bootstrap import ensure_project_root
->
-> ensure_project_root()
+> ensure_streamlit_entrypoint(__file__)
 > ```
 >
-> Esto garantiza que la carpeta raíz del repositorio esté en `sys.path` cuando se
-> ejecutan archivos sueltos con `streamlit run` o `python app/...`. El helper
-> legacy `_bootstrap.py` ya no existe; todo el bootstrap vive en
-> `app/bootstrap.py`.
+> Esto fuerza la inclusión de la raíz del repositorio en `sys.path` cuando se
+> ejecutan archivos sueltos con `streamlit run` o `python app/...` y evita los
+> `ModuleNotFoundError` al importar `app.*`.
 
 El script `app/Home.py` renderiza la misma vista de *Mission Overview* que la
 entrada multipágina `app/pages/0_Mission_Overview.py`, de modo que la pantalla
