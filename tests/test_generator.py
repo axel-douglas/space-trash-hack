@@ -111,10 +111,8 @@ def test_choose_process_filters_and_scores():
 
 
 def test_append_inference_log_reuses_daily_writer(monkeypatch, tmp_path):
-    logging_utils._INFERENCE_LOG_MANAGER.close()
+    logging_utils.shutdown_inference_logging()
     monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
-    manager = logging_utils._InferenceLogWriterManager()
-    monkeypatch.setattr(logging_utils, "_INFERENCE_LOG_MANAGER", manager)
 
     created_paths: list[Path] = []
     write_calls: list[tuple[Path, int]] = []
@@ -169,6 +167,9 @@ def test_append_inference_log_reuses_daily_writer(monkeypatch, tmp_path):
 
     monkeypatch.setattr(logging_utils, "prepare_inference_event", fake_prepare)
 
+    manager = logging_utils.get_inference_log_manager()
+    assert manager is logging_utils.get_inference_log_manager()
+
     generator.append_inference_log({}, {}, {}, None)
     generator.append_inference_log({}, {}, {}, None)
 
@@ -182,17 +183,14 @@ def test_append_inference_log_reuses_daily_writer(monkeypatch, tmp_path):
     assert created_paths[0] == expected_path
     assert [count for _, count in write_calls] == [1, 2]
 
-    manager.close()
+    logging_utils.shutdown_inference_logging()
 
 
 def test_append_inference_log_skips_parquet_reads(monkeypatch, tmp_path):
     """Ensure append operations never trigger a Parquet read."""
 
-    logging_utils._INFERENCE_LOG_MANAGER.close()
+    logging_utils.shutdown_inference_logging()
     monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
-
-    manager = logging_utils._InferenceLogWriterManager()
-    monkeypatch.setattr(logging_utils, "_INFERENCE_LOG_MANAGER", manager)
 
     created_paths: list[Path] = []
     write_counts: list[int] = []
@@ -253,6 +251,8 @@ def test_append_inference_log_skips_parquet_reads(monkeypatch, tmp_path):
 
     monkeypatch.setattr(logging_utils, "prepare_inference_event", fake_prepare)
 
+    logging_utils.get_inference_log_manager()
+
     generator.append_inference_log({}, {}, {}, None)
     generator.append_inference_log({}, {}, {}, None)
 
@@ -262,14 +262,12 @@ def test_append_inference_log_skips_parquet_reads(monkeypatch, tmp_path):
     assert created_paths == [expected_path]
     assert write_counts == [1, 2]
 
-    manager.close()
+    logging_utils.shutdown_inference_logging()
 
 
 def test_append_inference_log_rotates_daily(monkeypatch, tmp_path):
-    logging_utils._INFERENCE_LOG_MANAGER.close()
+    logging_utils.shutdown_inference_logging()
     monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
-    manager = logging_utils._InferenceLogWriterManager()
-    monkeypatch.setattr(logging_utils, "_INFERENCE_LOG_MANAGER", manager)
 
     created_paths: list[Path] = []
     closed_paths: list[Path] = []
@@ -322,6 +320,8 @@ def test_append_inference_log_rotates_daily(monkeypatch, tmp_path):
 
     monkeypatch.setattr(logging_utils, "prepare_inference_event", fake_prepare)
 
+    logging_utils.get_inference_log_manager()
+
     generator.append_inference_log({}, {}, {}, None)
     assert len(created_paths) == 1
     assert closed_paths == []
@@ -332,10 +332,11 @@ def test_append_inference_log_rotates_daily(monkeypatch, tmp_path):
         tmp_path / "inference" / "20240504" / "inference_20240504.parquet"
     ]
 
-    manager.close()
+    logging_utils.shutdown_inference_logging()
     assert closed_paths[-1] == (
         tmp_path / "inference" / "20240505" / "inference_20240505.parquet"
     )
+
 def _batched_feature_vectors(
     picks: pd.DataFrame,
     weights: list[float],
@@ -1118,7 +1119,7 @@ def test_generate_candidates_seed_reproducible(monkeypatch):
 
 def test_append_inference_log_appends_without_reads(monkeypatch, tmp_path):
     monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
-    logging_utils._INFERENCE_LOG_MANAGER.close()
+    logging_utils.shutdown_inference_logging()
 
     log_root = tmp_path / "inference"
     if log_root.exists():
@@ -1132,7 +1133,7 @@ def test_append_inference_log_appends_without_reads(monkeypatch, tmp_path):
             model_registry=None,
         )
 
-    logging_utils._INFERENCE_LOG_MANAGER.close()
+    logging_utils.shutdown_inference_logging()
 
     log_dir = _collect_single_log_dir(tmp_path)
     table = _read_inference_log(log_dir)
@@ -1141,7 +1142,7 @@ def test_append_inference_log_appends_without_reads(monkeypatch, tmp_path):
 
 def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
     monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
-    logging_utils._INFERENCE_LOG_MANAGER.close()
+    logging_utils.shutdown_inference_logging()
 
     log_root = tmp_path / "inference"
     if log_root.exists():
@@ -1171,7 +1172,7 @@ def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
         model_registry=None,
     )
 
-    logging_utils._INFERENCE_LOG_MANAGER.close()
+    logging_utils.shutdown_inference_logging()
 
     log_dir = _collect_single_log_dir(tmp_path)
     log_df = _read_inference_log(log_dir)
@@ -1185,7 +1186,7 @@ def test_generate_candidates_appends_inference_log(monkeypatch, tmp_path):
     monkeypatch.setattr(generator, "get_model_registry", lambda: dummy_registry)
     monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
     monkeypatch.setattr(generator, "lookup_labels", lambda *args, **kwargs: ({}, {}))
-    logging_utils._INFERENCE_LOG_MANAGER.close()
+    logging_utils.shutdown_inference_logging()
 
     log_root = tmp_path / "inference"
     if log_root.exists():
@@ -1216,7 +1217,7 @@ def test_generate_candidates_appends_inference_log(monkeypatch, tmp_path):
     assert candidates, "Expected at least one candidate to be generated"
     assert history.empty
 
-    logging_utils._INFERENCE_LOG_MANAGER.close()
+    logging_utils.shutdown_inference_logging()
 
     log_dir = _collect_single_log_dir(tmp_path)
     log_df = _read_inference_log(log_dir).sort_values("timestamp")
@@ -1264,7 +1265,7 @@ def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch, tmp_path):
 
     monkeypatch.setattr(generator, "get_model_registry", lambda: no_call_registry)
     monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
-    logging_utils._INFERENCE_LOG_MANAGER.close()
+    logging_utils.shutdown_inference_logging()
 
     log_root = tmp_path / "inference"
     shutil.rmtree(log_root, ignore_errors=True)
@@ -1296,7 +1297,7 @@ def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch, tmp_path):
         waste_df, proc_df, target={}, n=1, use_ml=False
     )
 
-    logging_utils._INFERENCE_LOG_MANAGER.close()
+    logging_utils.shutdown_inference_logging()
 
     assert candidates, "Expected heuristic candidate even when ML disabled"
     assert history.empty

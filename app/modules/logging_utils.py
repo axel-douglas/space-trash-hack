@@ -18,7 +18,7 @@ import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, Mapping, Tuple
+from typing import Any, Callable, Dict, Iterable, Mapping, Tuple
 
 try:  # Optional heavy dependencies; gracefully disable logging if missing
     import pyarrow as pa
@@ -172,6 +172,8 @@ class _InferenceLogWriterManager:
 
 
 _INFERENCE_LOG_MANAGER = _InferenceLogWriterManager()
+_SHUTDOWN_HOOK: Callable[[], None] | None = None
+_SHUTDOWN_LOCK = threading.Lock()
 
 
 def configure_inference_parquet_writer(**kwargs: Any) -> None:
@@ -195,6 +197,8 @@ __all__ = [
     "resolve_inference_log_dir",
     "prepare_inference_event",
     "append_inference_log",
+    "get_inference_log_manager",
+    "shutdown_inference_logging",
 ]
 
 
@@ -277,8 +281,42 @@ def append_inference_log(
         model_registry=model_registry,
     )
 
-    _INFERENCE_LOG_MANAGER.write_event(event_time, event_payload)
+    get_inference_log_manager().write_event(event_time, event_payload)
 
 
-if pq is not None:  # pragma: no branch - guard for optional dependency
-    atexit.register(_INFERENCE_LOG_MANAGER.close)
+def get_inference_log_manager() -> _InferenceLogWriterManager:
+    """Return the singleton inference log manager, registering shutdown hooks."""
+
+    if pq is None:  # pragma: no cover - dependencies should exist in prod
+        return _INFERENCE_LOG_MANAGER
+
+    global _SHUTDOWN_HOOK
+    if _SHUTDOWN_HOOK is None:
+        with _SHUTDOWN_LOCK:
+            if _SHUTDOWN_HOOK is None:
+                def _close_manager() -> None:
+                    _INFERENCE_LOG_MANAGER.close()
+
+                atexit.register(_close_manager)
+                _SHUTDOWN_HOOK = _close_manager
+
+    return _INFERENCE_LOG_MANAGER
+
+
+def shutdown_inference_logging() -> None:
+    """Close the inference log manager and unregister the exit hook."""
+
+    global _SHUTDOWN_HOOK
+
+    hook = _SHUTDOWN_HOOK
+    if hook is not None:
+        with _SHUTDOWN_LOCK:
+            hook = _SHUTDOWN_HOOK
+            if hook is not None:
+                try:
+                    atexit.unregister(hook)
+                except Exception:  # pragma: no cover - best effort cleanup
+                    pass
+                _SHUTDOWN_HOOK = None
+
+    _INFERENCE_LOG_MANAGER.close()
