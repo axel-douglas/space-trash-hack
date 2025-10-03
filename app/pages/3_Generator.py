@@ -1007,11 +1007,12 @@ with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None
                     state=button_state,
                     width="full",
                     help_text="Ejecuta Ax + BoTorch con los parámetros seleccionados.",
-                    loading_label="Generando lote…",
-                    success_label="Lote listo",
-                    error_label="Reintentar",
-                    status_hints={
-                        "idle": "",
+                    state_labels={
+                        "loading": "Generando lote…",
+                        "success": "Lote listo",
+                        "error": "Reintentar",
+                    },
+                    state_messages={
                         "loading": "Ejecutando optimizador",
                         "success": "Resultados actualizados",
                         "error": "Revisá la configuración",
