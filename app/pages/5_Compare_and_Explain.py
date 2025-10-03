@@ -204,9 +204,16 @@ except MissingDatasetError as error:
     st.error(format_missing_dataset_message(error))
     st.stop()
 
-st.title("🧪 Compare & Explain")
-st.caption(
-    "Compará candidatos como en un *design review*: qué rinde más, dónde gasta menos, y por qué elige la IA esa receta."
+st.title("🧪 Comparar y decidir")
+st.markdown(
+    """
+**Objetivo de la etapa:** comparar los candidatos generados para validar si cumplen límites operativos y seleccionar a los finalistas.
+
+**Cómo encaja en el flujo:**
+1. **Seleccioná candidatos** en la etapa anterior (Generador).
+2. **Analizá métricas clave** acá para entender recursos, desempeño y restricciones.
+3. **Decidí la receta** que pasa a prototipado o iterá si necesitás nuevos candidatos.
+"""
 )
 
 # ======== tabla comparativa base ========
@@ -248,7 +255,9 @@ for idx, candidate in enumerate(cands, start=1):
 
 # ======== tabla comparativa base ========
 st.subheader("📊 Tabla comparativa de candidatos")
-st.caption("Visualizá el score junto a recursos y propiedades clave.")
+st.caption(
+    "Visualizá el score junto a recursos y propiedades clave para verificar si cada opción respeta los límites de la misión."
+)
 st.dataframe(df_base.set_index("Opción"), use_container_width=True)
 
 # Sección de métricas externas
@@ -286,20 +295,22 @@ if reference_rows:
 kpi_cols = st.columns(4)
 with kpi_cols[0]:
     st.metric("Opciones generadas", len(cands))
-    st.caption("Muestra suficiente para comparar")
+    st.caption("Más opciones permiten contrastar mejor, pero revisá que todas cumplan los límites.")
 with kpi_cols[1]:
     st.metric("Mejor Score", f"{df_base['Score'].max():.2f}")
-    st.caption("Top actual")
+    st.caption("Un score alto indica equilibrio entre criterios; compará con las restricciones.")
 with kpi_cols[2]:
     st.metric("Consumo mínimo de agua", f"{df_base['Agua (L)'].min():.2f} L")
-    st.caption("Entre todas las opciones")
+    st.caption("Valores bajos son favorables porque liberan recursos hídricos.")
 with kpi_cols[3]:
     st.metric("Energía mínima", f"{df_base['Energía (kWh)'].min():.2f} kWh")
-    st.caption("Entre todas las opciones")
+    st.caption("Menor energía consumida es positiva para misiones con baterías acotadas.")
 
-# ======== Panel Comparómetro interactivo ========
-st.markdown("## 🧭 Comparómetro side-by-side")
-st.caption("Arrastrá para priorizar candidatos y obtener visualizaciones con sombreado adaptativo.")
+# ======== Panel comparativo interactivo ========
+st.markdown("## 🧭 Comparación lado a lado")
+st.caption(
+    "Paso a paso: 1) Arrastrá para ordenar según prioridad. 2) El panel muestra los dos primeros. 3) Revisá el mapa de colores para identificar fortalezas y riesgos."
+)
 
 candidate_labels = [
     f"#{row.Opción} · {row.Proceso} · Score {row.Score:.2f}"
@@ -398,7 +409,9 @@ if metric_cols:
     )
     st.plotly_chart(fig_matrix, use_container_width=True)
 
-    st.caption("La escala aplica shading condicional: verde = desempeño competitivo, rojo = zona de riesgo.")
+    st.caption(
+        "Escala de color: verde indica desempeño competitivo, amarillo es neutral y rojo alerta sobre métricas críticas. Valores normalizados cercanos a 1 son favorables cuando la métrica se maximiza, y cercanos a 0 cuando conviene minimizarla."
+    )
 else:
     st.info("No se encontraron métricas cuantitativas para renderizar la heatmap.")
 
