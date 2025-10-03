@@ -15,9 +15,10 @@ def test_pill_returns_markup_without_render():
 
     html = ui_blocks.pill("Seguridad", kind="ok", render=False)
 
+    assert "data-mission-pill='ok'" in html
     assert "data-lab-pill='ok'" in html
     assert "data-kind='ok'" in html
-    assert "var(--lab-color-positive)" in html
+    assert "var(--mission-color-positive)" in html
 
 
 def test_pill_supports_info_and_accent_kinds():
@@ -27,9 +28,9 @@ def test_pill_supports_info_and_accent_kinds():
     accent_html = ui_blocks.pill("Aleación", kind="accent", render=False)
 
     assert "data-kind='info'" in info_html
-    assert "var(--lab-color-accent)" in info_html
+    assert "var(--mission-color-accent)" in info_html
     assert "data-kind='accent'" in accent_html
-    assert "var(--lab-color-accent-soft)" in accent_html
+    assert "var(--mission-color-accent-soft)" in accent_html
 
 
 def test_chipline_accepts_mappings(monkeypatch):
@@ -46,9 +47,9 @@ def test_chipline_accepts_mappings(monkeypatch):
         render=False,
     )
 
-    assert "data-lab-chip-tone='positive'" in html
+    assert "data-mission-chip-tone='positive'" in html
     assert "🧪" in html
-    assert "var(--lab-color-positive-soft)" in html
+    assert "var(--mission-color-positive-soft)" in html
 
 
 def test_chipline_uses_defined_tone_palette(monkeypatch):
@@ -65,7 +66,7 @@ def test_chipline_uses_defined_tone_palette(monkeypatch):
         render=False,
     )
 
-    assert "data-lab-chip-tone='danger'" in html
-    assert "data-lab-chip-tone='warning'" in html
-    assert "var(--lab-color-critical-soft)" in html
-    assert "var(--lab-color-warning-soft)" in html
+    assert "data-mission-chip-tone='danger'" in html
+    assert "data-mission-chip-tone='warning'" in html
+    assert "var(--mission-color-critical-soft)" in html
+    assert "var(--mission-color-warning-soft)" in html
