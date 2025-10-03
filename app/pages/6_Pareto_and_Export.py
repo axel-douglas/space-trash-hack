@@ -1,17 +1,10 @@
 """Streamlined Pareto exploration and export centre."""
 
-import sys
-from pathlib import Path
 from typing import Iterable
 
-project_root = Path(__file__).resolve().parents[1]
-project_root_str = str(project_root)
-if project_root_str not in sys.path:
-    sys.path.insert(0, project_root_str)
+from app.bootstrap import ensure_streamlit_path
 
-from app.bootstrap import ensure_project_root
-
-ensure_project_root()
+ensure_streamlit_path(__file__)
 
 import math
 
