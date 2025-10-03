@@ -23,12 +23,13 @@ No se requieren variables de entorno adicionales para el arranque interactivo.
 > ```python
 > from app.bootstrap import ensure_streamlit_entrypoint
 >
-> ensure_streamlit_entrypoint(__file__)
+> PROJECT_ROOT = ensure_streamlit_entrypoint(__file__)
 > ```
 >
 > Esto fuerza la inclusión de la raíz del repositorio en `sys.path` cuando se
-> ejecutan archivos sueltos con `streamlit run` o `python app/...` y evita los
-> `ModuleNotFoundError` al importar `app.*`.
+> ejecutan archivos sueltos con `streamlit run` o `python app/...`, devuelve el
+> directorio que contiene `app/__init__.py` y evita los `ModuleNotFoundError`
+> al importar `app.*`.
 >
 > 🧪 **Scripts y tests**: para utilidades CLI o fixtures de Pytest, usa
 > `ensure_project_root(__file__)` en vez de manipular `sys.path` a mano:
