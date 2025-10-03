@@ -24,7 +24,6 @@ from app.modules.page_data import build_feedback_summary_table
 from app.modules.ui_blocks import (
     initialise_frontend,
     layout_stack,
-    load_theme,
     render_brand_header,
 )
 from app.modules.utils import safe_int
@@ -33,8 +32,6 @@ st.set_page_config(page_title="Feedback & Impact", page_icon="📝", layout="wid
 initialise_frontend()
 
 current_step = set_active_step("feedback")
-
-load_theme()
 
 render_brand_header()
 

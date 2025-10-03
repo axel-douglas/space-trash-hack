@@ -12,7 +12,6 @@ from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.ui_blocks import (
     initialise_frontend,
     layout_stack,
-    load_theme,
     render_brand_header,
 )
 
@@ -20,8 +19,6 @@ st.set_page_config(page_title="Capacity Simulator", page_icon="🧮", layout="wi
 initialise_frontend()
 
 current_step = set_active_step("capacity")
-
-load_theme()
 
 render_brand_header()
 

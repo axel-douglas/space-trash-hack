@@ -18,7 +18,6 @@ from app.modules.io import (
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.ui_blocks import (
     initialise_frontend,
-    load_theme,
     pill,
     render_brand_header,
 )
@@ -188,8 +187,6 @@ def _format_reference_value(key: str, value: float) -> str:
 st.set_page_config(page_title="Comparar & Explicar", page_icon="🧪", layout="wide")
 initialise_frontend()
 current_step = set_active_step("compare")
-
-load_theme()
 
 render_brand_header()
 
