@@ -28,3 +28,12 @@ def test_ensure_streamlit_entrypoint_for_nested_page_includes_app(monkeypatch) -
 
     assert sys.path[0] == str(root)
     _assert_app_package_present(root)
+
+
+def test_ensure_streamlit_entrypoint_accepts_string_path(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "path", [])
+
+    root = ensure_streamlit_entrypoint("app/pages/another_page.py")
+
+    assert sys.path[0] == str(root)
+    _assert_app_package_present(root)
