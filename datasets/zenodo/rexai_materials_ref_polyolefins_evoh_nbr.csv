@@ -1,0 +1,8 @@
+material,family,form,source,density_g_cm3,tensile_strength_MPa,tensile_modulus_GPa,elongation_percent,shore_A,formulation,layers,stress_yield_MD_MPa,elong_yield_MD_pct,stress_break_MD_MPa,elong_break_MD_pct,tensile_modulus_TD_MPa,stress_yield_TD_MPa,elong_yield_TD_pct,stress_break_TD_MPa,elong_break_TD_pct
+Polypropylene (PP),polymer,sheet/natural,Direct Plastics: Polypropylene Natural data sheet (PDF),0.905,30.0,1.6,8.0,,,,,,,,,,,,
+Nitrile rubber (NBR),elastomer,compound B1105,Marco Rubber: Material Datasheet B1105 (PDF),,12.27,,318.0,67.0,,,,,,,,,,,
+PE/EVOH multilayer film,multilayer_film,,Zenodo: PE/EVOH Multinanolayer films (MNL1 Mecha.xlsx),,,,,,PE/EVOH 95/5,0 LME / 3 layers,,,15.9,430.0,331.0,8.27,11.0,12.8,540.0
+PE/EVOH multilayer film,multilayer_film,,Zenodo: PE/EVOH Multinanolayer films (MNL1 Mecha.xlsx),,,,,,PE/EVOH 95/5,8 LME / 513 layers,,,16.1,360.0,362.0,8.78,9.8,12.7,530.0
+PE/EVOH multilayer film,multilayer_film,,Zenodo: PE/EVOH Multinanolayer films (MNL1 Mecha.xlsx),,,,,,PE/EVOH 95/5,9 LME / 1025 layers,,,13.4,390.0,350.0,8.58,11.0,10.5,470.0
+PE/EVOH multilayer film,multilayer_film,,Zenodo: PE/EVOH Multinanolayer films (MNL1 Mecha.xlsx),,,,,,PE/EVOH 90/10,0 LME / 3 layers,,,16.1,340.0,390.0,9.19,9.9,9.4,390.0
+PE/EVOH multilayer film,multilayer_film,,Zenodo: PE/EVOH Multinanolayer films (MNL1 Mecha.xlsx),,,,,,PE/EVOH 90/10,8 LME / 513 layers,,,15.6,440.0,603.0,13.4,11.0,19.8,520.0
