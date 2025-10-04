@@ -26,7 +26,11 @@ import pandas as pd
 import plotly.graph_objects as go
 import pydeck as pdk
 import streamlit as st
-from streamlit import st_autorefresh
+
+try:  # Streamlit Cloud ofrece st_autorefresh, entornos antiguos pueden no tenerlo
+    from streamlit import st_autorefresh
+except Exception:  # pragma: no cover - degradación controlada
+    st_autorefresh = None
 
 from app.modules import data_sources as ds
 from app.modules import mars_control
@@ -50,6 +54,88 @@ from app.modules.ui_blocks import (
     micro_divider,
     render_brand_header,
 )
+
+
+_FALLBACK_AUTOR_REQUESTS_KEY = "_autorefresh_fallback_requests"
+
+
+def _fallback_autorefresh(
+    *, interval: int, limit: int | None = None, key: str | None = None, **_: Any
+) -> int:
+    usage_key = key or "_autorefresh_default"
+    counter_key = f"_autorefresh_fallback_counter::{usage_key}"
+    counter = int(st.session_state.get(counter_key, 0))
+    if limit is not None and counter >= limit:
+        return counter
+
+    requests: dict[str, dict[str, Any]] = st.session_state.setdefault(
+        _FALLBACK_AUTOR_REQUESTS_KEY, {}
+    )
+    requests[usage_key] = {
+        "interval": int(interval),
+        "limit": limit,
+        "counter_key": counter_key,
+    }
+    st.session_state[_FALLBACK_AUTOR_REQUESTS_KEY] = requests
+    return counter
+
+
+_run_autorefresh = st_autorefresh or _fallback_autorefresh
+
+
+def _process_autorefresh_fallback_requests() -> None:
+    if st_autorefresh is not None:
+        st.session_state.pop(_FALLBACK_AUTOR_REQUESTS_KEY, None)
+        return
+
+    requests: dict[str, dict[str, Any]] | None = st.session_state.pop(
+        _FALLBACK_AUTOR_REQUESTS_KEY, None
+    )
+    if not requests:
+        return
+
+    pending: list[tuple[str, dict[str, Any]]] = []
+    for usage_key, metadata in requests.items():
+        if not isinstance(metadata, Mapping):
+            continue
+        counter_key = metadata.get("counter_key")
+        if not isinstance(counter_key, str) or not counter_key:
+            continue
+        limit_value = metadata.get("limit")
+        current = int(st.session_state.get(counter_key, 0))
+        if limit_value is not None and isinstance(limit_value, int):
+            if current >= limit_value:
+                continue
+        interval_ms = int(metadata.get("interval", 0) or 0)
+        if interval_ms <= 0:
+            interval_ms = 1000
+        pending.append(
+            (
+                usage_key,
+                {
+                    "interval": interval_ms,
+                    "counter_key": counter_key,
+                    "limit": limit_value,
+                },
+            )
+        )
+
+    if not pending:
+        return
+
+    min_interval_ms = min(int(entry[1]["interval"]) for entry in pending)
+    sleep_seconds = max(min(min_interval_ms / 1000.0, 1.0), 0.1)
+    time.sleep(sleep_seconds)
+
+    for _, metadata in pending:
+        counter_key = metadata["counter_key"]
+        current = int(st.session_state.get(counter_key, 0))
+        limit_value = metadata.get("limit")
+        if isinstance(limit_value, int) and current >= limit_value:
+            continue
+        st.session_state[counter_key] = current + 1
+
+    st.experimental_rerun()
 
 
 configure_page(page_title="Rex-AI • Mars Control Center", page_icon="🛰️")
@@ -687,15 +773,15 @@ with tabs[0]:
 
         tick_triggered = bool(manual_tick)
         if auto_tick:
-            try:
-                tick_count = st_autorefresh(
-                    interval=20000,
-                    limit=None,
-                    key="mars_auto_tick_counter",
+            if st_autorefresh is None:
+                st.caption(
+                    "⚠️ Autorefresco nativo no disponible. Usando fallback sincronizado con tiempo real."
                 )
-            except AttributeError:
-                time.sleep(0.1)
-                st.experimental_rerun()
+            tick_count = _run_autorefresh(
+                interval=20000,
+                limit=None,
+                key="mars_auto_tick_counter",
+            )
             previous_count = st.session_state.get("mars_auto_tick_prev", 0)
             if tick_count > previous_count:
                 st.session_state["mars_auto_tick_prev"] = tick_count
@@ -1898,15 +1984,15 @@ with tabs[4]:
 
     if auto_loop:
         st.session_state["demo_event_auto"] = True
-        try:
-            st_autorefresh(
-                interval=int(interval_seconds * 1000),
-                limit=None,
-                key="demo_event_autorefresh",
+        if st_autorefresh is None:
+            st.caption(
+                "⚠️ Autorefresco nativo no disponible. El modo demo usa un fallback manual."
             )
-        except AttributeError:
-            time.sleep(0.1)
-            st.experimental_rerun()
+        _run_autorefresh(
+            interval=int(interval_seconds * 1000),
+            limit=None,
+            key="demo_event_autorefresh",
+        )
         new_event = new_event or mars_control.generate_demo_event(interval_seconds)
     else:
         st.session_state["demo_event_auto"] = False
@@ -2076,4 +2162,7 @@ with tabs[4]:
             ]
         )
         st.dataframe(script_df, use_container_width=True, hide_index=True)
+
+
+_process_autorefresh_fallback_requests()
 
