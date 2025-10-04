@@ -1,0 +1,115 @@
+flights:
+  - flight_id: "MC-042"
+    capsule_id: "ares_cargo_7"
+    origin: "Orbital Hub Phobos"
+    destination: "Base Jezero"
+    departure: "2043-04-12T06:30:00Z"
+    arrival: "2043-04-12T18:05:00Z"
+    status: "en_route"
+    payload_mass_kg: 1240
+    manifest_ref: "manifest-alpha"
+  - flight_id: "MC-043"
+    capsule_id: "skylift_3"
+    origin: "Orbital Hub Phobos"
+    destination: "Base Jezero"
+    departure: "2043-04-12T09:45:00Z"
+    arrival: "2043-04-12T21:55:00Z"
+    status: "boarding"
+    payload_mass_kg: 860
+    manifest_ref: "manifest-beta"
+  - flight_id: "MC-044"
+    capsule_id: "dusthopper"
+    origin: "Base Jezero"
+    destination: "Refinería Norte"
+    departure: "2043-04-12T05:00:00Z"
+    arrival: "2043-04-12T10:40:00Z"
+    status: "landed"
+    payload_mass_kg: 310
+    manifest_ref: "manifest-recycle"
+
+capsules:
+  - capsule_id: "ares_cargo_7"
+    name: "Ares Cargo 7"
+    capacity_kg: 1500
+    status: "active"
+    location: "Orbit"
+    notes: "Inserción polar finalizada"
+  - capsule_id: "skylift_3"
+    name: "Skylift 3"
+    capacity_kg: 1100
+    status: "preparing"
+    location: "Orbital Hub"
+    notes: "Abordo de combustible criogénico"
+  - capsule_id: "dusthopper"
+    name: "Dusthopper"
+    capacity_kg: 450
+    status: "landed"
+    location: "Base Jezero"
+    notes: "Listo para retorno al hub"
+
+processes:
+  - process_id: "regolith_refinery"
+    name: "Refinería de regolito"
+    throughput_kg_per_day: 48
+    energy_kwh_per_kg: 0.9
+    crew_hours_per_day: 6
+    constraint: "Requiere filtrado de polvo fino"
+  - process_id: "polymer_reclaimer"
+    name: "Recuperadora de polímeros"
+    throughput_kg_per_day: 36
+    energy_kwh_per_kg: 0.6
+    crew_hours_per_day: 4
+    constraint: "Prioridad para polímeros fluorados"
+  - process_id: "water_splitter"
+    name: "Divisor de agua"
+    throughput_kg_per_day: 22
+    energy_kwh_per_kg: 1.4
+    crew_hours_per_day: 3
+    constraint: "Usar excedentes de energía solar"
+
+orders:
+  - order_id: "ia-ops-01"
+    issued_at: "2043-04-12T05:00:00Z"
+    priority: "high"
+    directive: "Priorizar manifiesto crítico: manifest-alpha"
+    target: "manifest-alpha"
+    context: "Monitorear ítems con penalización > 1.1"
+  - order_id: "ia-ops-02"
+    issued_at: "2043-04-12T08:15:00Z"
+    priority: "medium"
+    directive: "Asignar polímeros a recuperadora"
+    target: "polymer_reclaimer"
+    context: "Balancear carga con energía disponible"
+  - order_id: "ia-ops-03"
+    issued_at: "2043-04-12T09:40:00Z"
+    priority: "low"
+    directive: "Preparar lotes de agua para electrolisis"
+    target: "water_splitter"
+    context: "Coordinar con inventario de hielo"
+
+event_templates:
+  inbound:
+    - title: "Arribo parcial de Ares Cargo 7"
+      description: "Se recibe el primer módulo de carga con repuestos impresos."
+      delta_mass_kg: 180
+      capsule_id: "ares_cargo_7"
+    - title: "Skylift 3 completa carga"
+      description: "Todo listo para el cierre de compuertas y revisión IA."
+      delta_mass_kg: 220
+      capsule_id: "skylift_3"
+  recycling:
+    - title: "Regolito listo para refinado"
+      description: "La refinería inicia ciclo con 48 kg de regolito procesable."
+      delta_mass_kg: -48
+      capsule_id: "dusthopper"
+    - title: "Polímeros reinyectados"
+      description: "La recuperadora envía polímeros reprocesados al almacén."
+      delta_mass_kg: -32
+      capsule_id: "skylift_3"
+  orders:
+    - title: "Órden IA: priorizar manifest-alpha"
+      description: "Aumentar cuota de sustituciones de aleaciones."
+      reference: "ia-ops-01"
+    - title: "Órden IA: ajustar consumo energético"
+      description: "Rebalancear cargas entre refinería y divisor de agua."
+      reference: "ia-ops-02"

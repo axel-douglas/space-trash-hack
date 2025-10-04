@@ -25,7 +25,7 @@ from .io import (
     invalidate_targets_cache,
     invalidate_all_io_caches,
 )
-from . import mission_overview
+from . import mission_overview, mars_control
 from .utils import safe_int
 
 __all__ = [
@@ -55,6 +55,7 @@ __all__ = [
     "get_train_and_save",
     # Overview helpers
     "mission_overview",
+    "mars_control",
     # Utils
     "safe_int",
 ]
