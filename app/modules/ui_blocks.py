@@ -181,24 +181,24 @@ def render_brand_header(
 
     container_style = (
         "display:flex; flex-direction:column; align-items:center; justify-content:center; "
-        "gap: var(--mission-space-2xs, 0.25rem); text-align:center; "
-        "width: var(--mission-brand-width, clamp(108px, 12vw, 156px)); "
-        "margin: var(--mission-space-lg, 1.5rem) auto; padding: 0; "
+        "gap: var(--mission-space-xs, 0.5rem); text-align:center; "
+        "width: min(820px, 90vw); margin: var(--mission-space-lg, 1.5rem) auto; padding: 0; "
         "color: var(--mission-color-text, #0B1526);"
     )
     logo_container_style = (
-        "width:100%; display:flex; align-items:center; justify-content:center; "
+        "width:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; "
         "gap: var(--mission-space-sm, 0.75rem); text-align:center; "
-        "margin: 0; padding: var(--mission-space-md, 1rem) var(--mission-space-lg, 1.5rem); "
-        "background: var(--mission-color-text, #0B1526); border-radius: var(--mission-radius-md, 0.5rem); "
-        "border: 1px solid rgba(255, 255, 255, 0.08); "
-        "box-shadow: 0 12px 28px rgba(11, 21, 38, 0.28); "
-        "color: var(--mission-color-surface, #FFFFFF);"
+        "margin: 0; padding: var(--mission-space-lg, 1.5rem) var(--mission-space-xl, 2.25rem); "
+        "background: var(--mission-color-panel, #101724); border-radius: var(--mission-radius-md, 0.5rem); "
+        "border: 1px solid var(--mission-color-border-strong, rgba(255, 255, 255, 0.08)); "
+        "box-shadow: 0 18px 42px rgba(5, 10, 20, 0.5); "
+        "color: var(--mission-color-accent, #5AA9FF);"
     )
     tagline_style = (
-        "display:block; width: min(180px, 45vw); margin: var(--mission-space-2xs, 0.25rem) auto 0; "
-        "font-size: 0.82rem; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; "
-        "opacity: 0.9; filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.35));"
+        "display:block; width: 100%; margin: 0; "
+        "font-size: clamp(0.7rem, 0.8vw + 0.35rem, 0.95rem); font-weight: 600; "
+        "letter-spacing: clamp(0.08em, 0.12em, 0.18em); text-transform: uppercase; "
+        "white-space: nowrap; text-align: center; color: var(--mission-color-muted, #B8C3D5);"
     )
 
     logo_markup = _get_logo_markup(alt_text=alt_text)
@@ -214,8 +214,8 @@ def render_brand_header(
         f"<div class='mission-brand-header' style='{container_style}'>"
         f"<div class='mission-brand-header__logo' style='{logo_container_style}'>"
         f"{logo_markup}"
-        "</div>"
         f"{tagline_markup}"
+        "</div>"
         "</div>"
     )
 
