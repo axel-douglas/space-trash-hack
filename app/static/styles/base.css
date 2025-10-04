@@ -5,22 +5,23 @@
  */
 
 :root {
-  --mission-color-canvas: #f5f7fa;
-  --mission-color-surface: #ffffff;
-  --mission-color-panel: #e1e6ef;
-  --mission-color-border: #b7c2d3;
-  --mission-color-border-strong: #7f8ba0;
-  --mission-color-divider: #cbd5e1;
-  --mission-color-text: #0b1526;
-  --mission-color-muted: #465164;
-  --mission-color-accent: #0b3d91;
-  --mission-color-accent-soft: #4d6fb8;
-  --mission-color-positive: #19624d;
-  --mission-color-positive-soft: #c7e5d9;
-  --mission-color-warning: #944109;
-  --mission-color-warning-soft: #f2dfcd;
-  --mission-color-critical: #8c2f3a;
-  --mission-color-critical-soft: #f2d3da;
+  --mission-color-canvas: var(--bg, #050a14);
+  --mission-color-surface: var(--surface-card, #141c2a);
+  --mission-color-panel: var(--surface-panel, #101724);
+  --mission-color-border: var(--border-soft, #243042);
+  --mission-color-border-strong: var(--border-strong, #31405a);
+  --mission-color-divider: var(--stroke, #1f2a3c);
+  --mission-color-text: var(--ink, #f8fafc);
+  --mission-color-muted: var(--muted, #b8c3d5);
+  --mission-color-accent: var(--accent, #5aa9ff);
+  --mission-color-accent-soft: var(--accent-soft, #93c5fd);
+  --mission-color-on-accent: var(--bg, #050a14);
+  --mission-color-positive: var(--tone-ok-fg, #63f0a5);
+  --mission-color-positive-soft: var(--tone-ok-bg, #123829);
+  --mission-color-warning: var(--tone-warn-fg, #f2c057);
+  --mission-color-warning-soft: var(--tone-warn-bg, #3f2a0f);
+  --mission-color-critical: var(--tone-risk-fg, #f18882);
+  --mission-color-critical-soft: var(--tone-risk-bg, #3d1518);
 
   --mission-font-sans: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
   --mission-font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, monospace;
@@ -111,10 +112,10 @@ button[kind="secondary"] {
   border-radius: var(--mission-radius-md);
   border: var(--mission-line-weight) solid var(--mission-color-accent);
   background-color: var(--mission-color-accent);
-  color: var(--mission-color-surface);
+  color: var(--mission-color-on-accent);
   font-weight: 600;
   padding: 0.65rem 1.25rem;
-  box-shadow: 0 2px 6px rgba(11, 61, 145, 0.25);
+  box-shadow: 0 2px 6px rgba(90, 169, 255, 0.25);
   transition: background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease,
     box-shadow 0.18s ease;
 }
@@ -127,7 +128,7 @@ button:focus-visible,
 button[kind="secondary"]:focus-visible {
   background-color: var(--mission-color-accent-soft);
   border-color: var(--mission-color-accent-soft);
-  color: var(--mission-color-surface);
+  color: var(--mission-color-on-accent);
 }
 
 button:focus-visible,
@@ -135,7 +136,7 @@ button:focus-visible,
 button[kind="secondary"]:focus-visible {
   outline: 3px solid var(--mission-color-accent-soft);
   outline-offset: 2px;
-  box-shadow: 0 0 0 3px rgba(11, 61, 145, 0.2);
+  box-shadow: 0 0 0 3px rgba(90, 169, 255, 0.2);
 }
 
 button:disabled,
@@ -201,7 +202,7 @@ select:focus,
 .stMultiSelect [data-baseweb="select"] > div:focus-within,
 [data-baseweb="input"] input:focus {
   border-color: var(--mission-color-accent);
-  box-shadow: 0 0 0 3px rgba(11, 61, 145, 0.18);
+  box-shadow: 0 0 0 3px rgba(90, 169, 255, 0.18);
   outline: none;
 }
 
@@ -295,7 +296,7 @@ table {
 [data-mission-pill="accent"],
 .mission-pill--accent {
   background-color: var(--mission-color-accent-soft);
-  color: var(--mission-color-surface);
+  color: var(--mission-color-on-accent);
   border-color: var(--mission-color-accent);
 }
 
