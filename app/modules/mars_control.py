@@ -53,7 +53,15 @@ import wave
 
 import pandas as pd
 import streamlit as st
-import yaml
+
+try:
+    import yaml
+except ImportError as exc:  # pragma: no cover - import guard
+    st.error(
+        "PyYAML es necesario para cargar los datos logísticos de Marte. "
+        "Instala la dependencia con `pip install pyyaml` y vuelve a intentarlo."
+    )
+    raise
 
 from app.modules import mission_overview
 from app.modules.generator import GeneratorService
