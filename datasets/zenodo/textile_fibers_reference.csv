@@ -1,0 +1,3 @@
+material,category,density_g_cm3_min,density_g_cm3_max,tensile_strength_MPa_min,tensile_strength_MPa_max,youngs_modulus_GPa_min,youngs_modulus_GPa_max,elongation_pct_min,elongation_pct_max,notes
+Cotton (Gossypium hirsutum / barbadense),textile_cellulose,1.5,1.6,287,597,5.5,12.6,7.0,8.0,Reference fibre properties for cotton; proxy for clothing/towels in NASA waste categories.
+Flax (Linum usitatissimum),textile_lignocellulosic,1.5,1.5,1100,1100,100.0,100.0,2.4,2.4,Reference fibre properties for flax; high-tenacity natural textile baseline.
