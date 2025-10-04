@@ -8,7 +8,8 @@ conjunto Pareto y métricas de convergencia (hipervolumen y dominancia).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Iterable
+from functools import lru_cache
+from typing import Callable, Iterable, Mapping
 
 import numpy as np
 import pandas as pd
@@ -18,6 +19,12 @@ from app.modules.execution import (
     ExecutionBackend,
     create_backend,
 )
+from app.modules.property_planner import parse_property_constraints
+
+try:  # pragma: no cover - optional dependency during tests without bundle
+    from app.modules.generator import CandidateAssembler
+except Exception:  # pragma: no cover - defensive guard
+    CandidateAssembler = None  # type: ignore[assignment]
 
 try:  # pragma: no cover - optional dependency
     from ax.service.ax_client import AxClient
@@ -43,6 +50,28 @@ class OptimizationSummary:
 
 Candidate = dict
 Sampler = Callable[[dict[str, float] | None], Candidate | None]
+
+
+@lru_cache(maxsize=1)
+def _property_columns() -> tuple[str, ...]:
+    if CandidateAssembler is None:
+        return tuple()
+    try:
+        assembler = CandidateAssembler()
+    except Exception:  # pragma: no cover - optional bundle missing
+        return tuple()
+    columns = getattr(assembler.material_reference, "property_columns", ())
+    return tuple(columns) if columns else tuple()
+
+
+def _safe_float(value: object) -> float | None:
+    try:
+        candidate = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    if np.isnan(candidate):
+        return None
+    return float(candidate)
 
 
 def optimize_candidates(
@@ -201,8 +230,31 @@ def _metrics(candidate: Candidate, target: dict) -> dict[str, float]:
     energy_n = _norm(energy, float(target.get("max_energy_kwh", 1.0)))
     water_n = _norm(water, float(target.get("max_water_l", 1.0)))
     crew_n = _norm(crew, float(target.get("max_crew_min", 1.0)))
-    penalty = np.mean([energy_n, water_n, crew_n])
-    return {
+    penalty_components: list[float] = [energy_n, water_n, crew_n]
+
+    features: Mapping[str, object] | None = candidate.get("features")  # type: ignore[assignment]
+    constraint_penalties: dict[str, float] = {}
+    if isinstance(features, Mapping):
+        constraints = parse_property_constraints(target, _property_columns() or None)
+        for column, (minimum, maximum) in constraints.items():
+            value = _safe_float(features.get(column))
+            violation = 0.0
+            if value is None:
+                violation = 1.0
+            else:
+                if minimum is not None and value < minimum:
+                    denom = max(abs(minimum), 1e-6)
+                    violation = max(violation, (minimum - value) / denom)
+                if maximum is not None and value > maximum:
+                    denom = max(abs(maximum), 1e-6)
+                    violation = max(violation, (value - maximum) / denom)
+            violation = float(max(0.0, violation))
+            constraint_penalties[column] = violation
+            penalty_components.append(violation)
+
+    penalty = float(np.mean(penalty_components)) if penalty_components else 0.0
+
+    metrics: dict[str, float] = {
         "score": score,
         "energy": energy_n,
         "water": water_n,
@@ -210,19 +262,33 @@ def _metrics(candidate: Candidate, target: dict) -> dict[str, float]:
         "penalty": penalty,
     }
 
+    if constraint_penalties:
+        metrics["constraint_penalty"] = float(np.mean(list(constraint_penalties.values())))
+        for column, value in constraint_penalties.items():
+            metrics[f"constraint::{column}"] = value
+    else:
+        metrics["constraint_penalty"] = 0.0
+
+    metrics["meta::constraint_violations"] = constraint_penalties
+    return metrics
+
 
 def _dominates(metrics_a: dict[str, float], metrics_b: dict[str, float]) -> bool:
-    better_or_equal = (
-        metrics_a["score"] >= metrics_b["score"]
-        and metrics_a["energy"] <= metrics_b["energy"]
-        and metrics_a["water"] <= metrics_b["water"]
-        and metrics_a["crew"] <= metrics_b["crew"]
+    if "score" not in metrics_a or "score" not in metrics_b:
+        return False
+
+    keys = set(metrics_a) & set(metrics_b)
+    exclude = {"score", "penalty", "constraint_penalty", "meta::constraint_violations"}
+    cost_keys = [key for key in keys if key not in exclude]
+
+    if not cost_keys:
+        return metrics_a["score"] > metrics_b["score"]
+
+    better_or_equal = metrics_a["score"] >= metrics_b["score"] and all(
+        metrics_a[key] <= metrics_b[key] for key in cost_keys
     )
-    strictly_better = (
-        metrics_a["score"] > metrics_b["score"]
-        or metrics_a["energy"] < metrics_b["energy"]
-        or metrics_a["water"] < metrics_b["water"]
-        or metrics_a["crew"] < metrics_b["crew"]
+    strictly_better = metrics_a["score"] > metrics_b["score"] or any(
+        metrics_a[key] < metrics_b[key] for key in cost_keys
     )
     return better_or_equal and strictly_better
 
@@ -272,6 +338,23 @@ def _penalty(candidate: Candidate, target: dict) -> float:
         return float("nan")
     metrics = _metrics(candidate, target)
     return float(metrics["penalty"])
+
+
+def candidate_metrics(candidate: Candidate, target: Mapping[str, object]) -> dict[str, object]:
+    """Public wrapper returning the constraint-aware metrics for *candidate*."""
+
+    return _metrics(candidate, dict(target))
+
+
+def pareto_front(
+    candidates: Iterable[Candidate],
+    target: Mapping[str, object],
+    *,
+    backend: ExecutionBackend | None = None,
+) -> list[Candidate]:
+    """Expose the Pareto front helper for visualisations and analytics."""
+
+    return _pareto_front(list(candidates), dict(target), backend=backend)
 
 
 def _run_bayesian_optimization(

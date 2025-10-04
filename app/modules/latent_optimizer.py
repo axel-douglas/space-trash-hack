@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 
 from app.modules.ml_models import TARGET_COLUMNS, ModelRegistry, get_model_registry
+from app.modules.property_planner import PropertyPlanner
 
 
 ScoreFunction = Callable[[Mapping[str, float]], float]
@@ -32,6 +33,7 @@ class LatentCandidate:
     prediction: Dict[str, float]
     latent: Sequence[float]
     score: float
+    evaluation: Dict[str, Any] | None = None
 
     def as_dict(self) -> Dict[str, Any]:
         payload = {
@@ -40,25 +42,40 @@ class LatentCandidate:
             "score": float(self.score),
             "latent": [float(x) for x in self.latent],
         }
+        if self.evaluation is not None:
+            payload["evaluation"] = self.evaluation
         return payload
 
 
 class LatentSpaceExplorer:
     """High-level API to interact with the Rex-AI autoencoder."""
 
-    def __init__(self, registry: ModelRegistry | None = None) -> None:
+    def __init__(
+        self,
+        registry: ModelRegistry | None = None,
+        planner: PropertyPlanner | None = None,
+    ) -> None:
         if registry is None:
             try:
                 registry = get_model_registry()
             except Exception:  # pragma: no cover - cache unavailable in minimal envs
                 registry = None
         self.registry = registry
+        self._planner = planner
 
     # ------------------------------------------------------------------
     # Availability & preprocessing helpers
     # ------------------------------------------------------------------
     def available(self) -> bool:
         return bool(self.registry and getattr(self.registry, "ready", False) and self.registry.has_autoencoder())
+
+    def _ensure_planner(self) -> PropertyPlanner | None:
+        if self._planner is None and self.registry is not None:
+            try:
+                self._planner = PropertyPlanner(self.registry)
+            except Exception:  # pragma: no cover - optional planner bootstrap
+                self._planner = None
+        return self._planner
 
     def _sanitise_features(
         self,
@@ -189,12 +206,26 @@ class LatentSpaceExplorer:
             seen_keys.add(fingerprint)
 
             cast_prediction = {str(k): float(v) for k, v in prediction.items() if k in TARGET_COLUMNS}
+            evaluation: Dict[str, Any] | None = None
+            if planner is not None:
+                evaluation = planner.evaluate_candidate(
+                    {
+                        "prediction": cast_prediction,
+                        "features": candidate_features,
+                        "uncertainty": prediction.get("uncertainty", {}),
+                    },
+                    constraints,
+                )
+                if require_feasible and not evaluation.get("feasible", False):
+                    continue
+
             candidates.append(
                 LatentCandidate(
                     features=candidate_features,
                     prediction=cast_prediction,
                     latent=tuple(float(x) for x in vector.tolist()),
                     score=score,
+                    evaluation=evaluation,
                 )
             )
 
