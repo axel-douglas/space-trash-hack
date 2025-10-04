@@ -20,7 +20,6 @@ import pandas as pd
 import streamlit as st
 
 from app.modules.candidate_showroom import render_candidate_showroom
-from app.modules.generator import generate_candidates
 from app.modules.io import (  # si tu IO usa load_process_catalog, cámbialo aquí
     MissingDatasetError,
     format_missing_dataset_message,
@@ -53,30 +52,15 @@ from app.modules.ui_blocks import (
     render_brand_header,
 )
 from app.modules.visualizations import ConvergenceScene
+from app.modules.utils import (
+    format_label_summary,
+    format_number,
+    format_resource_text,
+    safe_float,
+)
+from app.pages.generator_view_model import GeneratorViewModel
 
-configure_page(page_title="Rex-AI • Generador", page_icon="🤖")
-initialise_frontend()
 
-current_step = set_active_step("generator")
-
-render_brand_header()
-
-render_breadcrumbs(current_step)
-
-_playbook_prefill_raw = st.session_state.pop("_playbook_generator_filters", None)
-_playbook_prefilters: dict[str, object] | None = None
-_playbook_prefill_label: str | None = None
-if isinstance(_playbook_prefill_raw, dict):
-    filters_candidate = _playbook_prefill_raw.get("filters")
-    if isinstance(filters_candidate, dict):
-        _playbook_prefilters = dict(filters_candidate)
-    scenario_hint = _playbook_prefill_raw.get("scenario")
-    if isinstance(scenario_hint, str) and scenario_hint.strip():
-        _playbook_prefill_label = scenario_hint.strip()
-
-st.header("Generador asistido por IA")
-
-# ----------------------------- Helpers -----------------------------
 TARGET_DISPLAY = {
     "rigidez": "Rigidez",
     "estanqueidad": "Estanqueidad",
@@ -84,6 +68,7 @@ TARGET_DISPLAY = {
     "water_l": "Agua (L)",
     "crew_min": "Crew (min)",
 }
+
 
 @contextmanager
 def _optional_container_expander(
@@ -118,86 +103,21 @@ def _container_text_input(container: Any, *args: Any, **kwargs: Any) -> str:
     return st.text_input(*args, **kwargs)
 
 
-def _apply_generator_prefilters(
-    filters: Mapping[str, object],
-    target: dict[str, Any] | None,
-) -> None:
-    """Push recommended filter defaults into ``st.session_state``."""
+configure_page(page_title="Rex-AI • Generador", page_icon="🤖")
+initialise_frontend()
 
-    for key, value in filters.items():
-        st.session_state[key] = value
+current_step = set_active_step("generator")
 
-    if not isinstance(target, dict):
-        return
+render_brand_header()
 
-    energy_limit = _safe_float(target.get("max_energy_kwh"))
-    water_limit = _safe_float(target.get("max_water_l"))
-    crew_limit = _safe_float(target.get("max_crew_min"))
+render_breadcrumbs(current_step)
 
-    if filters.get("showroom_limit_energy") and energy_limit is not None:
-        st.session_state["showroom_energy_limit_value"] = float(energy_limit)
-    if filters.get("showroom_limit_water") and water_limit is not None:
-        st.session_state["showroom_water_limit_value"] = float(water_limit)
-    if filters.get("showroom_limit_crew") and crew_limit is not None:
-        st.session_state["showroom_crew_limit_value"] = float(crew_limit)
+view_model = GeneratorViewModel.from_streamlit()
+_playbook_prefilters, _playbook_prefill_label = view_model.pop_playbook_prefill()
 
+st.header("Generador asistido por IA")
 
-def _safe_float(value: object) -> float | None:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    if math.isnan(number):
-        return None
-    return number
-
-
-def _format_number(value: object, precision: int = 2) -> str:
-    number = _safe_float(value)
-    if number is None:
-        return "—"
-    return f"{number:.{precision}f}"
-
-
-def _format_resource_text(value: object, limit: object, precision: int = 2) -> str:
-    value_text = _format_number(value, precision)
-    limit_number = _safe_float(limit)
-    if limit_number is None:
-        return value_text
-    limit_text = f"{limit_number:.{precision}f}"
-    return f"{value_text} / {limit_text}"
-
-
-def _format_label_summary(summary: dict[str, dict[str, float]] | None) -> str:
-    if not summary:
-        return ""
-
-    parts: list[str] = []
-    for source, stats in summary.items():
-        if not isinstance(stats, dict):
-            parts.append(str(source))
-            continue
-
-        label = str(source)
-        count = stats.get("count")
-        mean_weight = stats.get("mean_weight")
-
-        fragment = label
-        try:
-            if count is not None:
-                fragment = f"{label}×{int(count)}"
-        except (TypeError, ValueError):
-            fragment = label
-
-        try:
-            if mean_weight is not None:
-                fragment = f"{fragment} (w≈{float(mean_weight):.2f})"
-        except (TypeError, ValueError):
-            pass
-
-        parts.append(fragment)
-
-    return " · ".join(parts)
+target = view_model.get_target()
 
 
 def _collect_external_profiles(candidate: Mapping[str, Any], inventory: pd.DataFrame) -> dict[str, Any]:
@@ -299,7 +219,7 @@ def _render_reference_distribution(
         st.info(empty_message)
         return
 
-    numeric_reference = _safe_float(reference_value)
+    numeric_reference = safe_float(reference_value)
     if numeric_reference is None:
         return
 
@@ -334,11 +254,11 @@ def _collect_target_badges(target: dict[str, Any] | None) -> list[tuple[str, str
 
     badges: list[tuple[str, str]] = []
 
-    water_limit = _safe_float(target.get("max_water_l"))
+    water_limit = safe_float(target.get("max_water_l"))
     if water_limit is not None:
         badges.append((f"💧 Agua ≤ {water_limit:.0f} L", "warn"))
 
-    energy_limit = _safe_float(target.get("max_energy_kwh"))
+    energy_limit = safe_float(target.get("max_energy_kwh"))
     if energy_limit is not None:
         badges.append((f"⚡ Energía ≤ {energy_limit:.0f} kWh", "warn"))
 
@@ -449,12 +369,13 @@ def render_candidate_card(
     idx: int,
     target_data: dict[str, Any],
     model_registry: Any,
+    view_model: GeneratorViewModel,
 ) -> None:
     props = candidate.get("props")
     if props is None:
         return
 
-    score_text = _format_number(candidate.get("score"))
+    score_text = format_number(candidate.get("score"))
     process_id = str(candidate.get("process_id") or "—")
     process_name = str(candidate.get("process_name") or "")
     process_label = " ".join(part for part in [process_id, process_name] if part).strip()
@@ -464,7 +385,7 @@ def render_candidate_card(
         card = st.container()
 
         badges: list[str] = []
-        regolith_badge_pct = _safe_float(candidate.get("regolith_pct"))
+        regolith_badge_pct = safe_float(candidate.get("regolith_pct"))
         if regolith_badge_pct and regolith_badge_pct > 0:
             badges.append("⛰️ ISRU: +MGS-1")
         src_cats = " ".join(map(str, candidate.get("source_categories", []))).lower()
@@ -506,15 +427,15 @@ def render_candidate_card(
             weights_raw = candidate.get("weights")
             if isinstance(weights_raw, Mapping):
                 weights_list = [
-                    _safe_float(weights_raw.get(label)) for label in material_labels
+                    safe_float(weights_raw.get(label)) for label in material_labels
                 ]
             elif isinstance(weights_raw, (list, tuple, set)):
-                weights_list = [_safe_float(value) for value in weights_raw]
+                weights_list = [safe_float(value) for value in weights_raw]
             elif weights_raw is None:
                 weights_list = []
             else:
                 try:
-                    weights_list = [_safe_float(weights_raw)]
+                    weights_list = [safe_float(weights_raw)]
                 except Exception:  # noqa: BLE001
                     weights_list = []
 
@@ -531,14 +452,14 @@ def render_candidate_card(
 
                 numeric_weights: list[float | None] = []
                 for value in weights_list:
-                    number = _safe_float(value)
+                    number = safe_float(value)
                     numeric_weights.append(number)
 
                 valid_weights = [w for w in numeric_weights if w is not None and math.isfinite(w)]
                 total_weight = sum(valid_weights) if valid_weights else 0.0
 
                 features = candidate.get("features") or {}
-                total_mass = _safe_float(features.get("total_mass_kg"))
+                total_mass = safe_float(features.get("total_mass_kg"))
 
                 fractions: list[float | None] = []
                 masses: list[float | None] = []
@@ -597,7 +518,7 @@ def render_candidate_card(
             ]
             metric_cols = info_col.columns(len(metrics))
             for col, (label, value, precision) in zip(metric_cols, metrics):
-                col.metric(label, _format_number(value, precision))
+                col.metric(label, format_number(value, precision=precision))
 
             src = candidate.get("prediction_source", "heuristic")
             meta_payload = {}
@@ -612,7 +533,7 @@ def render_candidate_card(
                 info_col.caption(
                     f"Predicción por modelo ML (**{src}**, entrenado {trained_at}){latent_note}."
                 )
-                summary_text = _format_label_summary(
+                summary_text = format_label_summary(
                     meta_payload.get("label_summary") or model_registry.label_summary
                 )
                 if summary_text:
@@ -669,7 +590,7 @@ def render_candidate_card(
                 ("Crew (min)", getattr(props, "crew_min", None), target_data.get("max_crew_min"), 0),
             ]
             for label, value, limit, precision in resources:
-                resource_text = _format_resource_text(value, limit, precision)
+                resource_text = format_resource_text(value, limit, precision=precision)
                 process_col.markdown(f"- **{label}:** {resource_text}")
 
         st.divider()
@@ -681,7 +602,7 @@ def render_candidate_card(
             ", ".join(map(str, candidate.get("source_categories", []))) or "—",
         )
         st.write("Flags:", ", ".join(map(str, candidate.get("source_flags", []))) or "—")
-        regolith_pct = _safe_float(candidate.get("regolith_pct"))
+        regolith_pct = safe_float(candidate.get("regolith_pct"))
         if regolith_pct and regolith_pct > 0:
             st.write(f"**MGS-1 agregado:** {regolith_pct * 100:.0f}%")
 
@@ -703,7 +624,7 @@ def render_candidate_card(
             if logistics_reuse is not None:
                 highlight_badges.append(
                     (
-                        f"🚚 Reuso logístico: {_format_number(logistics_reuse)}",
+                        f"🚚 Reuso logístico: {format_number(logistics_reuse)}",
                         "ok",
                     )
                 )
@@ -711,7 +632,7 @@ def render_candidate_card(
             if gas_recovery is not None:
                 highlight_badges.append(
                     (
-                        f"🧪 Recupero gas: {_format_number(gas_recovery)}",
+                        f"🧪 Recupero gas: {format_number(gas_recovery)}",
                         "ok",
                     )
                 )
@@ -899,17 +820,16 @@ def render_candidate_card(
         badge = render_safety_indicator(candidate)
 
         if st.button(f"✅ Seleccionar Opción {idx}", key=f"pick_{idx}"):
-            st.session_state["selected"] = {"data": candidate, "safety": badge}
+            view_model.set_selected(candidate, badge)
             st.success(
                 "Opción seleccionada. Abrí **4) Resultados**, **5) Comparar & Explicar** o **6) Pareto & Export**."
             )
 
-target = st.session_state.get("target")
-
 playbook_filters_applied = False
 if _playbook_prefilters is not None and isinstance(target, dict):
-    _apply_generator_prefilters(_playbook_prefilters, target)
-    playbook_filters_applied = True
+    playbook_filters_applied = view_model.apply_playbook_prefilters(
+        _playbook_prefilters, target
+    )
 
 # ----------------------------- Encabezado -----------------------------
 st.header("Generador IA")
@@ -972,16 +892,9 @@ proc_filtered = choose_process(
 if proc_filtered is None or proc_filtered.empty:
     proc_filtered = proc_df.copy()
 
-generator_state_key = "generator_button_state"
-generator_trigger_key = "generator_button_trigger"
-generator_error_key = "generator_button_error"
-button_state = st.session_state.get(generator_state_key, "idle")
-button_error = st.session_state.get(generator_error_key)
-
-if "candidates" not in st.session_state:
-    st.session_state["candidates"] = []
-if "optimizer_history" not in st.session_state:
-    st.session_state["optimizer_history"] = pd.DataFrame()
+view_model.ensure_defaults()
+button_state = view_model.button_state
+button_error = view_model.button_error
 
 model_registry = get_model_registry()
 
@@ -990,14 +903,14 @@ with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None
     with layout_stack(parent=grid) as left_column:
         with layout_block("side-panel layer-shadow fade-in", parent=left_column) as control:
             control.markdown("### 🎛️ Configurar lote")
-            stored_mode = st.session_state.get("prediction_mode", "Modo Rex-AI (ML)")
+            stored_mode = view_model.get_prediction_mode("Modo Rex-AI (ML)")
             mode = control.radio(
                 "Motor de predicción",
                 ("Modo Rex-AI (ML)", "Modo heurístico"),
                 index=0 if stored_mode == "Modo Rex-AI (ML)" else 1,
                 help="Elegí entre la IA entrenada o la estimación basada en reglas según el tipo de respuesta que necesitás comparar.",
             )
-            st.session_state["prediction_mode"] = mode
+            view_model.set_prediction_mode(mode)
             use_ml = mode == "Modo Rex-AI (ML)"
 
             control.markdown("#### Ajustar parámetros")
@@ -1026,14 +939,14 @@ with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None
                 "Opciones avanzadas",
                 warning_message=advanced_warning,
             ) as advanced:
-                seed_default = st.session_state.get("generator_seed_input", "")
+                seed_default = view_model.get_seed_input()
                 seed_input = _container_text_input(
                     advanced,
                     "Semilla (opcional)",
                     value=seed_default,
                     help="Ingresá un entero fijo para reproducir exactamente el mismo lote cuando vuelvas a generar.",
                 )
-                st.session_state["generator_seed_input"] = seed_input
+                view_model.set_seed_input(seed_input)
 
             crew_low = target.get("crew_time_low", False)
             control.caption(
@@ -1062,12 +975,10 @@ with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None
 
             result: object | None = None
             if run and button_state != "loading":
-                st.session_state[generator_state_key] = "loading"
-                st.session_state[generator_trigger_key] = True
-                st.session_state.pop(generator_error_key, None)
+                view_model.trigger_generation()
                 st.rerun()
 
-            button_state_now = st.session_state.get(generator_state_key)
+            button_state_now = view_model.button_state
             if button_error and button_state_now == "error":
                 control.error(button_error)
             elif button_state_now == "success":
@@ -1145,32 +1056,25 @@ with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None
             if label_summary_text and label_summary_text != "—":
                 ai_panel.caption(f"Fuentes de labels: {label_summary_text}")
 # ----------------------------- Generación -----------------------------
-if st.session_state.get("generator_button_trigger"):
-    seed_value: int | None = None
-    seed_raw = st.session_state.get("generator_seed_input", "").strip()
-    if seed_raw:
-        try:
-            seed_value = int(seed_raw, 0)
-        except ValueError:
-            st.session_state["generator_button_state"] = "error"
-            st.session_state["generator_button_error"] = "Ingresá un entero válido para la semilla (por ejemplo 42 o 0x2A)."
-            st.session_state["generator_button_trigger"] = False
-            st.stop()
+if view_model.should_generate:
+    seed_value, seed_error = view_model.parse_seed()
+    if seed_error:
+        view_model.set_error(seed_error)
+        st.stop()
+
     try:
-        result = generate_candidates(
+        result = view_model.generate_candidates(
             waste_df,
             proc_filtered,
             target,
-            n=n_candidates,
+            n_candidates=n_candidates,
             crew_time_low=target.get("crew_time_low", False),
             optimizer_evals=opt_evals,
             use_ml=use_ml,
             seed=seed_value,
         )
     except Exception as exc:  # noqa: BLE001
-        st.session_state["generator_button_state"] = "error"
-        st.session_state["generator_button_error"] = f"Error generando candidatos: {exc}"
-        st.session_state["generator_button_trigger"] = False
+        view_model.set_error(f"Error generando candidatos: {exc}")
     else:
         candidates_raw: object | None = None
         history_raw: object | None = None
@@ -1219,16 +1123,15 @@ if st.session_state.get("generator_button_trigger"):
         else:
             history_df = pd.DataFrame(history_raw)
 
-        st.session_state["candidates"] = processed_candidates
-        st.session_state["optimizer_history"] = history_df
-        st.session_state["generator_button_state"] = "success"
-        st.session_state["generator_button_trigger"] = False
-        st.session_state.pop("generator_button_error", None)
+        view_model.store_results(processed_candidates, history_df)
+
+    button_state = view_model.button_state
+    button_error = view_model.button_error
 
 # ----------------------------- Si no hay candidatos aún -----------------------------
 st.divider()
-cands = st.session_state.get("candidates", [])
-history_df = st.session_state.get("optimizer_history", pd.DataFrame())
+cands = view_model.candidates
+history_df = view_model.optimizer_history
 
 if not cands:
     st.info(
@@ -1299,7 +1202,7 @@ if not summary_df.empty:
     if selected_rank is not None:
         focused = summary_df[summary_df["Rank"] == selected_rank].head(1)
         if not focused.empty:
-            st.session_state["generator_ranking_focus"] = focused.iloc[0].to_dict()
+            view_model.set_ranking_focus(focused.iloc[0].to_dict())
 
 # ----------------------------- Showroom de candidatos -----------------------------
 st.subheader("Resultados del generador")
@@ -1310,7 +1213,7 @@ st.caption(
 
 filtered_cands = render_candidate_showroom(cands, target)
 for idx, candidate in enumerate(cands, start=1):
-    render_candidate_card(candidate, idx, target, model_registry)
+    render_candidate_card(candidate, idx, target, model_registry, view_model)
 
 # ----------------------------- Explicación rápida (popover global) -----------------------------
 top = filtered_cands[0] if filtered_cands else (cands[0] if cands else None)

@@ -13,6 +13,7 @@ pytest.importorskip("streamlit")
 from pytest_streamlit import StreamlitRunner
 
 from app.bootstrap import ensure_project_root
+from app.pages.generator_view_model import GeneratorViewModel
 
 
 def _generator_page_app(
@@ -29,6 +30,8 @@ def _generator_page_app(
     import pandas as pd
     import streamlit as st
     from streamlit.delta_generator import DeltaGenerator
+    from app.bootstrap import ensure_project_root
+    from app.pages.generator_view_model import GeneratorViewModel
 
     root_env = os.environ.get("REXAI_PROJECT_ROOT")
     start = Path(root_env) if root_env else Path(__file__).resolve()
@@ -90,7 +93,6 @@ def _generator_page_app(
     import app.modules.ml_models as ml_models
     import app.modules.visualizations as visualizations
     import app.modules.page_data as page_data
-    import app.modules.generator as generator_module
 
     original_load_theme = ui_blocks.load_theme
     ui_blocks.load_theme = lambda **_: None  # type: ignore[assignment]
@@ -142,19 +144,23 @@ def _generator_page_app(
     }
 
     original_model_registry = ml_models.get_model_registry
-    ml_models.get_model_registry = lambda: SimpleNamespace(
-        metadata={
-            "trained_at": "2024-05-01",
-            "n_samples": 20,
-            "random_forest": {
-                "metrics": {"overall": {"mae": 0.12, "rmse": 0.21, "r2": 0.93}}
+    def _fake_model_registry() -> SimpleNamespace:
+        return SimpleNamespace(
+            metadata={
+                "trained_at": "2024-05-01",
+                "n_samples": 20,
+                "random_forest": {
+                    "metrics": {"overall": {"mae": 0.12, "rmse": 0.21, "r2": 0.93}}
+                },
             },
-        },
-        feature_importance_avg=[("density", 0.42)],
-        feature_names=["density"],
-        label_distribution_label=lambda: "NASA/ISRU",
-        label_summary={"NASA": {"count": 1, "mean_weight": 1.0}},
-    )
+            feature_importance_avg=[("density", 0.42)],
+            feature_names=["density"],
+            label_distribution_label=lambda: "NASA/ISRU",
+            label_summary={"NASA": {"count": 1, "mean_weight": 1.0}},
+        )
+
+    _fake_model_registry.clear = lambda: None  # type: ignore[attr-defined]
+    ml_models.get_model_registry = _fake_model_registry  # type: ignore[assignment]
 
     original_scene = visualizations.ConvergenceScene
 
@@ -190,46 +196,45 @@ def _generator_page_app(
 
     page_data.build_ranking_table = fake_ranking_table
 
-    original_generate_candidates = generator_module.generate_candidates
-    generator_module.generate_candidates = lambda *args, **kwargs: []
-
     st.session_state.clear()
-    st.session_state.update(
+
+    class StubService:
+        def generate_candidates(self, *args, **kwargs) -> tuple[list[dict], pd.DataFrame]:
+            return [], pd.DataFrame()
+
+    view_model = GeneratorViewModel.from_streamlit(service=StubService())
+    view_model.set_target(
         {
-            "target": {
-                "name": "Residence Renovations",
-                "max_energy_kwh": 2.5,
-                "max_water_l": 1.8,
-                "max_crew_min": 60.0,
-                "crew_time_low": False,
-            },
-            "candidates": [
-                {
-                    "score": 0.87,
-                    "process_id": "P02",
-                    "process_name": "Press & Heat Lamination",
-                    "materials": ["Polymer-X", "Binder-Y"],
-                    "weights": {"Polymer-X": 0.7, "Binder-Y": 0.3},
-                    "props": SimpleNamespace(
-                        rigidity=0.82,
-                        tightness=0.74,
-                        mass_final_kg=115.0,
-                        energy_kwh=1.2,
-                        water_l=0.6,
-                        crew_min=42.0,
-                    ),
-                    "features": {"total_mass_kg": 18.0},
-                    "auxiliary": {"passes_seal": True, "process_risk_label": "B"},
-                    "source_ids": ["poly-1", "alu-1"],
-                    "source_categories": ["Polymer"],
-                    "source_flags": ["foam"],
-                }
-            ],
-            "optimizer_history": pd.DataFrame(),
-            "generator_button_trigger": False,
-            "generator_button_state": "success",
+            "name": "Residence Renovations",
+            "max_energy_kwh": 2.5,
+            "max_water_l": 1.8,
+            "max_crew_min": 60.0,
+            "crew_time_low": False,
         }
     )
+    candidates_seed = [
+        {
+            "score": 0.87,
+            "process_id": "P02",
+            "process_name": "Press & Heat Lamination",
+            "materials": ["Polymer-X", "Binder-Y"],
+            "weights": {"Polymer-X": 0.7, "Binder-Y": 0.3},
+            "props": SimpleNamespace(
+                rigidity=0.82,
+                tightness=0.74,
+                mass_final_kg=115.0,
+                energy_kwh=1.2,
+                water_l=0.6,
+                crew_min=42.0,
+            ),
+            "features": {"total_mass_kg": 18.0},
+            "auxiliary": {"passes_seal": True, "process_risk_label": "B"},
+            "source_ids": ["poly-1", "alu-1"],
+            "source_categories": ["Polymer"],
+            "source_flags": ["foam"],
+        }
+    ]
+    view_model.store_results(candidates_seed, pd.DataFrame())
 
     generator_page = app_dir / "pages" / "3_Generator.py"
 
@@ -249,7 +254,6 @@ def _generator_page_app(
         ml_models.get_model_registry = original_model_registry
         visualizations.ConvergenceScene = original_scene
         page_data.build_ranking_table = original_ranking
-        generator_module.generate_candidates = original_generate_candidates
 
 
 @pytest.fixture
