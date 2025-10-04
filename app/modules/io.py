@@ -15,7 +15,6 @@ import pandas as pd
 import polars as pl
 
 from .dataset_validation import InvalidWasteDatasetError, validate_waste_inventory
-from .generator import prepare_waste_frame
 from .data_sources import official_features_bundle
 from .paths import DATA_ROOT
 from .problematic import problematic_mask
@@ -152,6 +151,8 @@ def _load_waste_df_cached() -> pd.DataFrame:
     family_display = base_df.get("material_family", "").astype(str).str.strip()
     material_display = category_display.where(family_display.eq(""), category_display + " — " + family_display)
     base_df["material_display"] = material_display.replace({" — ": ""})
+
+    from .generator import prepare_waste_frame
 
     prepared = prepare_waste_frame(base_df)
     result = prepared.copy(deep=True)
