@@ -686,10 +686,9 @@ def _render_orbital_scene(
         map_style=None,
         tooltip=context["tooltip"],
     )
-    chart_kwargs = {"use_container_width": True}
     if height is not None:
-        chart_kwargs["height"] = height
-    target.pydeck_chart(deck, **chart_kwargs)
+        deck.height = height
+    target.pydeck_chart(deck, use_container_width=True)
     if show_caption:
         target.caption(context["caption"])
 
