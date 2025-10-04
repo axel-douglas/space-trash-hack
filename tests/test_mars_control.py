@@ -12,11 +12,13 @@ from app.modules.mars_control_center import MarsControlCenterService
 def test_load_jezero_bitmap_payload_structure():
     payload = load_jezero_bitmap()
 
-    assert set(payload.keys()) >= {"image_uri", "image", "bounds", "center", "metadata"}
-    assert payload["image_uri"].startswith("data:image/")
-    image_payload = payload["image"]
-    assert isinstance(image_payload, dict)
-    assert image_payload.get("url", "").endswith(".jpg")
+    assert set(payload.keys()) >= {"image", "bounds", "center", "metadata"}
+    image_value = payload["image"]
+    assert isinstance(image_value, str)
+    assert image_value.endswith(".jpg")
+    fallback_value = payload.get("fallback_image_uri")
+    assert isinstance(fallback_value, str)
+    assert fallback_value.startswith("data:image/")
 
     bounds = payload["bounds"]
     assert isinstance(bounds, tuple)
@@ -30,7 +32,7 @@ def test_load_jezero_bitmap_payload_structure():
     assert isinstance(metadata, dict)
     assert "attribution" in metadata
     assert metadata.get("mime_type") in {"image/jpeg", "image/png"}
-    assert metadata.get("asset_url") == image_payload.get("url")
+    assert metadata.get("asset_url") == image_value
     assert metadata.get("license")
     assert metadata.get("provenance")
 
@@ -43,8 +45,8 @@ def test_build_map_payload_includes_bitmap_and_bounds():
 
     bitmap = payload.get("bitmap_layer")
     assert isinstance(bitmap, dict)
-    assert isinstance(bitmap.get("image"), dict)
-    assert "static/mars/" in bitmap.get("image", {}).get("url", "")
+    assert isinstance(bitmap.get("image"), str)
+    assert "static/mars/" in bitmap.get("image", "")
     assert payload.get("map_bounds") == bitmap.get("bounds")
 
     view_state = payload.get("map_view_state")
@@ -63,9 +65,11 @@ def test_load_jezero_slope_bitmap_contains_legend():
     assert isinstance(legend, dict)
     assert legend.get("description")
     assert isinstance(legend.get("ticks"), list) and legend["ticks"]
-    assert payload.get("image_uri").startswith("data:image/")
-    assert isinstance(payload.get("image"), dict)
-    assert payload["image"].get("url")
+    fallback_value = payload.get("fallback_image_uri")
+    assert isinstance(fallback_value, str)
+    assert fallback_value.startswith("data:image/")
+    assert isinstance(payload.get("image"), str)
+    assert payload["image"].endswith(".jpg") or payload["image"].endswith(".png")
 
 
 def test_load_jezero_ortho_bitmap_metadata():
