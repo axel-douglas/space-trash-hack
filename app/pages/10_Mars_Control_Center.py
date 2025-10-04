@@ -1999,7 +1999,7 @@ with tabs[4]:
                 map_style=None,
                 tooltip=tooltip,
             )
-            st.pydeck_chart(deck, use_container_width=True, height=540)
+            st.pydeck_chart(deck, use_container_width=True)
             st.caption(
                 "La escena sincroniza la órbita de cada cápsula con la simulación: el tamaño refleja el progreso y los eventos críticos se resaltan en ámbar."
             )
