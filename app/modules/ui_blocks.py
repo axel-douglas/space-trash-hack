@@ -45,10 +45,10 @@ _LAYOUT_STYLE_MAP: dict[str, str] = {
 }
 
 _PAGE_THEME: dict[str, str] = {
-    "primaryColor": "#0B3D91",
-    "backgroundColor": "#F5F7FA",
-    "secondaryBackgroundColor": "#FFFFFF",
-    "textColor": "#0B1526",
+    "primaryColor": "#5AA9FF",
+    "backgroundColor": "#0B0D12",
+    "secondaryBackgroundColor": "#141C2A",
+    "textColor": "#F8FAFC",
     "font": "Source Sans 3",
 }
 _THEME_HASH_KEY = "__rexai_theme_hash__"
