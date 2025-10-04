@@ -6,12 +6,13 @@ import io
 import json
 from pathlib import Path
 import html
+import math
 
 from app.bootstrap import ensure_streamlit_entrypoint
 
 ensure_streamlit_entrypoint(__file__)
 
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -56,6 +57,9 @@ _ACTION_PRESETS = {
     "reject": {"label": "Rechazar acción propuesta", "badge": "🔴 Rechazado"},
     "reprioritize": {"label": "Repriorizar envío crítico", "badge": "🟠 Repriorizar"},
 }
+_ETA_BASELINE_KEY = "flight_eta_baseline"
+_SCENE_TICK_KEY = "mars_scenegraph_tick"
+_CRITICAL_EVENT_SEVERITIES: set[str] = {"critical", "alert"}
 
 
 @st.cache_resource(show_spinner=False)
@@ -80,6 +84,24 @@ def _store_flight_snapshot(flights_df: pd.DataFrame) -> None:
         for row in flights_df.to_dict(orient="records")
         if row.get("flight_id")
     }
+    eta_baseline: dict[str, int] = st.session_state.get(_ETA_BASELINE_KEY, {})
+    active_flights: set[str] = set()
+    for row in flights_df.to_dict(orient="records"):
+        flight_id = str(row.get("flight_id") or "").strip()
+        if not flight_id:
+            continue
+        active_flights.add(flight_id)
+        try:
+            eta_value = int(row.get("eta_minutes", 0) or 0)
+        except (TypeError, ValueError):
+            eta_value = 0
+        eta_value = max(eta_value, 0)
+        previous = eta_baseline.get(flight_id, eta_value)
+        eta_baseline[flight_id] = max(previous, eta_value)
+    for stale in list(eta_baseline.keys()):
+        if stale not in active_flights:
+            eta_baseline.pop(stale, None)
+    st.session_state[_ETA_BASELINE_KEY] = eta_baseline
 
 
 def _apply_manual_overrides(flights_df: pd.DataFrame | None) -> pd.DataFrame | None:
@@ -206,6 +228,203 @@ def _render_demo_ticker(events: list[mars_control.DemoEvent]) -> str:
             + "</div>"
         )
     return "<div class='demo-event-ticker'>" + "".join(items) + "</div>"
+
+
+def _capsule_phase_seed(identifier: str) -> float:
+    digest = hashlib.sha1(identifier.encode("utf-8")).hexdigest()
+    return float(int(digest[:8], 16) % 360)
+
+
+def _orbit_radius_deg(altitude_km: float) -> float:
+    altitude_km = max(float(altitude_km or 0.0), 0.0)
+    base_radius = 0.045 + min(altitude_km / 1600.0, 0.35)
+    return max(base_radius, 0.035 if altitude_km <= 0.2 else 0.06)
+
+
+def _build_orbit_samples(
+    center_lon: float,
+    center_lat: float,
+    radius_deg: float,
+    altitude_m: float,
+    *,
+    samples: int = 48,
+    phase_offset: float = 0.0,
+) -> list[list[float]]:
+    points: list[list[float]] = []
+    for index in range(samples + 1):
+        angle = phase_offset + (index * (360.0 / samples))
+        radians = math.radians(angle)
+        lon = center_lon + radius_deg * math.cos(radians)
+        lat = center_lat + radius_deg * math.sin(radians)
+        points.append([lon, lat, altitude_m])
+    return points
+
+
+def _scene_event_capsules(
+    events: Sequence[Mapping[str, Any]] | None,
+    demo_event: mars_control.DemoEvent | None,
+) -> set[str]:
+    tracked: set[str] = set()
+    if events:
+        for event in events:
+            if not isinstance(event, Mapping):
+                continue
+            capsule_id = event.get("capsule_id")
+            if isinstance(capsule_id, str) and capsule_id:
+                tracked.add(capsule_id)
+            metadata = event.get("metadata") if isinstance(event.get("metadata"), Mapping) else None
+            if isinstance(metadata, Mapping):
+                for key in ("capsule_id", "target", "reference", "vehicle"):
+                    candidate = metadata.get(key)
+                    if isinstance(candidate, str) and candidate:
+                        tracked.add(candidate)
+            category = str(event.get("category", "")).lower()
+            if category in _CRITICAL_EVENT_SEVERITIES:
+                target = event.get("target")
+                if isinstance(target, str) and target:
+                    tracked.add(target)
+    if demo_event and _demo_event_severity(demo_event.severity) == "critical":
+        metadata = demo_event.metadata if isinstance(demo_event.metadata, Mapping) else {}
+        candidate = metadata.get("capsule_id") or metadata.get("target")
+        if isinstance(candidate, str) and candidate:
+            tracked.add(candidate)
+    return tracked
+
+
+def _build_scenegraph_layers(
+    flights_df: pd.DataFrame,
+    scene_asset: Mapping[str, Any],
+    *,
+    events: Sequence[Mapping[str, Any]] | None,
+    demo_event: mars_control.DemoEvent | None,
+) -> list[pdk.Layer]:
+    base_scale = scene_asset.get("scale", (1.0, 1.0, 1.0))
+    scale_vec = [float(component) for component in base_scale]
+    base_orientation = scene_asset.get("orientation", (0.0, 0.0, 0.0))
+    orientation_vec = [float(component) for component in base_orientation]
+    timeline_tick = st.session_state.get(_SCENE_TICK_KEY, 0)
+    baseline_map: Mapping[str, int] = st.session_state.get(_ETA_BASELINE_KEY, {})
+    changed_flights = set(st.session_state.get("flight_operations_recent_changes", []))
+    active_capsules = _scene_event_capsules(events, demo_event)
+
+    scene_rows: list[dict[str, Any]] = []
+    path_rows: list[dict[str, Any]] = []
+    for row in flights_df.to_dict(orient="records"):
+        flight_id = str(row.get("flight_id") or "").strip()
+        capsule_id = str(row.get("capsule_id") or flight_id or row.get("vehicle") or "").strip()
+        if not (flight_id or capsule_id):
+            continue
+        try:
+            eta_minutes = int(row.get("eta_minutes", 0) or 0)
+        except (TypeError, ValueError):
+            eta_minutes = 0
+        eta_minutes = max(eta_minutes, 0)
+        baseline_eta = max(int(baseline_map.get(flight_id, eta_minutes) or eta_minutes), 1)
+        progress = 1.0 - min(eta_minutes / baseline_eta, 1.0)
+        altitude_km = float(row.get("altitude_km", 0.0) or 0.0)
+        altitude_m = max(altitude_km * 1000.0, 18.0)
+        status = str(row.get("status", "")).lower()
+        if status == "landed":
+            altitude_m = 12.0
+        phase_seed = _capsule_phase_seed(capsule_id or flight_id)
+        orbital_speed = 18.0 if str(row.get("capsule_category", "")).lower() == "orbital_corridor" else 8.0
+        phase = (phase_seed + (timeline_tick * orbital_speed) + progress * 210.0) % 360.0
+        center_lon = float(row.get("longitude", 77.58) or 77.58)
+        center_lat = float(row.get("latitude", 18.38) or 18.38)
+        radius_deg = _orbit_radius_deg(altitude_km)
+        position_lon = center_lon + radius_deg * math.cos(math.radians(phase))
+        position_lat = center_lat + radius_deg * math.sin(math.radians(phase))
+
+        base_color = [
+            int(row.get("status_color_r", 148)),
+            int(row.get("status_color_g", 163)),
+            int(row.get("status_color_b", 184)),
+        ]
+        category_color = [
+            int(row.get("category_color_r", base_color[0])),
+            int(row.get("category_color_g", base_color[1])),
+            int(row.get("category_color_b", base_color[2])),
+        ]
+
+        is_critical = (
+            eta_minutes <= 15
+            or status in {"delayed", "hold"}
+            or capsule_id in active_capsules
+            or flight_id in active_capsules
+            or flight_id in changed_flights
+        )
+        if capsule_id in active_capsules or flight_id in active_capsules:
+            color = [250, 204, 21]
+        elif is_critical:
+            color = [239, 68, 68]
+        else:
+            color = base_color
+
+        path_color = category_color + [180]
+        if capsule_id in active_capsules or flight_id in active_capsules:
+            path_color = color + [220]
+        elif is_critical:
+            path_color = color + [200]
+
+        scale_factor = 1.0 + progress * 1.4 + (0.35 if is_critical else 0.0)
+        scale = [component * scale_factor for component in scale_vec]
+        orientation = [orientation_vec[0], (orientation_vec[1] + phase) % 360.0, orientation_vec[2]]
+
+        scene_rows.append(
+            {
+                "position": [position_lon, position_lat, altitude_m],
+                "capsule": capsule_id or flight_id,
+                "flight_id": flight_id,
+                "eta_minutes": eta_minutes,
+                "status": row.get("status_label", row.get("status")),
+                "color": color,
+                "scale": scale,
+                "orientation": orientation,
+                "tooltip": row.get("materials_tooltip", ""),
+            }
+        )
+
+        orbit_path = _build_orbit_samples(
+            center_lon,
+            center_lat,
+            radius_deg,
+            altitude_m,
+            phase_offset=phase_seed,
+        )
+        path_rows.append(
+            {
+                "capsule": capsule_id or flight_id,
+                "path": orbit_path,
+                "color": path_color,
+                "width": 950 if is_critical else 520,
+            }
+        )
+
+    if not scene_rows:
+        return []
+
+    orbit_layer = pdk.Layer(
+        "PathLayer",
+        data=path_rows,
+        get_path="path",
+        get_color="color",
+        get_width="width",
+        width_units="meters",
+        opacity=0.55,
+    )
+    scene_layer = pdk.Layer(
+        "ScenegraphLayer",
+        data=scene_rows,
+        scenegraph=scene_asset.get("url"),
+        get_position="position",
+        get_orientation="orientation",
+        get_color="color",
+        get_scale="scale",
+        size_scale=1.0,
+        pickable=True,
+        _animate=True,
+    )
+    return [orbit_layer, scene_layer]
 
 
 def _ensure_manifest_batch(
@@ -482,6 +701,7 @@ with tabs[0]:
             )
             flights_df = _apply_manual_overrides(flights_df)
             _store_flight_snapshot(flights_df)
+            st.session_state[_SCENE_TICK_KEY] = st.session_state.get(_SCENE_TICK_KEY, 0) + 1
             st.session_state["flight_operations_recent_events"] = events
             st.session_state["flight_operations_recent_changes"] = list(changed_flights)
         else:
@@ -1719,6 +1939,66 @@ with tabs[4]:
         )
     else:
         st.caption("El ticker se completará a medida que se emitan eventos del guion demo.")
+
+    micro_divider()
+    st.markdown("### Vista orbital 3D")
+
+    flights_snapshot: pd.DataFrame | None = st.session_state.get("flight_operations_table")
+    if flights_snapshot is None or flights_snapshot.empty:
+        st.info(
+            "Sin telemetría orbital para animar todavía. Ejecutá la simulación en la pestaña Flight Radar."
+        )
+    else:
+        scene_asset = mars_control.load_mars_scenegraph()
+        sim_events: Sequence[Mapping[str, Any]] = st.session_state.get(
+            "flight_operations_recent_events",
+            [],
+        )
+        scene_layers = _build_scenegraph_layers(
+            flights_snapshot,
+            scene_asset,
+            events=sim_events,
+            demo_event=last_event,
+        )
+        if not scene_layers:
+            st.info(
+                "No hay cápsulas activas para renderizar. Avanzá la simulación para actualizar la escena."
+            )
+        else:
+            view_state = pdk.ViewState(
+                latitude=18.43,
+                longitude=77.58,
+                zoom=9.2,
+                pitch=62,
+                bearing=32,
+                min_zoom=7.2,
+                max_zoom=16.5,
+            )
+            tooltip = {
+                "html": (
+                    "<div style='font-size:14px;font-weight:600;'>{capsule}</div>"
+                    "<div>ETA: {eta_minutes} min</div>"
+                    "<div>{status}</div>"
+                    "<div>{tooltip}</div>"
+                ),
+                "style": {
+                    "backgroundColor": "#0b1220",
+                    "color": "#f8fafc",
+                    "border": "1px solid #38bdf8",
+                    "borderRadius": "8px",
+                    "padding": "10px",
+                },
+            }
+            deck = pdk.Deck(
+                layers=scene_layers,
+                initial_view_state=view_state,
+                map_style=None,
+                tooltip=tooltip,
+            )
+            st.pydeck_chart(deck, use_container_width=True, height=540)
+            st.caption(
+                "La escena sincroniza la órbita de cada cápsula con la simulación: el tamaño refleja el progreso y los eventos críticos se resaltan en ámbar."
+            )
 
     micro_divider()
     st.markdown("#### Inyectar manifiesto demo")

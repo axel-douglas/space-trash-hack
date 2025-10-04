@@ -46,6 +46,7 @@ import io
 import json
 import math
 from pathlib import Path
+import shutil
 import re
 from typing import Any, Final
 import wave
@@ -78,6 +79,7 @@ _JEZERO_BITMAP_PATH: Final[Path] = _MARS_DATASETS_ROOT / "Katie_1_-_DLR_Jezero_h
 _JEZERO_BITMAP_FALLBACK_PATH: Final[Path] = _MARS_DATASETS_ROOT / "8k_mars.jpg"
 _JEZERO_SLOPE_BITMAP_PATH: Final[Path] = _MARS_DATASETS_ROOT / "j03_045994_1986_j03_046060_1986_20m_slope_20m-full.jpg"
 _JEZERO_ORTHO_BITMAP_PATH: Final[Path] = _MARS_DATASETS_ROOT / "j03_045994_1986_xn_18n282w_6m_ortho-full.jpg"
+_MARS_SCENEGRAPH_FILENAME: Final[str] = "24881_Mars_1_6792.glb"
 _JEZERO_DEFAULT_BOUNDS: Final[tuple[float, float, float, float]] = (77.18, 18.05, 78.05, 18.86)
 
 _PERCENTAGE_PATTERN: Final[re.Pattern[str]] = re.compile(r"(\d+(?:\.\d+)?)\s*%")
@@ -865,6 +867,46 @@ def load_jezero_ortho_bitmap() -> dict[str, Any]:
         source="j03_045994_1986_xn_18n282w_6m_ortho (hackathon dataset).",
         default_opacity=0.75,
     )
+
+
+def _ensure_static_asset(source: Path, destination: Path) -> Path:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if not source.is_file():
+        raise FileNotFoundError(f"No se encontró el modelo 3D requerido en {source}.")
+    should_copy = True
+    if destination.exists():
+        try:
+            should_copy = source.stat().st_mtime > destination.stat().st_mtime
+        except OSError:
+            should_copy = True
+    if should_copy:
+        shutil.copy2(source, destination)
+    return destination
+
+
+@st.cache_data(show_spinner=False)
+def load_mars_scenegraph() -> dict[str, Any]:
+    """Expose the Mars orbital model as a static asset ready for the 3D scene."""
+
+    source = _MARS_DATASETS_ROOT / _MARS_SCENEGRAPH_FILENAME
+    destination = _STATIC_ROOT / "models" / _MARS_SCENEGRAPH_FILENAME
+    asset_path = _ensure_static_asset(source, destination)
+
+    try:
+        base_url = st.get_option("server.baseUrlPath") or ""
+    except Exception:  # pragma: no cover - Streamlit not initialised in tests
+        base_url = ""
+    if base_url and not base_url.endswith("/"):
+        base_url = f"{base_url}/"
+
+    asset_url = f"{base_url}static/models/{asset_path.name}"
+    return {
+        "url": asset_url,
+        "path": str(asset_path),
+        "scale": (0.0075, 0.0075, 0.0075),
+        "orientation": (0.0, 180.0, 0.0),
+        "translation": (0.0, 0.0, 0.0),
+    }
 
 
 def _read_dataset() -> dict[str, Any]:
@@ -1730,6 +1772,7 @@ __all__ = [
     "load_jezero_bitmap",
     "load_jezero_slope_bitmap",
     "load_jezero_ortho_bitmap",
+    "load_mars_scenegraph",
     "load_logistics_baseline",
     "load_live_inventory",
     "compute_mission_summary",
