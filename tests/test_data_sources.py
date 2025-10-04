@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import warnings
+
 import pandas as pd
+import polars as pl
 import pytest
+from polars.testing import assert_frame_equal as assert_pl_frame_equal
 
 from app.modules import data_sources
 
@@ -15,6 +19,70 @@ from app.modules.data_sources import (
     load_regolith_spectra,
     load_regolith_thermogravimetry,
 )
+
+
+def test_merge_reference_dataset_lazyframe_matches_eager(tmp_path, monkeypatch) -> None:
+    base = pl.DataFrame(
+        {
+            "category": ["Fabrics", "Metals"],
+            "subitem": ["Composite Panel", "Aluminium"],
+            "mass": [1.0, 2.0],
+        }
+    )
+    extra = pl.DataFrame(
+        {
+            "category": ["Fabrics", "Metals"],
+            "subitem": ["Composite Panel", "Aluminium"],
+            "value": [10.0, 20.0],
+            "mass": [100.0, 200.0],
+            "New Metric": [0.5, 0.75],
+        }
+    )
+    dataset_path = tmp_path / "extra.csv"
+    extra.write_csv(dataset_path)
+
+    monkeypatch.setattr(
+        data_sources,
+        "resolve_dataset_path",
+        lambda name: dataset_path if name == "extra.csv" else None,
+    )
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        lazy_result = data_sources.merge_reference_dataset(base.lazy(), "extra.csv", "extra")
+
+    eager_result = data_sources.merge_reference_dataset(base, "extra.csv", "extra")
+
+    assert not any(w.category.__name__ == "PerformanceWarning" for w in caught)
+
+    if isinstance(lazy_result, pl.LazyFrame):
+        lazy_df = lazy_result.collect()
+    elif isinstance(lazy_result, pl.DataFrame):
+        lazy_df = lazy_result
+    elif isinstance(lazy_result, pd.DataFrame):
+        lazy_df = pl.from_pandas(lazy_result)
+    else:  # pragma: no cover - defensive
+        raise AssertionError(f"Unexpected result type: {type(lazy_result)!r}")
+
+    if isinstance(eager_result, pl.DataFrame):
+        eager_df = eager_result
+    elif isinstance(eager_result, pd.DataFrame):
+        eager_df = pl.from_pandas(eager_result)
+    elif isinstance(eager_result, pl.LazyFrame):
+        eager_df = eager_result.collect()
+    else:  # pragma: no cover - defensive
+        raise AssertionError(f"Unexpected result type: {type(eager_result)!r}")
+
+    assert_pl_frame_equal(lazy_df, eager_df)
+    assert eager_df.columns == [
+        "category",
+        "subitem",
+        "mass",
+        "extra_value",
+        "extra_new_metric",
+    ]
+    assert eager_df.get_column("extra_value").to_list() == [10.0, 20.0]
+    assert eager_df.get_column("extra_new_metric").to_list() == [0.5, 0.75]
 
 
 def test_particle_size_loader_produces_expected_metrics() -> None:
