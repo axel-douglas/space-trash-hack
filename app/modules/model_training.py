@@ -93,6 +93,7 @@ except Exception:  # pragma: no cover - environments without torch
     DataLoader = TensorDataset = None  # type: ignore[assignment]
     HAS_TORCH = False
 
+from app.modules import data_sources as ds
 from app.modules.label_mapper import derive_recipe_id, load_curated_labels, lookup_labels
 from .paths import DATA_ROOT, GOLD_DIR, MODELS_DIR
 
@@ -153,6 +154,15 @@ FEATURE_COLUMNS = [
     "packaging_frac",
     "gas_recovery_index",
     "logistics_reuse_index",
+    "material_density_kg_m3",
+    "material_modulus_gpa",
+    "material_tensile_strength_mpa",
+    "material_elongation_pct",
+    "material_oxygen_index_pct",
+    "material_water_absorption_pct",
+    "material_thermal_conductivity_w_mk",
+    "material_glass_transition_c",
+    "material_melting_temperature_c",
     "regolith_d50_um",
     "regolith_spectral_slope_1um",
     "regolith_mass_loss_400c",
@@ -1569,6 +1579,8 @@ def train_and_save(
     trained_on = _infer_trained_on_label(df)
     trained_at_iso = datetime.now(tz=UTC).isoformat()
 
+    material_bundle = ds.load_material_reference_bundle()
+
     metadata = {
         "model_name": "rexai-rf-ensemble",
         "trained_on": trained_on,
@@ -1600,6 +1612,14 @@ def train_and_save(
         "labeling": {
             "columns": {"source": "label_source", "weight": "label_weight"},
             "summary": label_summary_dict,
+        },
+        "material_reference": {
+            "property_columns": list(material_bundle.property_columns),
+            "material_count": int(material_bundle.table.height),
+            "metadata": {
+                str(key): {str(k): v for k, v in value.items()}
+                for key, value in material_bundle.metadata.items()
+            },
         },
     }
 

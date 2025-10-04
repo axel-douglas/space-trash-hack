@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import numbers
 import random
 import shutil
@@ -23,6 +24,23 @@ from app.modules.generator import service as generator
 from app.modules.process_planner import choose_process
 
 pl = generator.pl
+
+
+def _assert_feature_mapping_equal(lhs: Dict[str, Any], rhs: Dict[str, Any]) -> None:
+    bundle = data_sources.load_material_reference_bundle()
+    ignore = set(bundle.property_columns) | {"material_reference_name"}
+    lhs_keys = set(lhs) - ignore
+    rhs_keys = set(rhs) - ignore
+    assert lhs_keys == rhs_keys
+    for key in lhs_keys:
+        left = lhs[key]
+        right = rhs.get(key)
+        if isinstance(left, numbers.Real) and isinstance(right, numbers.Real):
+            if math.isnan(left) and math.isnan(right):
+                continue
+            assert left == pytest.approx(right, rel=1e-6, abs=1e-8)
+        else:
+            assert left == right
 
 
 @pytest.fixture
@@ -1433,6 +1451,44 @@ def test_generate_candidates_handles_missing_curated_labels(
     assert label_mapper._LABELS_CACHE_PATH == missing_labels_path
 
 
+def test_generate_candidates_marks_empirical_prediction(monkeypatch):
+    monkeypatch.setattr(generator, "get_model_registry", lambda: None)
+    monkeypatch.setattr(label_mapper, "lookup_labels", lambda *args, **kwargs: ({}, {}))
+    monkeypatch.setattr(
+        "app.modules.data_build.ensure_gold_dataset",
+        lambda *args, **kwargs: (data_sources.DATA_ROOT / "gold" / "features.parquet", data_sources.DATA_ROOT / "gold" / "labels.parquet"),
+    )
+
+    waste_df = pd.DataFrame(
+        {
+            "id": ["Z1"],
+            "category": ["EVA Waste"],
+            "material": ["Nomex 410"],
+            "kg": [8.0],
+            "volume_l": [6.0],
+            "moisture_pct": [2.0],
+            "difficulty_factor": [1.5],
+        }
+    )
+
+    proc_df = pd.DataFrame(
+        {
+            "process_id": ["P01"],
+            "name": ["Process"],
+            "energy_kwh_per_kg": [0.4],
+            "water_l_per_kg": [0.2],
+            "crew_min_per_batch": [20.0],
+        }
+    )
+
+    service = GeneratorService()
+    candidates, _ = service.generate_candidates(waste_df, proc_df, target={}, n=1, use_ml=False)
+    assert candidates
+    features = candidates[0]["features"]
+    assert features.get("prediction_mode") == "empirical"
+    assert features.get("prediction_model") == "zenodo_reference"
+
+
 def test_prepare_waste_frame_direct_match_overrides_official_fields():
     waste_df = pd.DataFrame(
         {
@@ -1505,6 +1561,40 @@ def test_prepare_waste_frame_includes_reference_columns(reference_dataset_tables
     assert prepared.loc[0, constant_name] == pytest.approx(
         l2l_params.constants[constant_name], rel=1e-6
     )
+
+
+def test_heuristic_props_prefers_material_reference():
+    waste_df = pd.DataFrame(
+        {
+            "id": ["M1"],
+            "category": ["EVA Waste"],
+            "material": ["Nomex 410"],
+            "kg": [12.0],
+            "volume_l": [8.0],
+            "moisture_pct": [3.0],
+            "difficulty_factor": [2.0],
+        }
+    )
+    prepared = generator.prepare_waste_frame(waste_df)
+    proc = pd.Series(
+        {
+            "process_id": "P01",
+            "energy_kwh_per_kg": 0.4,
+            "water_l_per_kg": 0.1,
+            "crew_min_per_batch": 25.0,
+        }
+    )
+
+    weights = np.ones(len(prepared), dtype=float)
+    props = generator.heuristic_props(prepared, proc, weights, 0.0)
+    assert props.source == "zenodo_reference"
+    assert props.energy_kwh > 0
+    assert props.water_l > 0
+
+    features = generator.compute_feature_vector(prepared, [1.0], proc, 0.0)
+    bundle = data_sources.load_material_reference_bundle()
+    for column in bundle.property_columns:
+        assert column in features
 
 
 def test_prepare_waste_frame_token_match_applies_composition():
@@ -1626,13 +1716,7 @@ def test_compute_feature_vector_dataframe_matches_tensor_batch():
     assert isinstance(tensor_features, list) and tensor_features, "Tensor batch returned no features"
     tensor_features = tensor_features[0]
 
-    assert set(tensor_features) == set(dataframe_features)
-    for key, value in dataframe_features.items():
-        lhs = tensor_features[key]
-        if isinstance(value, numbers.Real):
-            assert lhs == pytest.approx(value, rel=1e-6, abs=1e-8)
-        else:
-            assert lhs == value
+    _assert_feature_mapping_equal(dataframe_features, tensor_features)
 
     tensor_mapping = {
         field: getattr(tensor_batch, field)
@@ -1641,13 +1725,7 @@ def test_compute_feature_vector_dataframe_matches_tensor_batch():
     mapping_features = generator.compute_feature_vector(tensor_mapping)
     assert isinstance(mapping_features, list) and mapping_features
     mapping_features = mapping_features[0]
-    assert set(mapping_features) == set(tensor_features)
-    for key, value in tensor_features.items():
-        lhs = mapping_features[key]
-        if isinstance(value, numbers.Real):
-            assert lhs == pytest.approx(value, rel=1e-6, abs=1e-8)
-        else:
-            assert lhs == value
+    _assert_feature_mapping_equal(tensor_features, mapping_features)
 
 
 def test_compute_feature_vector_emits_regolith_characterization():
@@ -1727,12 +1805,7 @@ def test_compute_feature_vector_sequence_matches_batch():
     )
 
     for combined, batch_expected in zip(vectorized, expected, strict=True):
-        assert set(combined) == set(batch_expected)
-        for key, value in batch_expected.items():
-            if isinstance(value, numbers.Real):
-                assert combined[key] == pytest.approx(value, rel=1e-6, abs=1e-8)
-            else:
-                assert combined[key] == value
+        _assert_feature_mapping_equal(combined, batch_expected)
 
 
 def test_compute_feature_vector_accepts_polars_dataframe():
@@ -1760,13 +1833,7 @@ def test_compute_feature_vector_accepts_polars_dataframe():
         polars_prepared, weights, process, regolith_pct
     )
 
-    assert set(polars_features) == set(pandas_features)
-    for key, value in pandas_features.items():
-        lhs = polars_features[key]
-        if isinstance(value, numbers.Real):
-            assert lhs == pytest.approx(value, rel=1e-6, abs=1e-8)
-        else:
-            assert lhs == value
+    _assert_feature_mapping_equal(pandas_features, polars_features)
 
 
 def test_compute_feature_vectors_batch_matches_individual():
@@ -1815,13 +1882,7 @@ def test_compute_feature_vectors_batch_matches_individual():
 
     assert len(batched) == len(singles)
     for combined, expected in zip(batched, singles, strict=True):
-        assert set(combined) == set(expected)
-        for key, value in expected.items():
-            lhs = combined[key]
-            if isinstance(value, numbers.Real):
-                assert lhs == pytest.approx(value, rel=1e-6, abs=1e-8)
-            else:
-                assert lhs == value
+        _assert_feature_mapping_equal(combined, expected)
 
 
 def test_compute_feature_vector_includes_mission_metrics(monkeypatch):
@@ -2097,12 +2158,13 @@ def test_prepare_waste_frame_vectorized_large_inventory():
     prepared = generator.prepare_waste_frame(waste_df)
     assert prepared.shape[0] == size
 
+    base_flags = prepared.get("_source_flags", prepared["flags"]).astype(str).str.lower()
     expected_tokens = (
         prepared["material"].astype(str).str.lower()
         + " "
         + prepared["category"].astype(str).str.lower()
         + " "
-        + prepared["flags"].astype(str).str.lower()
+        + base_flags
         + " "
         + prepared["key_materials"].astype(str).str.lower()
     )

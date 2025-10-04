@@ -253,6 +253,7 @@ def _build_match_key(category: Any, subitem: Any | None = None) -> str:
 
 
 _ASSEMBLER = CandidateAssembler(
+    material_reference=ds.load_material_reference_bundle(),
     composition_density_map=_COMPOSITION_DENSITY_MAP,
     category_density_defaults=_CATEGORY_DENSITY_DEFAULTS,
 )
@@ -1034,6 +1035,63 @@ def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
     return result_df
 
 
+def _inject_material_reference(frame: pd.DataFrame) -> pd.DataFrame:
+    """Augment *frame* with empirical Zenodo properties when available."""
+
+    if frame.empty:
+        return frame
+
+    reference = _ASSEMBLER.material_reference
+    alias_map = getattr(reference, "alias_map", {})
+    if not alias_map:
+        return frame
+
+    reference_table = reference.table
+    if reference_table.is_empty():
+        return frame
+
+    working = frame.copy()
+    canonical = pd.Series(pd.NA, index=working.index, dtype=object)
+    for column in ("material", "material_family", "key_materials", "flags", "category"):
+        if column not in working.columns:
+            continue
+        normalized = (
+            working[column]
+            .astype(str)
+            .fillna("")
+            .map(normalize_item)
+            .map(slugify)
+        )
+        mapped = normalized.map(alias_map)
+        canonical = canonical.where(canonical.notna(), mapped)
+
+    working["_material_reference_key"] = canonical
+
+    reference_df = reference_table.to_pandas().rename(
+        columns={
+            "material_key": "_material_reference_key",
+            "material_name": "material_reference_name",
+        }
+    )
+
+    merged = working.merge(
+        reference_df,
+        on="_material_reference_key",
+        how="left",
+    )
+
+    if "flags" in merged.columns:
+        mask = merged["_material_reference_key"].notna()
+        if mask.any():
+            existing = merged.loc[mask, "flags"].astype(str).fillna("").str.strip()
+            appended = existing.where(existing == "", existing + " ") + "zenodo_reference"
+            merged.loc[mask, "flags"] = appended.str.strip()
+
+    merged["has_material_reference"] = merged["_material_reference_key"].notna().astype(int)
+
+    return merged
+
+
 @dataclass(slots=True)
 class PredProps:
     """Structured container for predicted (or heuristic) properties."""
@@ -1271,6 +1329,7 @@ def prepare_waste_frame(waste_df: pd.DataFrame) -> pd.DataFrame:
 
     bundle = _official_features_bundle()
     out = _inject_official_features(out)
+    out = _inject_material_reference(out)
 
     mass = pd.to_numeric(out["kg"], errors="coerce").fillna(0.0)
     volume_l = pd.to_numeric(out.get("volume_l"), errors="coerce")
@@ -2405,6 +2464,18 @@ def compute_feature_vector(
         backend=backend,
     )
     features = _compute_features_from_batch(batch)
+    property_columns = getattr(_ASSEMBLER.material_reference, "property_columns", ())
+    if property_columns and features:
+        for idx, frame in enumerate(picks_list):
+            if idx >= len(features):
+                break
+            weights_seq = weights_list[idx] if idx < len(weights_list) else ()
+            aggregated = _ASSEMBLER.aggregate_material_properties(frame, weights_seq)
+            for column, value in aggregated.items():
+                features[idx][column] = float(value)
+        for feature in features:
+            for column in property_columns:
+                feature.setdefault(column, float("nan"))
     if is_sequence_input:
         return features
     return features[0] if features else {}
@@ -2419,6 +2490,97 @@ def heuristic_props(
     weights_arr = np.asarray(list(weights), dtype=float)
     total_mass = max(0.001, float(picks["kg"].sum()))
     base_weights = weights_arr if weights_arr.sum() else np.ones_like(weights_arr) / len(weights_arr)
+
+    process_energy = float(process.get("energy_kwh_per_kg", 0.0))
+    process_water = float(process.get("water_l_per_kg", 0.0))
+    process_crew = float(process.get("crew_min_per_batch", 0.0))
+
+    def _vector(column: str, default: float, scale: float) -> np.ndarray:
+        series = picks.get(column)
+        if isinstance(series, pd.Series):
+            values = pd.to_numeric(series, errors="coerce").fillna(default).to_numpy(dtype=float)
+        else:
+            values = np.full(len(picks), default, dtype=float)
+        return values * scale
+
+    moisture = float(np.dot(base_weights, _vector("moisture_pct", 0.0, 1.0 / 100.0)))
+    difficulty = float(np.dot(base_weights, _vector("difficulty_factor", 1.0, 1.0 / 3.0)))
+
+    reference_columns = [
+        column
+        for column in getattr(_ASSEMBLER.material_reference, "property_columns", ())
+        if column in picks.columns
+    ]
+    has_reference = any(picks[column].notna().any() for column in reference_columns)
+
+    if has_reference:
+        aggregated = _ASSEMBLER.aggregate_material_properties(picks, weights)
+        density_ref = aggregated.get("material_density_kg_m3")
+        modulus = aggregated.get("material_modulus_gpa")
+        strength = aggregated.get("material_tensile_strength_mpa")
+        elongation = aggregated.get("material_elongation_pct")
+        oxygen_index = aggregated.get("material_oxygen_index_pct")
+        water_pct = aggregated.get("material_water_absorption_pct")
+        conductivity = aggregated.get("material_thermal_conductivity_w_mk")
+        glass_transition = aggregated.get("material_glass_transition_c")
+
+        if modulus is None and strength and elongation:
+            strain = max(elongation / 100.0, 1e-3)
+            modulus = (strength / strain) / 1000.0
+
+        modulus_norm = float(np.clip((modulus or 0.0) / 12.0, 0.0, 1.0))
+        strength_norm = float(np.clip((strength or 0.0) / 200.0, 0.0, 1.0))
+        density_norm = float(np.clip(((density_ref or 0.0) - 200.0) / 2000.0, 0.0, 1.0))
+        oxygen_norm = float(np.clip((oxygen_index or 21.0) / 40.0, 0.0, 1.0))
+        water_frac = float(np.clip((water_pct or 0.0) / 100.0, 0.0, 0.6))
+        conductivity_norm = float(np.clip((conductivity or 0.0) / 0.6, 0.0, 1.0))
+        glass_norm = float(np.clip(((glass_transition or 0.0) + 50.0) / 250.0, 0.0, 1.0))
+
+        rigidity = float(
+            np.clip(0.2 + 0.65 * modulus_norm + 0.15 * strength_norm + 0.1 * density_norm, 0.05, 1.0)
+        )
+        tightness = float(
+            np.clip(
+                0.35 + 0.4 * oxygen_norm + 0.1 * density_norm - 0.25 * water_frac + 0.05 * (1.0 - moisture),
+                0.05,
+                1.0,
+            )
+        )
+
+        energy_kwh = total_mass * (
+            process_energy
+            + 0.45 * modulus_norm
+            + 1.1 * water_frac
+            + 0.2 * density_norm
+            + 0.25 * regolith_pct
+            + 0.1 * conductivity_norm
+        )
+        water_l = total_mass * (
+            process_water
+            + water_frac
+            + 0.06 * regolith_pct
+            + 0.05 * glass_norm
+        )
+        crew_min = (
+            process_crew
+            + 25.0 * modulus_norm
+            + 12.0 * density_norm
+            + 15.0 * water_frac
+            + 8.0 * regolith_pct
+            + 6.0 * difficulty
+            + 2.0 * len(picks)
+        )
+        mass_final = total_mass * max(0.55, 1.0 - 0.12 * water_frac - 0.05 * regolith_pct)
+
+        return PredProps(
+            rigidity=rigidity,
+            tightness=tightness,
+            mass_final_kg=float(max(0.1, mass_final)),
+            energy_kwh=float(max(0.0, energy_kwh)),
+            water_l=float(max(0.0, water_l)),
+            crew_min=float(max(1.0, crew_min)),
+            source="zenodo_reference",
+        )
 
     material_series = picks.get("material", pd.Series("", index=picks.index))
     category_series = picks.get("category", pd.Series("", index=picks.index))
@@ -2441,33 +2603,6 @@ def heuristic_props(
     if regolith_pct > 0:
         tightness -= 0.05
     tightness = float(np.clip(tightness, 0.05, 1.0))
-
-    process_energy = float(process.get("energy_kwh_per_kg", 0.0))
-    process_water = float(process.get("water_l_per_kg", 0.0))
-    process_crew = float(process.get("crew_min_per_batch", 0.0))
-
-    moisture = float(
-        np.dot(
-            base_weights,
-            picks.get("moisture_pct", pd.Series(0.0, index=picks.index)).to_numpy(dtype=float) / 100.0,
-        )
-    )
-    difficulty = float(
-        np.dot(
-            base_weights,
-            picks.get("difficulty_factor", pd.Series(1.0, index=picks.index)).to_numpy(dtype=float) / 3.0,
-        )
-    )
-    def _vector(column: str, default: float, scale: float) -> np.ndarray:
-        series = picks.get(column)
-        if isinstance(series, pd.Series):
-            values = pd.to_numeric(series, errors="coerce").fillna(default).to_numpy(dtype=float)
-        else:
-            values = np.full(len(picks), default, dtype=float)
-        return values * scale
-
-    moisture = float(np.dot(base_weights, _vector("moisture_pct", 0.0, 1.0 / 100.0)))
-    difficulty = float(np.dot(base_weights, _vector("difficulty_factor", 1.0, 1.0 / 3.0)))
 
     energy_kwh = total_mass * (process_energy + 0.25 * difficulty + 0.12 * moisture + 0.18 * regolith_pct)
     water_l = total_mass * (process_water + 0.35 * moisture + 0.08 * regolith_pct)
@@ -2640,6 +2775,9 @@ def _finalize_candidate(
     features["prediction_mode"] = "heuristic"
 
     heuristic = heuristic_props(picks, proc, weights, regolith_pct)
+    if heuristic.source != "heuristic" and features.get("prediction_mode") == "heuristic":
+        features["prediction_model"] = heuristic.source
+        features["prediction_mode"] = "empirical"
     curated_targets, curated_meta = lookup_labels(
         picks,
         str(proc.get("process_id")),
@@ -2750,7 +2888,7 @@ def _finalize_candidate(
                         prediction = {}
                         prediction_error = "El modelo ML no devolvió resultados."
                         logging.getLogger(__name__).error("Model registry returned no data")
-        if force_heuristic:
+        if force_heuristic and features.get("prediction_mode") == "ml":
             features["prediction_mode"] = "heuristic"
 
     latent: Tuple[float, ...] | list[float] = []

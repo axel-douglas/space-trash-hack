@@ -687,3 +687,7 @@ def test_cli_appends_feedback_logs(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     assert trained_at >= start_time
     assert metadata["trained_on"] == "hil_v1"
     assert result["trained_on"] == "hil_v1"
+    material_meta = metadata.get("material_reference")
+    assert material_meta
+    assert material_meta["property_columns"]
+    assert material_meta["material_count"] >= 1

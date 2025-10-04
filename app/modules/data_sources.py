@@ -66,6 +66,8 @@ __all__ = [
     "load_regolith_spectral_curves",
     "load_regolith_thermal_profiles",
     "regolith_observation_lines",
+    "MaterialReferenceBundle",
+    "load_material_reference_bundle",
 ]
 
 
@@ -255,6 +257,502 @@ def merge_reference_dataset(
             unique_cols.append(name)
         return result.select(unique_cols)
     return result
+
+
+class MaterialReferenceBundle(NamedTuple):
+    """Normalized material properties sourced from Zenodo technical sheets.
+
+    The bundle exposes reference values that can be merged with the NASA waste
+    inventories and reused throughout the generator, data build and training
+    pipelines.  Keys are normalised with :func:`slugify` so callers can lookup
+    properties by any canonical ``material`` / ``material_family`` string seen
+    in the waste tables.
+
+    Attributes
+    ----------
+    table:
+        A :class:`polars.DataFrame` where each row represents a canonical
+        material and the columns correspond to harmonised properties (density,
+        modulus, strength, etc.).  The frame is ready for dataframe joins.
+    properties:
+        Mapping from ``material_key`` to the same values contained in
+        :attr:`table` for quick dictionary based lookups.
+    density_map:
+        Convenience map returning ``material_density_kg_m3`` entries for each
+        canonical key.  Used by heuristics to override legacy density defaults.
+    alias_map:
+        Dictionary translating slugified aliases (``normalize_item`` +
+        :func:`slugify`) to the canonical ``material_key``.  The aliases cover
+        common NASA spellings so lookups remain robust.
+    property_columns:
+        Tuple enumerating the numeric property columns guaranteed to be present
+        in :attr:`table`.  This allows feature builders to iterate deterministically
+        without hard-coding the column names in multiple modules.
+    spectral_curves:
+        Dictionary with raw spectral curves (e.g. FTIR measurements) stored as
+        :class:`pandas.DataFrame` instances.  The curves retain their original
+        resolution so downstream visualisations can resample as needed.
+    metadata:
+        Additional descriptors extracted from the Zenodo artefacts (licence,
+        source file names, etc.).  These are serialised together with the model
+        metadata to preserve attribution in downstream reports.
+    """
+
+    table: pl.DataFrame
+    properties: Dict[str, Dict[str, float]]
+    density_map: Dict[str, float]
+    alias_map: Dict[str, str]
+    property_columns: tuple[str, ...]
+    spectral_curves: Dict[str, pd.DataFrame]
+    metadata: Dict[str, Dict[str, Any]]
+
+
+@lru_cache(maxsize=1)
+def load_material_reference_bundle() -> MaterialReferenceBundle:
+    """Return the consolidated Zenodo material reference bundle.
+
+    The loader is cached because it performs several CSV reads and normalisation
+    steps.  Callers are expected to treat the returned bundle as immutable.
+    """
+
+    bundle_dir = DATASETS_ROOT / "zenodo"
+    property_columns = (
+        "material_density_kg_m3",
+        "material_modulus_gpa",
+        "material_tensile_strength_mpa",
+        "material_elongation_pct",
+        "material_oxygen_index_pct",
+        "material_water_absorption_pct",
+        "material_thermal_conductivity_w_mk",
+        "material_glass_transition_c",
+        "material_melting_temperature_c",
+    )
+
+    default = MaterialReferenceBundle(
+        pl.DataFrame(),
+        {},
+        {},
+        {},
+        property_columns,
+        {},
+        {},
+    )
+
+    if not bundle_dir.exists():
+        return default
+
+    records_map: Dict[str, dict[str, Any]] = {}
+    properties: Dict[str, Dict[str, float]] = {}
+    density_map: Dict[str, float] = {}
+    alias_map: Dict[str, str] = {}
+    spectral_curves: Dict[str, pd.DataFrame] = {}
+    metadata: Dict[str, Dict[str, Any]] = {}
+
+    def _safe_float(value: Any) -> float | None:
+        if value is None:
+            return None
+        if isinstance(value, (int, float, np.floating)):
+            numeric = float(value)
+            if math.isnan(numeric):
+                return None
+            return numeric
+        try:
+            numeric = float(str(value))
+        except (TypeError, ValueError):
+            return None
+        if math.isnan(numeric):
+            return None
+        return numeric
+
+    def _register_alias(canonical: str, candidate: str | None) -> None:
+        if not candidate:
+            return
+        normalized = normalize_item(candidate)
+        if not normalized:
+            return
+        slug = slugify(normalized)
+        if slug and slug not in alias_map:
+            alias_map[slug] = canonical
+
+    def _add_record(
+        name: str,
+        payload: Mapping[str, Any],
+        *,
+        aliases: Iterable[str] = (),
+        meta: Mapping[str, Any] | None = None,
+    ) -> None:
+        canonical_name = normalize_item(name)
+        slug = slugify(canonical_name)
+        if not slug:
+            return
+
+        row: dict[str, Any] = records_map.get(slug, {"material_key": slug, "material_name": name})
+        if "material_name" not in row or not row["material_name"]:
+            row["material_name"] = name
+
+        clean_props: Dict[str, float] = {}
+        for column in property_columns:
+            raw_value = payload.get(column)
+            numeric = _safe_float(raw_value)
+            if numeric is None:
+                row[column] = float("nan")
+            else:
+                row[column] = float(numeric)
+                clean_props[column] = float(numeric)
+                if column == "material_density_kg_m3":
+                    if slug in density_map and not math.isnan(density_map[slug]):
+                        density_map[slug] = float(
+                            np.nanmean([density_map[slug], float(numeric)])
+                        )
+                    else:
+                        density_map[slug] = float(numeric)
+
+        if slug in properties:
+            merged = properties[slug]
+            for column, value in clean_props.items():
+                if column in merged:
+                    existing = merged[column]
+                    if math.isnan(existing):
+                        merged[column] = value
+                    elif not math.isnan(value):
+                        merged[column] = float(np.nanmean([existing, value]))
+                else:
+                    merged[column] = value
+        else:
+            properties[slug] = clean_props
+
+        existing_row = records_map.get(slug)
+        if existing_row is None:
+            records_map[slug] = row
+        else:
+            for column, value in row.items():
+                if column in {"material_key", "material_name"}:
+                    continue
+                numeric = _safe_float(value)
+                if numeric is None:
+                    continue
+                prev = _safe_float(existing_row.get(column))
+                if prev is None:
+                    existing_row[column] = float(numeric)
+                else:
+                    existing_row[column] = float(np.nanmean([prev, numeric]))
+
+        _register_alias(slug, name)
+        for alias in aliases:
+            _register_alias(slug, alias)
+        _register_alias(slug, canonical_name)
+        # Provide token aliases for key words (nylon -> nylon66, etc.).
+        for token in canonical_name.split():
+            if len(token) >= 3:
+                _register_alias(slug, token)
+
+        if meta:
+            metadata[slug] = {str(k): v for k, v in meta.items()}
+
+    # ------------------------------------------------------------------
+    # HDPE / Polyethylene
+    # ------------------------------------------------------------------
+    hdpe_path = bundle_dir / "hdpe_properties.csv"
+    if hdpe_path.exists():
+        hdpe_df = pd.read_csv(hdpe_path)
+        for _, row in hdpe_df.iterrows():
+            density = _safe_float(row.get("density_g_cm3"))
+            modulus = _safe_float(row.get("E_modulus_tension_GPa"))
+            strength = _safe_float(row.get("tensile_strength_yield_MPa"))
+            elongation = _safe_float(row.get("elongation_yield_pct"))
+            water = _safe_float(row.get("water_absorption_saturation_23C_pct_lt"))
+            conductivity = _safe_float(row.get("k_W_mK_min")) or _safe_float(
+                row.get("k_W_mK_max")
+            )
+            payload = {
+                "material_density_kg_m3": density * 1000.0 if density is not None else None,
+                "material_modulus_gpa": modulus,
+                "material_tensile_strength_mpa": strength,
+                "material_elongation_pct": elongation,
+                "material_water_absorption_pct": water,
+                "material_thermal_conductivity_w_mk": conductivity,
+                "material_glass_transition_c": _safe_float(row.get("Tg_C")),
+                "material_melting_temperature_c": _safe_float(row.get("Tm_C")),
+            }
+            aliases = [
+                str(row.get("material", "")),
+                str(row.get("color", "")),
+                "polyethylene",
+                "hdpe",
+            ]
+            _add_record(str(row.get("material", "HDPE")), payload, aliases=aliases)
+
+    # ------------------------------------------------------------------
+    # Nomex 410 (aramid paper)
+    # ------------------------------------------------------------------
+    nomex_path = bundle_dir / "nomex410_properties.csv"
+    if nomex_path.exists():
+        nomex_df = pd.read_csv(nomex_path)
+        for _, row in nomex_df.iterrows():
+            thickness_mm = _safe_float(row.get("thickness_mm")) or 0.0
+            thickness_m = thickness_mm / 1000.0
+            tensile_n_cm = _safe_float(row.get("tensile_MD_N_cm"))
+            elongation_pct = _safe_float(row.get("elongation_MD_pct"))
+            tensile_strength = None
+            modulus = None
+            if tensile_n_cm and thickness_m > 0:
+                area_m2 = thickness_m * 0.01  # assume 1 cm width sample
+                stress_pa = tensile_n_cm / max(area_m2, 1e-9)
+                tensile_strength = stress_pa / 1e6
+                if elongation_pct and elongation_pct > 0:
+                    modulus = tensile_strength / (elongation_pct / 100.0)
+            density = _safe_float(row.get("density_g_cm3"))
+            oxygen_min = _safe_float(row.get("LOI_room_temp_pct_min"))
+            oxygen_max = _safe_float(row.get("LOI_room_temp_pct_max"))
+            oxygen_index = None
+            if oxygen_min and oxygen_max:
+                oxygen_index = 0.5 * (oxygen_min + oxygen_max)
+            elif oxygen_min:
+                oxygen_index = oxygen_min
+            elif oxygen_max:
+                oxygen_index = oxygen_max
+            payload = {
+                "material_density_kg_m3": density * 1000.0 if density is not None else None,
+                "material_modulus_gpa": modulus,
+                "material_tensile_strength_mpa": tensile_strength,
+                "material_elongation_pct": elongation_pct,
+                "material_oxygen_index_pct": oxygen_index,
+                "material_thermal_conductivity_w_mk": (
+                    (_safe_float(row.get("thermal_conductivity_mW_mK_150C")) or 0.0) / 1000.0
+                ),
+            }
+            meta = {
+                "source": str(row.get("source", "")),
+                "family": str(row.get("family", "")),
+                "reference_pdf": str(row.get("reference_pdf", "")),
+            }
+            _add_record("Nomex 410", payload, aliases=["nomex", "aramid"], meta=meta)
+
+    # ------------------------------------------------------------------
+    # Nylon 6/6 technical sheet
+    # ------------------------------------------------------------------
+    nylon_path = bundle_dir / "rexai_material_reference_nylon66.csv"
+    if nylon_path.exists():
+        nylon_df = pd.read_csv(nylon_path)
+        for _, row in nylon_df.iterrows():
+            density = _safe_float(row.get("density_g_cm3"))
+            payload = {
+                "material_density_kg_m3": density * 1000.0 if density is not None else None,
+                "material_modulus_gpa": _safe_float(row.get("tensile_modulus_gpa")),
+                "material_tensile_strength_mpa": _safe_float(row.get("tensile_strength_mpa")),
+                "material_elongation_pct": _safe_float(row.get("tensile_strain_break_pct")),
+                "material_oxygen_index_pct": _safe_float(row.get("oxygen_index_pct")),
+                "material_water_absorption_pct": _safe_float(row.get("water_absorption_96h_pct")),
+                "material_thermal_conductivity_w_mk": _safe_float(
+                    row.get("thermal_conductivity_w_mk")
+                ),
+                "material_melting_temperature_c": _safe_float(row.get("melting_temperature_c")),
+            }
+            meta = {
+                "condition": str(row.get("condition", "")),
+                "source": str(row.get("source_brand", "")),
+                "source_file": str(row.get("source_file", "")),
+            }
+            aliases = [
+                str(row.get("material_name", "")),
+                str(row.get("material_key", "")),
+                "nylon",
+                "polyamide",
+            ]
+            _add_record(str(row.get("material_name", "Nylon 6/6")), payload, aliases=aliases, meta=meta)
+
+    # ------------------------------------------------------------------
+    # Polyolefins / EVOH / NBR composites
+    # ------------------------------------------------------------------
+    poly_path = bundle_dir / "rexai_materials_ref_polyolefins_evoh_nbr.csv"
+    if poly_path.exists():
+        poly_df = pd.read_csv(poly_path)
+        for _, row in poly_df.iterrows():
+            density = _safe_float(row.get("density_g_cm3"))
+            payload = {
+                "material_density_kg_m3": density * 1000.0 if density is not None else None,
+                "material_modulus_gpa": _safe_float(row.get("tensile_modulus_GPa")),
+                "material_tensile_strength_mpa": _safe_float(row.get("tensile_strength_MPa")),
+                "material_elongation_pct": _safe_float(row.get("elongation_percent")),
+            }
+            material_name = str(row.get("material", "")) or "polymer"
+            family = str(row.get("family", ""))
+            aliases = [material_name, family, str(row.get("form", "")), "polypropylene", "evoh", "nbr"]
+            _add_record(material_name, payload, aliases=aliases)
+
+    # ------------------------------------------------------------------
+    # Textile fibres (cotton, flax, etc.)
+    # ------------------------------------------------------------------
+    textile_path = bundle_dir / "textile_fibers_reference.csv"
+    if textile_path.exists():
+        textile_df = pd.read_csv(textile_path)
+        for _, row in textile_df.iterrows():
+            density_min = _safe_float(row.get("density_g_cm3_min"))
+            density_max = _safe_float(row.get("density_g_cm3_max"))
+            density = None
+            if density_min and density_max:
+                density = 0.5 * (density_min + density_max)
+            elif density_min:
+                density = density_min
+            elif density_max:
+                density = density_max
+            strength_min = _safe_float(row.get("tensile_strength_MPa_min"))
+            strength_max = _safe_float(row.get("tensile_strength_MPa_max"))
+            strength = None
+            if strength_min and strength_max:
+                strength = 0.5 * (strength_min + strength_max)
+            elif strength_min:
+                strength = strength_min
+            elif strength_max:
+                strength = strength_max
+            modulus_min = _safe_float(row.get("youngs_modulus_GPa_min"))
+            modulus_max = _safe_float(row.get("youngs_modulus_GPa_max"))
+            modulus = None
+            if modulus_min and modulus_max:
+                modulus = 0.5 * (modulus_min + modulus_max)
+            elif modulus_min:
+                modulus = modulus_min
+            elif modulus_max:
+                modulus = modulus_max
+            elong_min = _safe_float(row.get("elongation_pct_min"))
+            elong_max = _safe_float(row.get("elongation_pct_max"))
+            elong = None
+            if elong_min and elong_max:
+                elong = 0.5 * (elong_min + elong_max)
+            elif elong_min:
+                elong = elong_min
+            elif elong_max:
+                elong = elong_max
+            payload = {
+                "material_density_kg_m3": density * 1000.0 if density is not None else None,
+                "material_modulus_gpa": modulus,
+                "material_tensile_strength_mpa": strength,
+                "material_elongation_pct": elong,
+            }
+            aliases = [
+                str(row.get("material", "")),
+                str(row.get("category", "")),
+                "textile",
+                "fabric",
+                "cotton",
+                "flax",
+            ]
+            _add_record(str(row.get("material", "textile")), payload, aliases=aliases)
+
+    # ------------------------------------------------------------------
+    # PET-P (Ertalyte) mechanical sheet (wide range of properties)
+    # ------------------------------------------------------------------
+    petp_path = bundle_dir / "ertalyte_petp_properties.csv"
+    if petp_path.exists():
+        petp_df = pd.read_csv(petp_path)
+        if not petp_df.empty:
+            pivot = (
+                petp_df.assign(property=lambda df: df["property"].str.lower())
+                .pivot_table(index="material", columns="property", values="value", aggfunc="mean")
+            )
+            for material, row in pivot.iterrows():
+                payload = {
+                    "material_modulus_gpa": _safe_float(row.get("tensile_modulus"))
+                    if row.get("tensile_modulus") is not None
+                    else None,
+                    "material_tensile_strength_mpa": _safe_float(row.get("tensile_strength")),
+                    "material_elongation_pct": _safe_float(row.get("elongation_at_break")),
+                    "material_thermal_conductivity_w_mk": _safe_float(row.get("thermal_conductivity")),
+                }
+                _add_record(str(material), payload, aliases=["pet", "polyester", "petp", "ertalyte"])
+
+    # ------------------------------------------------------------------
+    # PVDF FTIR spectra
+    # ------------------------------------------------------------------
+    pvdf_path = bundle_dir / "pvdf_ftir_phases_1um_160C.csv"
+    if pvdf_path.exists():
+        pvdf_df = pd.read_csv(pvdf_path)
+        if not pvdf_df.empty:
+            spectral_curves["pvdf_alpha_160c"] = pvdf_df
+            metadata["pvdf_alpha_160c"] = {
+                "phase": "alpha",
+                "temperature_c": int(pvdf_df.get("temperature_C", pd.Series([160])).iloc[0]),
+                "material": "PVDF",
+                "source": str(pvdf_df.get("source", pd.Series(["Zenodo"])).iloc[0]),
+                "license": str(pvdf_df.get("license", pd.Series(["CC BY 4.0"])).iloc[0]),
+            }
+            _add_record(
+                "PVDF",
+                {
+                    "material_density_kg_m3": 1780.0,
+                    "material_modulus_gpa": None,
+                    "material_tensile_strength_mpa": None,
+                },
+                aliases=["polyvinylidene fluoride", "pvdf"],
+            )
+
+    # ------------------------------------------------------------------
+    # Polystyrene spectral reference (transmittance)
+    # ------------------------------------------------------------------
+    ps_path = bundle_dir / "PS_c4_50.csv"
+    if ps_path.exists():
+        data_rows: list[dict[str, float]] = []
+        meta: Dict[str, str] = {}
+        with ps_path.open("r", encoding="utf-8") as handle:
+            for raw_line in handle:
+                parts = [part.strip() for part in raw_line.strip().split(",") if part.strip()]
+                if not parts:
+                    continue
+                try:
+                    wavenumber = float(parts[0])
+                    transmittance = float(parts[1])
+                except (ValueError, IndexError):
+                    if ":" in parts[0]:
+                        key, *rest = parts[0].split(":", 1)
+                        if rest:
+                            meta_key = slugify(normalize_item(key))
+                            meta_value = rest[0].strip()
+                        elif len(parts) > 1:
+                            meta_key = slugify(normalize_item(parts[0]))
+                            meta_value = parts[1]
+                        else:
+                            meta_key = slugify(normalize_item(parts[0]))
+                            meta_value = ""
+                        if meta_key:
+                            meta[meta_key] = meta_value
+                    continue
+                data_rows.append(
+                    {
+                        "wavenumber_cm_1": wavenumber,
+                        "transmittance_pct": transmittance,
+                    }
+                )
+        if data_rows:
+            spectral_curves["polystyrene_transmittance"] = pd.DataFrame(data_rows)
+            metadata["polystyrene_transmittance"] = meta or {
+                "material": "polystyrene",
+                "instrument": "FTIR",
+            }
+            _add_record(
+                "Polystyrene",
+                {
+                    "material_density_kg_m3": 1050.0,
+                    "material_modulus_gpa": None,
+                    "material_tensile_strength_mpa": None,
+                },
+                aliases=["ps", "polystyrene"],
+            )
+
+    if not records_map:
+        return default
+
+    records = list(records_map.values())
+    table = pl.from_dicts(records)
+    table = table.unique(subset=["material_key"], keep="first")
+    return MaterialReferenceBundle(
+        table,
+        properties,
+        density_map,
+        alias_map,
+        property_columns,
+        spectral_curves,
+        metadata,
+    )
 
 
 class _WasteSummary(NamedTuple):

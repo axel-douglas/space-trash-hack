@@ -14,6 +14,7 @@ from app.modules import data_sources
 from app.modules.data_sources import (
     RegolithCharacterization,
     REGOLITH_CHARACTERIZATION,
+    load_material_reference_bundle,
     load_regolith_characterization,
     load_regolith_particle_size,
     load_regolith_spectra,
@@ -83,6 +84,22 @@ def test_merge_reference_dataset_lazyframe_matches_eager(tmp_path, monkeypatch) 
     ]
     assert eager_df.get_column("extra_value").to_list() == [10.0, 20.0]
     assert eager_df.get_column("extra_new_metric").to_list() == [0.5, 0.75]
+
+
+def test_material_reference_bundle_exposes_properties() -> None:
+    bundle = load_material_reference_bundle.cache_clear() or load_material_reference_bundle()
+
+    assert bundle.table.height > 0
+    assert "material_density_kg_m3" in bundle.property_columns
+
+    slug = data_sources.slugify(data_sources.normalize_item("Nomex 410"))
+    assert bundle.alias_map.get(slug)
+
+    assert "pvdf_alpha_160c" in bundle.spectral_curves
+    assert not bundle.spectral_curves["pvdf_alpha_160c"].empty
+
+    metadata = bundle.metadata.get("pvdf_alpha_160c")
+    assert metadata and "source" in metadata
 
 
 def test_particle_size_loader_produces_expected_metrics() -> None:
