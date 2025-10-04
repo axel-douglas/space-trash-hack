@@ -37,7 +37,6 @@ Utilities
 
 from __future__ import annotations
 
-from base64 import b64encode
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, replace
@@ -46,22 +45,13 @@ import io
 import json
 import math
 from pathlib import Path
-import shutil
 import re
 from typing import Any, Final
 import wave
 
 import pandas as pd
 import streamlit as st
-
-try:
-    import yaml
-except ImportError as exc:  # pragma: no cover - import guard
-    st.error(
-        "PyYAML es necesario para cargar los datos logísticos de Marte. "
-        "Instala la dependencia con `pip install pyyaml` y vuelve a intentarlo."
-    )
-    raise
+import yaml
 
 from app.modules import mission_overview
 from app.modules.generator import GeneratorService
@@ -80,16 +70,7 @@ _DEMO_LAST_TS_KEY: Final[str] = "last_emitted_at"
 _DEMO_HISTORY_KEY: Final[str] = "history"
 _STATIC_ROOT: Final[Path] = Path(__file__).resolve().parents[1] / "static"
 _STATIC_AUDIO_ROOT: Final[Path] = _STATIC_ROOT / "audio"
-_STATIC_MARS_ROOT: Final[Path] = _STATIC_ROOT / "mars"
 _JEZERO_GEOJSON_PATH: Final[Path] = _STATIC_ROOT / "geodata" / "jezero.geojson"
-_DATASETS_ROOT: Final[Path] = Path(__file__).resolve().parents[2] / "datasets"
-_MARS_DATASETS_ROOT: Final[Path] = _DATASETS_ROOT / "mars"
-_JEZERO_BITMAP_PATH: Final[Path] = _MARS_DATASETS_ROOT / "Katie_1_-_DLR_Jezero_hi_v2.jpg"
-_JEZERO_BITMAP_FALLBACK_PATH: Final[Path] = _MARS_DATASETS_ROOT / "8k_mars.jpg"
-_JEZERO_SLOPE_BITMAP_PATH: Final[Path] = _MARS_DATASETS_ROOT / "j03_045994_1986_j03_046060_1986_20m_slope_20m-full.jpg"
-_JEZERO_ORTHO_BITMAP_PATH: Final[Path] = _MARS_DATASETS_ROOT / "j03_045994_1986_xn_18n282w_6m_ortho-full.jpg"
-_MARS_SCENEGRAPH_FILENAME: Final[str] = "24881_Mars_1_6792.glb"
-_JEZERO_DEFAULT_BOUNDS: Final[tuple[float, float, float, float]] = (77.18, 18.05, 78.05, 18.86)
 
 _PERCENTAGE_PATTERN: Final[re.Pattern[str]] = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 
@@ -658,309 +639,6 @@ def load_jezero_geodata(*, refresh: bool = False) -> dict[str, Any]:
 
     _JEZERO_GEODATA_CACHE = geometry
     return deepcopy(_JEZERO_GEODATA_CACHE)
-
-
-def _jezero_bounds_from_geometry(geometry: Mapping[str, Any]) -> tuple[float, float, float, float] | None:
-    if not isinstance(geometry, Mapping):
-        return None
-
-    coordinates: list[tuple[float, float]] = []
-
-    def _collect_points(geom: Mapping[str, Any]) -> None:
-        if not isinstance(geom, Mapping):
-            return
-        gtype = str(geom.get("type", ""))
-        raw_coords = geom.get("coordinates")
-        if gtype == "Point" and isinstance(raw_coords, Sequence) and len(raw_coords) >= 2:
-            try:
-                lon = float(raw_coords[0])
-                lat = float(raw_coords[1])
-            except (TypeError, ValueError):
-                return
-            coordinates.append((lon, lat))
-            return
-        if gtype in {"LineString", "MultiPoint"} and isinstance(raw_coords, Sequence):
-            for item in raw_coords:
-                if isinstance(item, Sequence) and len(item) >= 2:
-                    try:
-                        lon = float(item[0])
-                        lat = float(item[1])
-                    except (TypeError, ValueError):
-                        continue
-                    coordinates.append((lon, lat))
-            return
-        if gtype in {"Polygon", "MultiLineString"} and isinstance(raw_coords, Sequence):
-            for ring in raw_coords:
-                if isinstance(ring, Sequence):
-                    for item in ring:
-                        if isinstance(item, Sequence) and len(item) >= 2:
-                            try:
-                                lon = float(item[0])
-                                lat = float(item[1])
-                            except (TypeError, ValueError):
-                                continue
-                            coordinates.append((lon, lat))
-            return
-        if gtype == "GeometryCollection":
-            for entry in geom.get("geometries", []):
-                if isinstance(entry, Mapping):
-                    _collect_points(entry)
-            return
-        if gtype == "MultiPolygon" and isinstance(raw_coords, Sequence):
-            for polygon in raw_coords:
-                if isinstance(polygon, Sequence):
-                    for ring in polygon:
-                        if isinstance(ring, Sequence):
-                            for item in ring:
-                                if isinstance(item, Sequence) and len(item) >= 2:
-                                    try:
-                                        lon = float(item[0])
-                                        lat = float(item[1])
-                                    except (TypeError, ValueError):
-                                        continue
-                                    coordinates.append((lon, lat))
-            return
-
-    features = geometry.get("features") if isinstance(geometry.get("features"), Sequence) else []
-    for feature in features:
-        if isinstance(feature, Mapping):
-            geom = feature.get("geometry")
-            if isinstance(geom, Mapping):
-                _collect_points(geom)
-
-    if not coordinates:
-        return None
-
-    longitudes, latitudes = zip(*coordinates)
-    return (
-        float(min(longitudes)),
-        float(min(latitudes)),
-        float(max(longitudes)),
-        float(max(latitudes)),
-    )
-
-
-def _load_bitmap_dimensions(image_path: Path) -> tuple[int | None, int | None]:
-    try:
-        from PIL import Image  # type: ignore
-
-        with Image.open(image_path) as image:
-            return int(image.width), int(image.height)
-    except Exception:  # pragma: no cover - optional dependency
-        return None, None
-
-
-def _load_bitmap_layer(
-    image_path: Path,
-    *,
-    label: str,
-    description: str,
-    layer_type: str,
-    attribution: str,
-    source: str,
-    default_opacity: float = 0.75,
-    legend: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    if not image_path.is_file():
-        raise FileNotFoundError(
-            "No se encontró la textura requerida para Jezero. "
-            f"Asegurate de copiar '{image_path.name}' dentro de '{image_path.parent.name}/'."
-        )
-
-    asset_path, asset_url = _ensure_static_bitmap(image_path)
-
-    try:
-        payload = image_path.read_bytes()
-    except OSError as exc:  # pragma: no cover - defensive path
-        raise RuntimeError(f"No se pudo leer la textura de Jezero ({image_path.name}): {exc}") from exc
-
-    suffix = image_path.suffix.lower()
-    mime_type = "image/jpeg" if suffix in {".jpg", ".jpeg"} else "image/png"
-    encoded = b64encode(payload).decode("ascii")
-    image_uri = f"data:{mime_type};base64,{encoded}"
-
-    geometry = load_jezero_geodata()
-    bounds = _jezero_bounds_from_geometry(geometry) or _JEZERO_DEFAULT_BOUNDS
-
-    width_px, height_px = _load_bitmap_dimensions(image_path)
-    center = {
-        "longitude": (bounds[0] + bounds[2]) / 2.0,
-        "latitude": (bounds[1] + bounds[3]) / 2.0,
-    }
-
-    metadata: dict[str, Any] = {
-        "path": str(image_path),
-        "asset_path": str(asset_path),
-        "asset_url": asset_url,
-        "mime_type": mime_type,
-        "width_px": width_px,
-        "height_px": height_px,
-        "attribution": attribution,
-        "source": source,
-        "license": attribution,
-        "provenance": source,
-        "label": label,
-        "description": description,
-        "layer_type": layer_type,
-        "default_opacity": float(max(0.0, min(default_opacity, 1.0))),
-    }
-    if legend:
-        metadata["legend"] = legend
-
-    payload: dict[str, Any] = {
-        "image": {"url": asset_url},
-        "bounds": bounds,
-        "center": center,
-        "metadata": metadata,
-    }
-    if image_uri:
-        payload["fallback_image_uri"] = image_uri
-
-    return payload
-
-
-@st.cache_data(show_spinner=False)
-def load_jezero_bitmap() -> dict[str, Any]:
-    """Return cached bitmap metadata covering the Jezero operational area."""
-
-    image_path = _JEZERO_BITMAP_PATH if _JEZERO_BITMAP_PATH.is_file() else _JEZERO_BITMAP_FALLBACK_PATH
-    return _load_bitmap_layer(
-        image_path,
-        label="Textura base Jezero",
-        description="Mosaico orbital del cráter Jezero utilizado como fondo base.",
-        layer_type="base",
-        attribution=(
-            "Mars 2020 Jezero landing site mosaic · NASA/JPL-Caltech/University of Arizona/"
-            "DLR/FU Berlin. Public domain unless otherwise noted."
-        ),
-        source="Processed Jezero crater mosaic supplied with the hackathon dataset.",
-        default_opacity=0.92,
-    )
-
-
-@st.cache_data(show_spinner=False)
-def load_jezero_slope_bitmap() -> dict[str, Any]:
-    """Return slope-derived bitmap aligned to the Jezero operational footprint."""
-
-    legend = {
-        "description": "Pendiente del terreno (grados)",
-        "units": "degrees",
-        "range": [0, 35],
-        "ticks": [
-            {"value": 0, "label": "0°", "color": "#0f172a"},
-            {"value": 5, "label": "5°", "color": "#0ea5e9"},
-            {"value": 15, "label": "15°", "color": "#facc15"},
-            {"value": 25, "label": "25°", "color": "#f97316"},
-            {"value": 35, "label": "35°", "color": "#ef4444"},
-        ],
-        "gradient_css": "linear-gradient(90deg,#0f172a 0%,#0ea5e9 30%,#facc15 60%,#ef4444 100%)",
-    }
-
-    return _load_bitmap_layer(
-        _JEZERO_SLOPE_BITMAP_PATH,
-        label="Pendiente 20 m",
-        description="Modelo de pendientes de Jezero a 20 m/px derivado del DEM CTX.",
-        layer_type="slope",
-        attribution=(
-            "CTX DEM slope model · Caltech/JPL/ASU · procesado por el equipo de la misión Mars 2020."
-        ),
-        source="j03_045994_1986_j03_046060_1986_20m_slope_20m (hackathon dataset).",
-        default_opacity=0.65,
-        legend=legend,
-    )
-
-
-@st.cache_data(show_spinner=False)
-def load_jezero_ortho_bitmap() -> dict[str, Any]:
-    """Return orthoimagery aligned to the Jezero polygon."""
-
-    return _load_bitmap_layer(
-        _JEZERO_ORTHO_BITMAP_PATH,
-        label="Ortofoto HiRISE 6 m",
-        description="Ortoimagen HiRISE/CTX corregida geométricamente sobre el delta de Jezero.",
-        layer_type="orthophoto",
-        attribution=(
-            "HiRISE/CTX orthorectified mosaic · NASA/JPL/University of Arizona · uso educativo."
-        ),
-        source="j03_045994_1986_xn_18n282w_6m_ortho (hackathon dataset).",
-        default_opacity=0.75,
-    )
-
-
-def _static_base_url() -> str:
-    try:
-        base_url = st.get_option("server.baseUrlPath") or ""
-    except Exception:  # pragma: no cover - Streamlit not initialised in tests
-        base_url = ""
-    base_url = str(base_url or "").strip()
-    if not base_url:
-        return "/"
-    if not base_url.startswith("/"):
-        base_url = f"/{base_url}"
-    if not base_url.endswith("/"):
-        base_url = f"{base_url}/"
-    return base_url
-
-
-def _ensure_static_asset(
-    source: Path, destination: Path, *, missing_message: str | None = None
-) -> Path:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    if not source.is_file():
-        message = missing_message or f"No se encontró el asset requerido en {source}."
-        raise FileNotFoundError(message)
-    should_copy = True
-    if destination.exists():
-        try:
-            should_copy = source.stat().st_mtime > destination.stat().st_mtime
-        except OSError:
-            should_copy = True
-    if should_copy:
-        shutil.copy2(source, destination)
-    return destination
-
-
-def _ensure_static_bitmap(image_path: Path) -> tuple[Path, str]:
-    asset_path = _ensure_static_asset(
-        image_path,
-        _STATIC_MARS_ROOT / image_path.name,
-        missing_message=(
-            "No se encontró la textura requerida para Jezero. "
-            f"Asegurate de copiar '{image_path.name}' dentro de '{image_path.parent.name}/'."
-        ),
-    )
-    asset_url = f"{_static_base_url()}static/mars/{asset_path.name}"
-    return asset_path, asset_url
-
-
-@st.cache_data(show_spinner=False)
-def load_mars_scenegraph() -> dict[str, Any]:
-    """Expose the Mars orbital model as a static asset ready for the 3D scene."""
-
-    source = _MARS_DATASETS_ROOT / _MARS_SCENEGRAPH_FILENAME
-    destination = _STATIC_ROOT / "models" / _MARS_SCENEGRAPH_FILENAME
-    asset_path = _ensure_static_asset(
-        source,
-        destination,
-        missing_message=f"No se encontró el modelo 3D requerido en {source}.",
-    )
-
-    asset_url = f"{_static_base_url()}static/models/{asset_path.name}"
-    scenegraph_payload: Mapping[str, Any] | None
-    if asset_url:
-        scenegraph_payload = {"url": asset_url}
-    else:
-        scenegraph_payload = None
-
-    return {
-        "url": asset_url,
-        "asset_path": str(asset_path),
-        "path": str(asset_path),
-        "scenegraph": scenegraph_payload,
-        "scale": (0.0075, 0.0075, 0.0075),
-        "orientation": (0.0, 180.0, 0.0),
-        "translation": (0.0, 0.0, 0.0),
-    }
 
 
 def _read_dataset() -> dict[str, Any]:
@@ -1823,10 +1501,6 @@ __all__ = [
     "SimulationEvent",
     "DemoEvent",
     "load_jezero_geodata",
-    "load_jezero_bitmap",
-    "load_jezero_slope_bitmap",
-    "load_jezero_ortho_bitmap",
-    "load_mars_scenegraph",
     "load_logistics_baseline",
     "load_live_inventory",
     "compute_mission_summary",

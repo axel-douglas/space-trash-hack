@@ -4,33 +4,19 @@ from datetime import datetime
 import hashlib
 import io
 import json
-import sys
 from pathlib import Path
-import time
 import html
-import math
-
-if not __package__:
-    repo_root = Path(__file__).resolve().parents[2]
-    repo_root_str = str(repo_root)
-    if repo_root_str not in sys.path:
-        sys.path.insert(0, repo_root_str)
 
 from app.bootstrap import ensure_streamlit_entrypoint
 
 ensure_streamlit_entrypoint(__file__)
 
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 
 import pandas as pd
 import plotly.graph_objects as go
 import pydeck as pdk
 import streamlit as st
-
-try:  # Streamlit Cloud ofrece st_autorefresh, entornos antiguos pueden no tenerlo
-    from streamlit import st_autorefresh
-except Exception:  # pragma: no cover - degradación controlada
-    st_autorefresh = None
 
 from app.modules import data_sources as ds
 from app.modules import mars_control
@@ -56,88 +42,6 @@ from app.modules.ui_blocks import (
 )
 
 
-_FALLBACK_AUTOR_REQUESTS_KEY = "_autorefresh_fallback_requests"
-
-
-def _fallback_autorefresh(
-    *, interval: int, limit: int | None = None, key: str | None = None, **_: Any
-) -> int:
-    usage_key = key or "_autorefresh_default"
-    counter_key = f"_autorefresh_fallback_counter::{usage_key}"
-    counter = int(st.session_state.get(counter_key, 0))
-    if limit is not None and counter >= limit:
-        return counter
-
-    requests: dict[str, dict[str, Any]] = st.session_state.setdefault(
-        _FALLBACK_AUTOR_REQUESTS_KEY, {}
-    )
-    requests[usage_key] = {
-        "interval": int(interval),
-        "limit": limit,
-        "counter_key": counter_key,
-    }
-    st.session_state[_FALLBACK_AUTOR_REQUESTS_KEY] = requests
-    return counter
-
-
-_run_autorefresh = st_autorefresh or _fallback_autorefresh
-
-
-def _process_autorefresh_fallback_requests() -> None:
-    if st_autorefresh is not None:
-        st.session_state.pop(_FALLBACK_AUTOR_REQUESTS_KEY, None)
-        return
-
-    requests: dict[str, dict[str, Any]] | None = st.session_state.pop(
-        _FALLBACK_AUTOR_REQUESTS_KEY, None
-    )
-    if not requests:
-        return
-
-    pending: list[tuple[str, dict[str, Any]]] = []
-    for usage_key, metadata in requests.items():
-        if not isinstance(metadata, Mapping):
-            continue
-        counter_key = metadata.get("counter_key")
-        if not isinstance(counter_key, str) or not counter_key:
-            continue
-        limit_value = metadata.get("limit")
-        current = int(st.session_state.get(counter_key, 0))
-        if limit_value is not None and isinstance(limit_value, int):
-            if current >= limit_value:
-                continue
-        interval_ms = int(metadata.get("interval", 0) or 0)
-        if interval_ms <= 0:
-            interval_ms = 1000
-        pending.append(
-            (
-                usage_key,
-                {
-                    "interval": interval_ms,
-                    "counter_key": counter_key,
-                    "limit": limit_value,
-                },
-            )
-        )
-
-    if not pending:
-        return
-
-    min_interval_ms = min(int(entry[1]["interval"]) for entry in pending)
-    sleep_seconds = max(min(min_interval_ms / 1000.0, 1.0), 0.1)
-    time.sleep(sleep_seconds)
-
-    for _, metadata in pending:
-        counter_key = metadata["counter_key"]
-        current = int(st.session_state.get(counter_key, 0))
-        limit_value = metadata.get("limit")
-        if isinstance(limit_value, int) and current >= limit_value:
-            continue
-        st.session_state[counter_key] = current + 1
-
-    st.experimental_rerun()
-
-
 configure_page(page_title="Rex-AI • Mars Control Center", page_icon="🛰️")
 initialise_frontend()
 render_brand_header(tagline="Mars Control Center · Interplanetary Recycling")
@@ -152,9 +56,6 @@ _ACTION_PRESETS = {
     "reject": {"label": "Rechazar acción propuesta", "badge": "🔴 Rechazado"},
     "reprioritize": {"label": "Repriorizar envío crítico", "badge": "🟠 Repriorizar"},
 }
-_ETA_BASELINE_KEY = "flight_eta_baseline"
-_SCENE_TICK_KEY = "mars_scenegraph_tick"
-_CRITICAL_EVENT_SEVERITIES: set[str] = {"critical", "alert"}
 
 
 @st.cache_resource(show_spinner=False)
@@ -179,24 +80,6 @@ def _store_flight_snapshot(flights_df: pd.DataFrame) -> None:
         for row in flights_df.to_dict(orient="records")
         if row.get("flight_id")
     }
-    eta_baseline: dict[str, int] = st.session_state.get(_ETA_BASELINE_KEY, {})
-    active_flights: set[str] = set()
-    for row in flights_df.to_dict(orient="records"):
-        flight_id = str(row.get("flight_id") or "").strip()
-        if not flight_id:
-            continue
-        active_flights.add(flight_id)
-        try:
-            eta_value = int(row.get("eta_minutes", 0) or 0)
-        except (TypeError, ValueError):
-            eta_value = 0
-        eta_value = max(eta_value, 0)
-        previous = eta_baseline.get(flight_id, eta_value)
-        eta_baseline[flight_id] = max(previous, eta_value)
-    for stale in list(eta_baseline.keys()):
-        if stale not in active_flights:
-            eta_baseline.pop(stale, None)
-    st.session_state[_ETA_BASELINE_KEY] = eta_baseline
 
 
 def _apply_manual_overrides(flights_df: pd.DataFrame | None) -> pd.DataFrame | None:
@@ -323,455 +206,6 @@ def _render_demo_ticker(events: list[mars_control.DemoEvent]) -> str:
             + "</div>"
         )
     return "<div class='demo-event-ticker'>" + "".join(items) + "</div>"
-
-
-def _capsule_phase_seed(identifier: str) -> float:
-    digest = hashlib.sha1(identifier.encode("utf-8")).hexdigest()
-    return float(int(digest[:8], 16) % 360)
-
-
-def _orbit_radius_deg(altitude_km: float) -> float:
-    altitude_km = max(float(altitude_km or 0.0), 0.0)
-    base_radius = 0.045 + min(altitude_km / 1600.0, 0.35)
-    return max(base_radius, 0.035 if altitude_km <= 0.2 else 0.06)
-
-
-def _build_orbit_samples(
-    center_lon: float,
-    center_lat: float,
-    radius_deg: float,
-    altitude_m: float,
-    *,
-    samples: int = 48,
-    phase_offset: float = 0.0,
-) -> list[list[float]]:
-    points: list[list[float]] = []
-    for index in range(samples + 1):
-        angle = phase_offset + (index * (360.0 / samples))
-        radians = math.radians(angle)
-        lon = center_lon + radius_deg * math.cos(radians)
-        lat = center_lat + radius_deg * math.sin(radians)
-        points.append([lon, lat, altitude_m])
-    return points
-
-
-def _scene_event_capsules(
-    events: Sequence[Mapping[str, Any]] | None,
-    demo_event: mars_control.DemoEvent | None,
-) -> set[str]:
-    tracked: set[str] = set()
-    if events:
-        for event in events:
-            if not isinstance(event, Mapping):
-                continue
-            capsule_id = event.get("capsule_id")
-            if isinstance(capsule_id, str) and capsule_id:
-                tracked.add(capsule_id)
-            metadata = event.get("metadata") if isinstance(event.get("metadata"), Mapping) else None
-            if isinstance(metadata, Mapping):
-                for key in ("capsule_id", "target", "reference", "vehicle"):
-                    candidate = metadata.get(key)
-                    if isinstance(candidate, str) and candidate:
-                        tracked.add(candidate)
-            category = str(event.get("category", "")).lower()
-            if category in _CRITICAL_EVENT_SEVERITIES:
-                target = event.get("target")
-                if isinstance(target, str) and target:
-                    tracked.add(target)
-    if demo_event and _demo_event_severity(demo_event.severity) == "critical":
-        metadata = demo_event.metadata if isinstance(demo_event.metadata, Mapping) else {}
-        candidate = metadata.get("capsule_id") or metadata.get("target")
-        if isinstance(candidate, str) and candidate:
-            tracked.add(candidate)
-    return tracked
-
-
-def _build_scenegraph_layers(
-    flights_df: pd.DataFrame,
-    scene_asset: Mapping[str, Any],
-    *,
-    events: Sequence[Mapping[str, Any]] | None,
-    demo_event: mars_control.DemoEvent | None,
-    include_metadata: bool = False,
-) -> list[pdk.Layer] | tuple[list[pdk.Layer], list[Mapping[str, Any]]]:
-    base_scale = scene_asset.get("scale", (1.0, 1.0, 1.0))
-    scale_vec = [float(component) for component in base_scale]
-    base_orientation = scene_asset.get("orientation", (0.0, 0.0, 0.0))
-    orientation_vec = [float(component) for component in base_orientation]
-    timeline_tick = st.session_state.get(_SCENE_TICK_KEY, 0)
-    baseline_map: Mapping[str, int] = st.session_state.get(_ETA_BASELINE_KEY, {})
-    changed_flights = set(st.session_state.get("flight_operations_recent_changes", []))
-    active_capsules = _scene_event_capsules(events, demo_event)
-
-    scene_rows: list[dict[str, Any]] = []
-    path_rows: list[dict[str, Any]] = []
-    for row in flights_df.to_dict(orient="records"):
-        flight_id = str(row.get("flight_id") or "").strip()
-        capsule_id = str(row.get("capsule_id") or flight_id or row.get("vehicle") or "").strip()
-        if not (flight_id or capsule_id):
-            continue
-        try:
-            eta_minutes = int(row.get("eta_minutes", 0) or 0)
-        except (TypeError, ValueError):
-            eta_minutes = 0
-        eta_minutes = max(eta_minutes, 0)
-        baseline_eta = max(int(baseline_map.get(flight_id, eta_minutes) or eta_minutes), 1)
-        progress = 1.0 - min(eta_minutes / baseline_eta, 1.0)
-        altitude_km = float(row.get("altitude_km", 0.0) or 0.0)
-        altitude_m = max(altitude_km * 1000.0, 18.0)
-        status = str(row.get("status", "")).lower()
-        if status == "landed":
-            altitude_m = 12.0
-        phase_seed = _capsule_phase_seed(capsule_id or flight_id)
-        orbital_speed = 18.0 if str(row.get("capsule_category", "")).lower() == "orbital_corridor" else 8.0
-        phase = (phase_seed + (timeline_tick * orbital_speed) + progress * 210.0) % 360.0
-        center_lon = float(row.get("longitude", 77.58) or 77.58)
-        center_lat = float(row.get("latitude", 18.38) or 18.38)
-        radius_deg = _orbit_radius_deg(altitude_km)
-        position_lon = center_lon + radius_deg * math.cos(math.radians(phase))
-        position_lat = center_lat + radius_deg * math.sin(math.radians(phase))
-
-        base_color = [
-            int(row.get("status_color_r", 148)),
-            int(row.get("status_color_g", 163)),
-            int(row.get("status_color_b", 184)),
-        ]
-        category_color = [
-            int(row.get("category_color_r", base_color[0])),
-            int(row.get("category_color_g", base_color[1])),
-            int(row.get("category_color_b", base_color[2])),
-        ]
-
-        is_critical = (
-            eta_minutes <= 15
-            or status in {"delayed", "hold"}
-            or capsule_id in active_capsules
-            or flight_id in active_capsules
-            or flight_id in changed_flights
-        )
-        if capsule_id in active_capsules or flight_id in active_capsules:
-            color = [250, 204, 21]
-        elif is_critical:
-            color = [239, 68, 68]
-        else:
-            color = base_color
-
-        path_color = category_color + [180]
-        if capsule_id in active_capsules or flight_id in active_capsules:
-            path_color = color + [220]
-        elif is_critical:
-            path_color = color + [200]
-
-        scale_factor = 1.0 + progress * 1.4 + (0.35 if is_critical else 0.0)
-        scale = [component * scale_factor for component in scale_vec]
-        orientation = [orientation_vec[0], (orientation_vec[1] + phase) % 360.0, orientation_vec[2]]
-
-        scene_rows.append(
-            {
-                "position": [position_lon, position_lat, altitude_m],
-                "capsule": capsule_id or flight_id,
-                "flight_id": flight_id,
-                "eta_minutes": eta_minutes,
-                "status": row.get("status_label", row.get("status")),
-                "color": color,
-                "scale": scale,
-                "orientation": orientation,
-                "tooltip": row.get("materials_tooltip", ""),
-            }
-        )
-
-        orbit_path = _build_orbit_samples(
-            center_lon,
-            center_lat,
-            radius_deg,
-            altitude_m,
-            phase_offset=phase_seed,
-        )
-        path_rows.append(
-            {
-                "capsule": capsule_id or flight_id,
-                "path": orbit_path,
-                "color": path_color,
-                "width": 950 if is_critical else 520,
-            }
-        )
-
-    if not scene_rows:
-        return ([], scene_rows) if include_metadata else []
-
-    orbit_layer = pdk.Layer(
-        "PathLayer",
-        data=path_rows,
-        get_path="path",
-        get_color="color",
-        get_width="width",
-        width_units="meters",
-        opacity=0.55,
-    )
-    scenegraph_cls = getattr(pdk.types, "Scenegraph", None)
-
-    def _wrap_scenegraph(url: str | Path | None) -> Any:
-        if isinstance(url, Path):
-            url = str(url)
-        if isinstance(url, str):
-            candidate = url.strip()
-            if not candidate:
-                return None
-            if scenegraph_cls is not None:
-                try:
-                    return scenegraph_cls(url=candidate)
-                except Exception:  # pragma: no cover - pydeck API mismatch fallback
-                    return {"url": candidate}
-            return {"url": candidate}
-        return None
-
-    scenegraph_source = scene_asset.get("scenegraph")
-    prepared_scenegraph: Any
-    if scenegraph_cls is not None and isinstance(scenegraph_source, scenegraph_cls):
-        prepared_scenegraph = scenegraph_source
-    elif isinstance(scenegraph_source, Mapping):
-        prepared_scenegraph = dict(scenegraph_source)
-        url_value = prepared_scenegraph.get("url")
-        wrapped = _wrap_scenegraph(url_value)
-        if isinstance(wrapped, Mapping):
-            prepared_scenegraph.update(wrapped)
-        elif wrapped is not None:
-            prepared_scenegraph = wrapped
-    elif isinstance(scenegraph_source, str):
-        prepared_scenegraph = _wrap_scenegraph(scenegraph_source)
-    else:
-        prepared_scenegraph = None
-
-    if prepared_scenegraph is None:
-        prepared_scenegraph = _wrap_scenegraph(scene_asset.get("url"))
-    if prepared_scenegraph is None:
-        fallback_candidate = scene_asset.get("asset_path") or scene_asset.get("path")
-        prepared_scenegraph = _wrap_scenegraph(fallback_candidate)
-
-    scene_layer = pdk.Layer(
-        "ScenegraphLayer",
-        data=scene_rows,
-        scenegraph=prepared_scenegraph,
-        get_position="position",
-        get_orientation="orientation",
-        get_color="color",
-        get_scale="scale",
-        size_scale=1.0,
-        pickable=True,
-        _animate=True,
-    )
-    layers = [orbit_layer, scene_layer]
-    if include_metadata:
-        return layers, scene_rows
-    return layers
-
-
-def _prepare_orbital_scene(
-    flights_df: pd.DataFrame | None,
-    *,
-    scene_asset: Mapping[str, Any] | None = None,
-    events: Sequence[Mapping[str, Any]] | None = None,
-    demo_event: mars_control.DemoEvent | None = None,
-) -> dict[str, Any]:
-    base_context: dict[str, Any] = {
-        "rendered": False,
-        "layers": [],
-        "scene_rows": [],
-        "view_state": None,
-        "tooltip": {},
-        "caption": (
-            "La vista 3D es la entrada principal para seguir cápsulas y eventos en tiempo real."
-        ),
-        "message": (
-            "Sin telemetría orbital para animar todavía. Ejecutá la simulación desde el radar."
-        ),
-        "capsule_count": 0,
-        "capsule_labels": [],
-        "generated_at": datetime.utcnow().isoformat(timespec="seconds"),
-        "scene_asset": None,
-    }
-
-    if flights_df is None or flights_df.empty:
-        return base_context
-
-    asset = scene_asset or mars_control.load_mars_scenegraph()
-    base_context["scene_asset"] = asset
-
-    layers_result = _build_scenegraph_layers(
-        flights_df,
-        asset,
-        events=events,
-        demo_event=demo_event,
-        include_metadata=True,
-    )
-    layers, scene_rows = layers_result
-    base_context["scene_rows"] = scene_rows
-    if not layers:
-        base_context["message"] = (
-            "No hay cápsulas activas para renderizar. Avanzá la simulación para actualizar la escena."
-        )
-        return base_context
-
-    view_state = pdk.ViewState(
-        latitude=18.43,
-        longitude=77.58,
-        zoom=9.2,
-        pitch=62,
-        bearing=32,
-        min_zoom=7.2,
-        max_zoom=16.5,
-    )
-    tooltip_html = (
-        "<div style='font-size:14px;font-weight:600;'>{capsule}</div>"
-        "<div>ETA: {eta_minutes} min</div>"
-        "<div>{status}</div>"
-        "<div>{tooltip}</div>"
-    )
-    tooltip = {
-        "html": tooltip_html,
-        "style": {
-            "backgroundColor": "#0b1220",
-            "color": "#f8fafc",
-            "border": "1px solid #38bdf8",
-            "borderRadius": "8px",
-            "padding": "10px",
-        },
-    }
-
-    capsule_labels = [
-        str(row.get("capsule") or row.get("flight_id") or "").strip()
-        for row in scene_rows
-        if row.get("capsule") or row.get("flight_id")
-    ]
-
-    headline_event: Mapping[str, Any] | mars_control.DemoEvent | None = None
-    if demo_event:
-        headline_event = demo_event
-    elif events:
-        for candidate in events:
-            if not isinstance(candidate, Mapping):
-                continue
-            severity = str(candidate.get("severity") or candidate.get("category") or "").lower()
-            headline_event = candidate
-            if severity in _CRITICAL_EVENT_SEVERITIES:
-                break
-
-    base_context.update(
-        {
-            "rendered": True,
-            "layers": layers,
-            "view_state": view_state,
-            "tooltip": tooltip,
-            "caption": (
-                "La vista 3D es la entrada principal: animamos órbitas, resaltamos eventos críticos"
-                " y sincronizamos el tamaño con el progreso de cada cápsula."
-            ),
-            "message": "",
-            "capsule_count": len(capsule_labels),
-            "capsule_labels": capsule_labels,
-        }
-    )
-
-    if isinstance(headline_event, mars_control.DemoEvent):
-        base_context["last_event_title"] = headline_event.title
-        base_context["last_event_severity"] = headline_event.severity
-    elif isinstance(headline_event, Mapping):
-        base_context["last_event_title"] = str(
-            headline_event.get("title") or headline_event.get("message") or ""
-        ).strip()
-        base_context["last_event_severity"] = str(
-            headline_event.get("severity") or headline_event.get("category") or ""
-        ).strip()
-
-    return base_context
-
-
-def _render_orbital_scene(
-    flights_df: pd.DataFrame | None,
-    *,
-    events: Sequence[Mapping[str, Any]] | None = None,
-    demo_event: mars_control.DemoEvent | None = None,
-    container: st.delta_generator.DeltaGenerator | None = None,
-    height: int | None = None,
-    store_key: str = "mars_orbital_scene_snapshot",
-    show_caption: bool = True,
-) -> dict[str, Any]:
-    target = container or st
-    context = _prepare_orbital_scene(
-        flights_df,
-        events=events,
-        demo_event=demo_event,
-    )
-
-    snapshot = {
-        key: context.get(key)
-        for key in (
-            "rendered",
-            "capsule_count",
-            "capsule_labels",
-            "generated_at",
-            "last_event_title",
-            "last_event_severity",
-            "message",
-        )
-    }
-    st.session_state[store_key] = snapshot
-
-    if not context.get("rendered"):
-        message = context.get("message")
-        if message:
-            target.info(message)
-        return context
-
-    scene_asset = context.get("scene_asset") or {}
-    asset_url = scene_asset.get("url") if isinstance(scene_asset, Mapping) else None
-    fallback_path = None
-    if isinstance(scene_asset, Mapping):
-        fallback_path = scene_asset.get("asset_path") or scene_asset.get("path")
-
-    if fallback_path and (not isinstance(asset_url, str) or not asset_url.strip()):
-        fallback_url = str(fallback_path)
-        scenegraph_cls = getattr(pdk.types, "Scenegraph", None)
-        if scenegraph_cls is not None:
-            try:
-                fallback_scenegraph = scenegraph_cls(url=fallback_url)
-            except Exception:  # pragma: no cover - pydeck API mismatch fallback
-                fallback_scenegraph = {"url": fallback_url}
-        else:
-            fallback_scenegraph = {"url": fallback_url}
-
-        layers_with_fallback: list[pdk.Layer] = []
-        for layer in context.get("layers", []):
-            if isinstance(layer, pdk.Layer) and layer.type == "ScenegraphLayer":
-                current_scenegraph = getattr(layer, "scenegraph", None)
-                needs_update = current_scenegraph is None
-                if not needs_update and isinstance(current_scenegraph, Mapping):
-                    needs_update = not str(current_scenegraph.get("url") or "").strip()
-                if not needs_update and scenegraph_cls is not None and isinstance(
-                    current_scenegraph, scenegraph_cls
-                ):
-                    needs_update = not str(getattr(current_scenegraph, "url", "") or "").strip()
-                if not needs_update and isinstance(current_scenegraph, str):
-                    needs_update = not current_scenegraph.strip()
-                if needs_update:
-                    layer.scenegraph = fallback_scenegraph
-            layers_with_fallback.append(layer)
-        context["layers"] = layers_with_fallback
-
-    deck = pdk.Deck(
-        layers=context["layers"],
-        initial_view_state=context["view_state"],
-        map_style=None,
-        tooltip=context["tooltip"],
-    )
-    if height is not None:
-        deck.height = height
-    target.pydeck_chart(deck, use_container_width=True)
-    if show_caption:
-        target.caption(context["caption"])
-
-    context["deck"] = deck
-    return context
 
 
 def _ensure_manifest_batch(
@@ -972,7 +406,7 @@ st.session_state.setdefault(_MANUAL_DECISIONS_KEY, {})
 
 tabs = st.tabs(
     [
-        "🛰️ Vista orbital 3D",
+        "🛰️ Flight Radar / Mapa",
         "📦 Inventario vivo",
         "🤖 Decisiones IA",
         "🗺️ Planner",
@@ -982,7 +416,7 @@ tabs = st.tabs(
 
 
 with tabs[0]:
-    st.subheader("Vista orbital 3D · logística interplanetaria")
+    st.subheader("Flight Radar · logística interplanetaria")
     passport: Mapping[str, Any] | None = None
     if analysis_state:
         passport = analysis_state.get("material_passport")
@@ -1011,7 +445,6 @@ with tabs[0]:
         st.session_state.setdefault("flight_operations_recent_changes", [])
 
     if flights_df is None or flights_df.empty:
-        st.session_state.pop("mars_orbital_scene_snapshot", None)
         st.info("Aún no hay vuelos registrados. Cargá un manifiesto para sincronizar la carga.")
     else:
         control_cols = st.columns([2, 1])
@@ -1026,11 +459,7 @@ with tabs[0]:
 
         tick_triggered = bool(manual_tick)
         if auto_tick:
-            if st_autorefresh is None:
-                st.caption(
-                    "⚠️ Autorefresco nativo no disponible. Usando fallback sincronizado con tiempo real."
-                )
-            tick_count = _run_autorefresh(
+            tick_count = st.autorefresh(
                 interval=20000,
                 limit=None,
                 key="mars_auto_tick_counter",
@@ -1053,7 +482,6 @@ with tabs[0]:
             )
             flights_df = _apply_manual_overrides(flights_df)
             _store_flight_snapshot(flights_df)
-            st.session_state[_SCENE_TICK_KEY] = st.session_state.get(_SCENE_TICK_KEY, 0) + 1
             st.session_state["flight_operations_recent_events"] = events
             st.session_state["flight_operations_recent_changes"] = list(changed_flights)
         else:
@@ -1062,141 +490,12 @@ with tabs[0]:
                 st.session_state.get("flight_operations_recent_changes", [])
             )
 
-        st.markdown("#### Vista orbital 3D principal")
-        demo_last_event: mars_control.DemoEvent | None = st.session_state.get(
-            "demo_last_event"
-        )
-        _render_orbital_scene(
-            flights_df,
-            events=events,
-            demo_event=demo_last_event,
-            height=620,
-        )
-
-        micro_divider()
-        st.markdown("#### Radar táctico 2D y capas de terreno complementarias")
-        st.caption(
-            "Esta vista 2D complementa la experiencia orbital principal aportando capas analíticas"
-            " para navegación y planificación en superficie."
-        )
-
-        overlay_columns = st.columns(2)
-        with overlay_columns[0]:
-            slope_enabled = st.checkbox(
-                "Mapa de pendientes",
-                value=False,
-                key="mars_overlay_slope",
-                help="Superponer el modelo de pendientes (CTX DEM) para identificar taludes críticos.",
-            )
-            slope_opacity = st.slider(
-                "Opacidad mapa de pendientes",
-                min_value=0.1,
-                max_value=1.0,
-                value=0.65,
-                step=0.05,
-                key="mars_overlay_slope_opacity",
-                disabled=not slope_enabled,
-            )
-        with overlay_columns[1]:
-            ortho_enabled = st.checkbox(
-                "Ortofoto HiRISE",
-                value=False,
-                key="mars_overlay_ortho",
-                help="Mostrar ortofoto HiRISE/CTX para apoyar la navegación visual.",
-            )
-            ortho_opacity = st.slider(
-                "Opacidad ortofoto",
-                min_value=0.1,
-                max_value=1.0,
-                value=0.75,
-                step=0.05,
-                key="mars_overlay_ortho_opacity",
-                disabled=not ortho_enabled,
-            )
-
-        map_payload = telemetry_service.build_map_payload(
-            flights_df,
-            include_slope=slope_enabled,
-            include_ortho=ortho_enabled,
-            slope_opacity=slope_opacity if slope_enabled else None,
-            ortho_opacity=ortho_opacity if ortho_enabled else None,
-        )
-        capsule_data = map_payload.get("capsules")
-        zone_data = map_payload.get("zones")
-        geometry = map_payload.get("geometry")
-        bitmap_payload = map_payload.get("bitmap_layer")
-        slope_payload = map_payload.get("slope_layer")
-        ortho_payload = map_payload.get("ortho_layer")
-        active_overlay_labels = map_payload.get("active_overlay_labels", [])
-        view_state_payload = map_payload.get("map_view_state")
+        map_payload = telemetry_service.build_map_payload(flights_df)
+        capsule_data = map_payload["capsules"]
+        zone_data = map_payload["zones"]
+        geometry = map_payload["geometry"]
 
         layers: list[pdk.Layer] = []
-
-        def _resolve_bitmap_image(payload: Mapping[str, Any] | None) -> str | None:
-            if not isinstance(payload, Mapping):
-                return None
-            image_candidate = payload.get("image")
-            if isinstance(image_candidate, Mapping):
-                url_candidate = image_candidate.get("url")
-                if isinstance(url_candidate, str) and url_candidate:
-                    return url_candidate
-                legacy_candidate = image_candidate.get("uri")
-                if isinstance(legacy_candidate, str) and legacy_candidate:
-                    return legacy_candidate
-            if isinstance(image_candidate, str) and image_candidate:
-                return image_candidate
-            fallback_uri = payload.get("fallback_image_uri")
-            if isinstance(fallback_uri, str) and fallback_uri:
-                return fallback_uri
-            legacy_data_uri = payload.get("image_uri")
-            if isinstance(legacy_data_uri, str) and legacy_data_uri:
-                return legacy_data_uri
-            return None
-
-        if isinstance(bitmap_payload, Mapping):
-            image_payload = _resolve_bitmap_image(bitmap_payload)
-            bounds = bitmap_payload.get("bounds")
-            if image_payload and bounds:
-                layers.append(
-                    pdk.Layer(
-                        "BitmapLayer",
-                        id="jezero-bitmap",
-                        image=image_payload,
-                        bounds=bounds,
-                        opacity=0.92,
-                        desaturate=0.0,
-                    )
-                )
-        if slope_enabled and isinstance(slope_payload, Mapping):
-            slope_image = _resolve_bitmap_image(slope_payload)
-            slope_bounds = slope_payload.get("bounds")
-            slope_opacity_value = float(slope_payload.get("opacity", slope_opacity))
-            if slope_image and slope_bounds:
-                layers.append(
-                    pdk.Layer(
-                        "BitmapLayer",
-                        id="jezero-slope",
-                        image=slope_image,
-                        bounds=slope_bounds,
-                        opacity=slope_opacity_value,
-                        desaturate=0.0,
-                    )
-                )
-        if ortho_enabled and isinstance(ortho_payload, Mapping):
-            ortho_image = _resolve_bitmap_image(ortho_payload)
-            ortho_bounds = ortho_payload.get("bounds")
-            ortho_opacity_value = float(ortho_payload.get("opacity", ortho_opacity))
-            if ortho_image and ortho_bounds:
-                layers.append(
-                    pdk.Layer(
-                        "BitmapLayer",
-                        id="jezero-ortho",
-                        image=ortho_image,
-                        bounds=ortho_bounds,
-                        opacity=ortho_opacity_value,
-                        desaturate=0.0,
-                    )
-                )
         if geometry and isinstance(geometry, Mapping) and geometry.get("features"):
             layers.append(
                 pdk.Layer(
@@ -1242,16 +541,6 @@ with tabs[0]:
                 )
             )
 
-        overlay_context_labels: list[str] = []
-        if isinstance(bitmap_payload, Mapping):
-            base_label = bitmap_payload.get("metadata", {}).get("label")
-            if isinstance(base_label, str) and base_label:
-                overlay_context_labels.append(base_label)
-        overlay_context_labels.extend(
-            [label for label in active_overlay_labels if isinstance(label, str) and label]
-        )
-        overlay_context = ", ".join(overlay_context_labels) if overlay_context_labels else "Mapa base"
-
         tooltip = {
             "html": (
                 "<div style='font-size:14px;font-weight:600;'>{vehicle}</div>"
@@ -1260,65 +549,24 @@ with tabs[0]:
                 "<div>Materiales: {materials_tooltip}</div>"
                 "<div>Espectro: {material_spectrum}</div>"
                 "<div>Densidad: {density} g/cm³ · Compatibilidad: {compatibility}</div>"
-                f"<div>Capas activas: {html.escape(overlay_context)}</div>"
                 "<div>{tooltip}</div>"
             ),
-            "style": {
-                "backgroundColor": "#0f172a",
-                "color": "white",
-                "border": "1px solid #38bdf8",
-                "borderRadius": "6px",
-            },
+            "style": {"backgroundColor": "#0f172a", "color": "white"},
         }
 
-        default_view_state = {
-            "latitude": 18.43,
-            "longitude": 77.58,
-            "zoom": 9.1,
-            "pitch": 45,
-            "bearing": 25,
-        }
-        view_state = pdk.ViewState(**(view_state_payload or default_view_state))
+        view_state = pdk.ViewState(
+            latitude=18.43,
+            longitude=77.58,
+            zoom=9.1,
+            pitch=45,
+            bearing=25,
+        )
 
         st.pydeck_chart(
-            pdk.Deck(
-                layers=layers,
-                initial_view_state=view_state,
-                tooltip=tooltip,
-                map_style=None,
-            ),
+            pdk.Deck(layers=layers, initial_view_state=view_state, tooltip=tooltip),
             use_container_width=True,
         )
-
-        if slope_enabled and isinstance(slope_payload, Mapping):
-            slope_metadata = slope_payload.get("metadata", {})
-            legend_info = slope_metadata.get("legend") if isinstance(slope_metadata, Mapping) else None
-            if isinstance(legend_info, Mapping):
-                gradient_css = legend_info.get("gradient_css") or "linear-gradient(90deg,#0f172a,#0ea5e9,#facc15,#ef4444)"
-                tick_items = legend_info.get("ticks", [])
-                ticks_html = "".join(
-                    "<span style='flex:1;text-align:center;font-size:0.7rem;color:#cbd5f5'>"
-                    + html.escape(str(item.get("label", item.get("value", ""))))
-                    + "</span>"
-                    for item in tick_items
-                    if isinstance(item, Mapping)
-                )
-                legend_html = (
-                    "<div style='margin-top:0.5rem;'>"
-                    "<div style='font-size:0.8rem;font-weight:600;color:#e2e8f0;'>"
-                    + html.escape(str(legend_info.get("description", "Pendiente")))
-                    + "</div>"
-                    + "<div style='height:10px;border-radius:999px;background:" + gradient_css + ";margin:0.35rem 0;'></div>"
-                    + "<div style='display:flex;gap:0.5rem;'>"
-                    + ticks_html
-                    + "</div>"
-                    + "</div>"
-                )
-                st.markdown(legend_html, unsafe_allow_html=True)
-
-        st.caption(
-            "Radar táctico de Jezero: complementa la vista 3D con capas geoespaciales y estado en superficie."
-        )
+        st.caption("Mapa operacional de Jezero: cápsulas, zonas clave y perímetro de seguridad.")
 
         micro_divider()
         display_df = flights_df[
@@ -2262,11 +1510,7 @@ with tabs[4]:
 
     if auto_loop:
         st.session_state["demo_event_auto"] = True
-        if st_autorefresh is None:
-            st.caption(
-                "⚠️ Autorefresco nativo no disponible. El modo demo usa un fallback manual."
-            )
-        _run_autorefresh(
+        st.autorefresh(
             interval=int(interval_seconds * 1000),
             limit=None,
             key="demo_event_autorefresh",
@@ -2320,42 +1564,6 @@ with tabs[4]:
         )
     else:
         st.caption("El ticker se completará a medida que se emitan eventos del guion demo.")
-
-    micro_divider()
-    st.markdown("### Vista orbital 3D · referencia del guion")
-
-    scene_snapshot: Mapping[str, Any] = st.session_state.get(
-        "mars_orbital_scene_snapshot", {}
-    )
-    if not scene_snapshot or not scene_snapshot.get("rendered"):
-        st.info(
-            "La animación 3D se genera en la pestaña principal. Abrila para inicializarla y"
-            " mantener sincronizados los eventos del modo demo."
-        )
-    else:
-        stats_cols = st.columns([1, 1, 1.2])
-        with stats_cols[0]:
-            st.metric("Cápsulas animadas", int(scene_snapshot.get("capsule_count", 0)))
-        with stats_cols[1]:
-            st.metric(
-                "Último evento",
-                scene_snapshot.get("last_event_title", "Sin novedades"),
-                scene_snapshot.get("last_event_severity", "").title() or None,
-            )
-        with stats_cols[2]:
-            st.metric("Actualización", scene_snapshot.get("generated_at", "—"))
-
-        capsule_labels = [
-            label for label in scene_snapshot.get("capsule_labels", []) if isinstance(label, str)
-        ]
-        if capsule_labels:
-            st.caption("Cápsulas resaltadas en la vista orbital 3D:")
-            badge_group(capsule_labels)
-
-        st.markdown(
-            "🔗 [Abrir pestaña «Vista orbital 3D»](#vista-orbital-3d-principal)"
-            " para interactuar con la animación completa."
-        )
 
     micro_divider()
     st.markdown("#### Inyectar manifiesto demo")
@@ -2415,7 +1623,4 @@ with tabs[4]:
             ]
         )
         st.dataframe(script_df, use_container_width=True, hide_index=True)
-
-
-_process_autorefresh_fallback_requests()
 

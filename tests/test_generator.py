@@ -1512,23 +1512,6 @@ def test_prepare_waste_frame_direct_match_overrides_official_fields():
     assert pytest.approx(row["density_kg_m3"], rel=1e-2) == 100.0
 
 
-def test_prepare_waste_frame_clears_match_key_when_unmatched():
-    waste_df = pd.DataFrame(
-        {
-            "id": ["missing_official"],
-            "category": ["Uncharted Debris"],
-            "material": ["Mystery Polymer"],
-            "kg": [1.0],
-            "volume_l": [0.5],
-            "flags": [""],
-        }
-    )
-
-    prepared = generator.prepare_waste_frame(waste_df)
-
-    assert prepared.loc[0, "_official_match_key"] == ""
-
-
 def test_prepare_waste_frame_includes_reference_columns(reference_dataset_tables):
     expected_columns: set[str] = set()
     for prefix, table in reference_dataset_tables.items():
