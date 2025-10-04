@@ -1,3 +1,9 @@
+from __future__ import annotations
+
+from datetime import datetime
+import hashlib
+import io
+import json
 from pathlib import Path
 
 from app.bootstrap import ensure_streamlit_entrypoint
@@ -10,6 +16,9 @@ import pandas as pd
 import plotly.graph_objects as go
 import pydeck as pdk
 import streamlit as st
+
+from app.modules import data_sources as ds
+from app.modules import mars_control
 
 from app.modules.generator import GeneratorService
 from app.modules.manifest_loader import (
@@ -35,6 +44,234 @@ from app.modules.ui_blocks import (
 configure_page(page_title="Rex-AI • Mars Control Center", page_icon="🛰️")
 initialise_frontend()
 render_brand_header(tagline="Mars Control Center · Interplanetary Recycling")
+
+
+_MANUAL_DECISIONS_KEY = "mars_decision_actions"
+_BATCH_RESULTS_KEY = "mars_manifest_batch_results"
+_BATCH_SIGNATURE_KEY = "mars_manifest_batch_signature"
+_SCORE_THRESHOLDS = {"spectral": 0.65, "mechanical": 0.6}
+_ACTION_PRESETS = {
+    "accept": {"label": "Aceptar plan Rex-AI", "badge": "🟢 Aceptado"},
+    "reject": {"label": "Rechazar acción propuesta", "badge": "🔴 Rechazado"},
+    "reprioritize": {"label": "Repriorizar envío crítico", "badge": "🟠 Repriorizar"},
+}
+
+
+@st.cache_resource(show_spinner=False)
+def _load_reference_bundle() -> ds.MaterialReferenceBundle:
+    return ds.load_material_reference_bundle()
+
+
+def _manifest_signature(manifest_df: pd.DataFrame | None) -> str:
+    if manifest_df is None or manifest_df.empty:
+        return "empty"
+    try:
+        payload = manifest_df.to_csv(index=False).encode("utf-8")
+    except Exception:
+        payload = json.dumps(manifest_df.to_dict(orient="records"), sort_keys=True).encode("utf-8")
+    return hashlib.sha1(payload).hexdigest()
+
+
+def _store_flight_snapshot(flights_df: pd.DataFrame) -> None:
+    st.session_state["flight_operations_table"] = flights_df
+    st.session_state["flight_operations_last_decisions"] = {
+        row["flight_id"]: row["ai_decision"]
+        for row in flights_df.to_dict(orient="records")
+        if row.get("flight_id")
+    }
+
+
+def _apply_manual_overrides(flights_df: pd.DataFrame | None) -> pd.DataFrame | None:
+    if flights_df is None or flights_df.empty:
+        return flights_df
+    overrides = st.session_state.get(_MANUAL_DECISIONS_KEY, {})
+    if not overrides:
+        return flights_df
+    updated = flights_df.copy()
+    for manifest_ref, payload in overrides.items():
+        if not isinstance(payload, Mapping):
+            continue
+        mask = updated["manifest_ref"].astype(str) == str(manifest_ref)
+        if not mask.any():
+            continue
+        label = payload.get("label")
+        badge = payload.get("badge", "⚙️ Manual")
+        timestamp = payload.get("timestamp")
+        if label:
+            updated.loc[mask, "ai_decision"] = label
+        if timestamp:
+            updated.loc[mask, "ai_decision_timestamp"] = timestamp
+        updated.loc[mask, "decision_indicator"] = badge
+        updated.loc[mask, "decision_changed"] = True
+    return updated
+
+
+def _register_manual_action(
+    manifest_ref: str,
+    action_key: str,
+    *,
+    label: str | None = None,
+    badge: str | None = None,
+) -> None:
+    presets = _ACTION_PRESETS.get(action_key, {})
+    payload = {
+        "action": action_key,
+        "label": label or presets.get("label") or action_key.title(),
+        "badge": badge or presets.get("badge", "⚙️ Manual"),
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+    overrides = st.session_state.setdefault(_MANUAL_DECISIONS_KEY, {})
+    overrides[str(manifest_ref)] = payload
+    st.session_state[_MANUAL_DECISIONS_KEY] = overrides
+
+    flights_df: pd.DataFrame | None = st.session_state.get("flight_operations_table")
+    if isinstance(flights_df, pd.DataFrame):
+        updated = _apply_manual_overrides(flights_df)
+        _store_flight_snapshot(updated)
+
+
+def _ensure_manifest_batch(
+    service: GeneratorService, manifest_df: pd.DataFrame | None
+) -> list[dict[str, Any]]:
+    if manifest_df is None or manifest_df.empty:
+        st.session_state.pop(_BATCH_RESULTS_KEY, None)
+        st.session_state.pop(_BATCH_SIGNATURE_KEY, None)
+        return []
+
+    signature = _manifest_signature(manifest_df)
+    if st.session_state.get(_BATCH_SIGNATURE_KEY) != signature:
+        batch = mars_control.score_manifest_batch(service, [manifest_df])
+        st.session_state[_BATCH_RESULTS_KEY] = batch
+        st.session_state[_BATCH_SIGNATURE_KEY] = signature
+    return st.session_state.get(_BATCH_RESULTS_KEY, [])
+
+
+def _resolve_spectral_curve(
+    material_key: str | None,
+    item_name: str | None,
+) -> tuple[str | None, pd.DataFrame | None, Mapping[str, Any]]:
+    bundle = _load_reference_bundle()
+    alias_map = bundle.alias_map
+    spectral_curves = bundle.spectral_curves
+    metadata = bundle.metadata
+
+    candidates = [material_key, item_name]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        text = str(candidate)
+        if text in spectral_curves:
+            return text, spectral_curves[text], metadata.get(text, {})
+        slug = ds.slugify(ds.normalize_item(text))
+        canonical = alias_map.get(slug)
+        if canonical and canonical in spectral_curves:
+            return canonical, spectral_curves[canonical], metadata.get(canonical, {})
+    return None, None, {}
+
+
+def _synthetic_spectral_curve(
+    spectral_score: float, mechanical_score: float
+) -> pd.DataFrame:
+    import numpy as np
+
+    wavenumbers = np.linspace(500, 4000, 40)
+    base = 0.45 + (1.0 - spectral_score) * 0.35
+    modulation = 0.1 + (1.0 - mechanical_score) * 0.25
+    transmittance = 100.0 * (base + modulation * np.sin(np.linspace(0, 3.5, 40)))
+    frame = pd.DataFrame(
+        {
+            "wavenumber_cm_1": wavenumbers,
+            "transmittance_pct": transmittance.clip(lower=5.0, upper=95.0),
+        }
+    )
+    return frame
+
+
+def _score_radar_chart(spectral: float, mechanical: float) -> go.Figure:
+    thresholds = [
+        _SCORE_THRESHOLDS["spectral"],
+        _SCORE_THRESHOLDS["mechanical"],
+    ]
+    values = [spectral, mechanical]
+    categories = ["Espectral", "Mecánico"]
+
+    def _close(payload: list[float]) -> list[float]:
+        return payload + payload[:1]
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatterpolar(
+            r=_close(values),
+            theta=_close(categories),
+            fill="toself",
+            name="Score",
+            line=dict(color="#38bdf8"),
+            fillcolor="rgba(56, 189, 248, 0.3)",
+        )
+    )
+    fig.add_trace(
+        go.Scatterpolar(
+            r=_close(thresholds),
+            theta=_close(categories),
+            fill="toself",
+            name="Umbral",
+            line=dict(color="#f97316", dash="dash"),
+            fillcolor="rgba(249, 115, 22, 0.1)",
+        )
+    )
+    fig.update_layout(
+        showlegend=False,
+        polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+        margin=dict(l=0, r=0, t=20, b=20),
+        height=220,
+    )
+    return fig
+
+
+def _compute_severity(row: Mapping[str, Any]) -> float:
+    spectral = max(float(row.get("spectral_score", 0.0) or 0.0), 0.0)
+    mechanical = max(float(row.get("mechanical_score", 0.0) or 0.0), 0.0)
+    utility = max(float(row.get("material_utility_score", 0.0) or 0.0), 0.0)
+    gaps = [
+        max(0.0, _SCORE_THRESHOLDS["spectral"] - spectral),
+        max(0.0, _SCORE_THRESHOLDS["mechanical"] - mechanical),
+        max(0.0, 0.5 - utility),
+    ]
+    return max(gaps)
+
+
+def _standardise_spectral_curve(curve: pd.DataFrame) -> pd.DataFrame:
+    if curve is None or curve.empty:
+        return pd.DataFrame(columns=["wavenumber_cm_1", "transmittance_pct"])
+
+    working = curve.copy()
+    if "transmittance_pct" in working.columns:
+        working["transmittance_pct"] = pd.to_numeric(
+            working["transmittance_pct"], errors="coerce"
+        )
+    else:
+        value_column = None
+        for candidate in ("absorbance_norm_1um", "absorbance", "intensity", "signal"):
+            if candidate in working.columns:
+                value_column = candidate
+                break
+        if value_column is None:
+            for column in working.columns:
+                if column != "wavenumber_cm_1":
+                    value_column = column
+                    break
+        values = pd.to_numeric(working.get(value_column), errors="coerce")
+        if value_column and "absorb" in value_column:
+            min_val = float(values.min()) if not values.isna().all() else 0.0
+            max_val = float(values.max()) if not values.isna().all() else 1.0
+            span = max(max_val - min_val, 1e-6)
+            working["transmittance_pct"] = (1.0 - (values - min_val) / span) * 100.0
+        else:
+            working["transmittance_pct"] = values
+
+    working["transmittance_pct"] = working["transmittance_pct"].interpolate().fillna(0.0)
+    working = working.loc[:, [col for col in working.columns if col in {"wavenumber_cm_1", "transmittance_pct"}]]
+    return working.dropna(subset=["wavenumber_cm_1", "transmittance_pct"])
 
 
 def _traffic_color(score: float) -> str:
@@ -87,6 +324,8 @@ telemetry_service = MarsControlCenterService()
 analysis_state: dict[str, Any] | None = st.session_state.get("policy_analysis")
 manifest_df: pd.DataFrame | None = st.session_state.get("uploaded_manifest_df")
 
+st.session_state.setdefault(_MANUAL_DECISIONS_KEY, {})
+
 tabs = st.tabs(
     [
         "🛰️ Flight Radar / Mapa",
@@ -121,12 +360,9 @@ with tabs[0]:
             manifest_df=manifest_df,
             analysis_state=analysis_state,
         )
-        st.session_state["flight_operations_table"] = flights_df
+        flights_df = _apply_manual_overrides(flights_df)
+        _store_flight_snapshot(flights_df)
         st.session_state["flight_operations_signature"] = manifest_signature
-        st.session_state["flight_operations_last_decisions"] = {
-            row["flight_id"]: row["ai_decision"]
-            for row in flights_df.to_dict(orient="records")
-        }
         st.session_state.setdefault("flight_operations_recent_events", [])
         st.session_state.setdefault("flight_operations_recent_changes", [])
 
@@ -166,11 +402,8 @@ with tabs[0]:
                 analysis_state=analysis_state,
                 previous_decisions=previous_decisions,
             )
-            st.session_state["flight_operations_table"] = flights_df
-            st.session_state["flight_operations_last_decisions"] = {
-                row["flight_id"]: row["ai_decision"]
-                for row in flights_df.to_dict(orient="records")
-            }
+            flights_df = _apply_manual_overrides(flights_df)
+            _store_flight_snapshot(flights_df)
             st.session_state["flight_operations_recent_events"] = events
             st.session_state["flight_operations_recent_changes"] = list(changed_flights)
         else:
@@ -712,17 +945,356 @@ with tabs[2]:
         with cols[2]:
             st.metric("Total ítems", f"{summary['item_count']}")
 
+        passport = analysis_state.get("material_passport", {})
+
+        manifest_source_df: pd.DataFrame | None = None
+        if isinstance(manifest_df, pd.DataFrame) and not manifest_df.empty:
+            manifest_source_df = manifest_df
+        else:
+            candidate_manifest = analysis_state.get("manifest")
+            if isinstance(candidate_manifest, pd.DataFrame):
+                manifest_source_df = candidate_manifest
+            elif isinstance(candidate_manifest, Mapping):
+                manifest_source_df = pd.DataFrame(candidate_manifest)
+
+        batch_results = _ensure_manifest_batch(generator_service, manifest_source_df)
+        if batch_results:
+            batch_entry = batch_results[0]
+            scored_manifest = batch_entry.get("scored_manifest", pd.DataFrame())
+            compatibility = batch_entry.get("compatibility", pd.DataFrame())
+            recommendations = batch_entry.get("policy_recommendations", pd.DataFrame())
+        else:
+            scored_manifest = summary.get("manifest", pd.DataFrame())
+            compatibility = summary.get("compatibility", pd.DataFrame())
+            recommendations = summary.get("recommendations", pd.DataFrame())
+
+        flights_df = st.session_state.get("flight_operations_table")
+        if (
+            (flights_df is None or flights_df.empty)
+            and manifest_source_df is not None
+            and not manifest_source_df.empty
+        ):
+            flights_df = telemetry_service.flight_operations_overview(
+                passport,
+                manifest_df=manifest_source_df,
+                analysis_state=analysis_state,
+            )
+            flights_df = _apply_manual_overrides(flights_df)
+            _store_flight_snapshot(flights_df)
+
+        working_manifest = (
+            scored_manifest.copy() if isinstance(scored_manifest, pd.DataFrame) else pd.DataFrame()
+        )
+        if not working_manifest.empty:
+            for column in ("spectral_score", "mechanical_score", "material_utility_score", "mass_kg"):
+                if column in working_manifest.columns:
+                    working_manifest[column] = pd.to_numeric(
+                        working_manifest[column], errors="coerce"
+                    ).fillna(0.0)
+                else:
+                    working_manifest[column] = 0.0
+            working_manifest["severity"] = working_manifest.apply(_compute_severity, axis=1)
+
+        flight_lookup: dict[str, Mapping[str, Any]] = {}
+        if isinstance(flights_df, pd.DataFrame) and not flights_df.empty:
+            for record in flights_df.to_dict(orient="records"):
+                manifest_ref = str(record.get("manifest_ref"))
+                if manifest_ref:
+                    flight_lookup[manifest_ref] = record
+
+        if not working_manifest.empty:
+            def _resolve_shipment(row: pd.Series) -> str:
+                item_text = str(row.get("item") or "").lower()
+                material_text = str(row.get("material_key") or "").lower()
+                for manifest_ref, record in flight_lookup.items():
+                    materials = record.get("key_materials") or []
+                    for material in materials:
+                        token = str(material).lower()
+                        if token and (token in item_text or token in material_text):
+                            return manifest_ref
+                if flight_lookup:
+                    return next(iter(flight_lookup.keys()))
+                return "manifest-alpha"
+
+            working_manifest["shipment_ref"] = working_manifest.apply(_resolve_shipment, axis=1)
+        else:
+            working_manifest["shipment_ref"] = "manifest-alpha"
+
+        shipments: list[dict[str, Any]] = []
+        decisions_records: list[dict[str, Any]] = []
+
+        if not working_manifest.empty:
+            grouped = working_manifest.groupby("shipment_ref", dropna=False)
+            for manifest_ref, group in grouped:
+                manifest_key = str(manifest_ref or "manifest-alpha")
+                flight_info = flight_lookup.get(manifest_key, {})
+                severity = float(group["severity"].max()) if not group.empty else 0.0
+                critical = group[group["severity"] > 0.0].sort_values(
+                    "material_utility_score"
+                )
+                focus_pool = critical if not critical.empty else group
+                focus_row = focus_pool.sort_values("material_utility_score").iloc[0]
+                compatibility_score = float(group["material_utility_score"].mean())
+                spectral_avg = float(group["spectral_score"].mean())
+                mechanical_avg = float(group["mechanical_score"].mean())
+                critical_count = int((group["severity"] > 0.0).sum())
+
+                rec_subset = pd.DataFrame()
+                if (
+                    isinstance(recommendations, pd.DataFrame)
+                    and not recommendations.empty
+                    and "item_name" in recommendations.columns
+                ):
+                    rec_subset = recommendations[recommendations["item_name"].isin(
+                        group["item"].astype(str)
+                    )]
+
+                comp_subset = pd.DataFrame()
+                if (
+                    isinstance(compatibility, pd.DataFrame)
+                    and not compatibility.empty
+                    and "material_key" in compatibility.columns
+                ):
+                    comp_subset = compatibility[compatibility["material_key"].isin(
+                        group["material_key"].astype(str)
+                    )]
+
+                spectral_key, spectral_curve, spectral_meta = _resolve_spectral_curve(
+                    focus_row.get("material_key"), focus_row.get("item")
+                )
+                synthetic_curve = False
+                if spectral_curve is None or spectral_curve.empty:
+                    spectral_curve = _synthetic_spectral_curve(
+                        float(focus_row.get("spectral_score") or 0.0),
+                        float(focus_row.get("mechanical_score") or 0.0),
+                    )
+                    synthetic_curve = True
+
+                overrides = st.session_state.get(_MANUAL_DECISIONS_KEY, {})
+                manual_payload = overrides.get(manifest_key) or overrides.get(
+                    str(manifest_key), {}
+                )
+                order_label = manual_payload.get("label") or flight_info.get(
+                    "ai_decision"
+                ) or "Monitoreo nominal"
+                order_badge = (
+                    manual_payload.get("badge")
+                    or flight_info.get("decision_indicator")
+                    or "Orden Rex-AI"
+                )
+
+                if rec_subset is not None and not rec_subset.empty:
+                    top_rec = rec_subset.sort_values(
+                        "recommended_score", ascending=False
+                    ).iloc[0]
+                    recommendation_text = (
+                        f"{top_rec.get('action')} → {top_rec.get('recommended_material_key')}"
+                    )
+                else:
+                    recommendation_text = "Sin cambios"
+
+                detected_text = (
+                    f"{focus_row.get('item')} · Score {float(focus_row.get('material_utility_score') or 0.0):.2f}"
+                )
+                compatibility_text = f"{compatibility_score:.2f}"
+
+                radar_fig = _score_radar_chart(spectral_avg, mechanical_avg)
+
+                spectral_curve = _standardise_spectral_curve(spectral_curve).sort_values(
+                    "wavenumber_cm_1", ascending=False
+                )
+                spectral_caption = (
+                    "Curva sintetizada a partir de los puntajes de compatibilidad: "
+                    "el bundle FTIR no expone este material."
+                    if synthetic_curve
+                    else f"FTIR de referencia · {spectral_meta.get('material', spectral_key)}"
+                )
+
+                shipments.append(
+                    {
+                        "manifest_ref": manifest_key,
+                        "flight": flight_info,
+                        "severity": severity,
+                        "critical_count": critical_count,
+                        "radar_fig": radar_fig,
+                        "spectral_curve": spectral_curve,
+                        "spectral_caption": spectral_caption,
+                        "critical_table": critical[[
+                            "item",
+                            "material_key",
+                            "material_utility_score",
+                            "spectral_score",
+                            "mechanical_score",
+                            "mass_kg",
+                        ]].head(6)
+                        if not critical.empty
+                        else group[[
+                            "item",
+                            "material_key",
+                            "material_utility_score",
+                            "spectral_score",
+                            "mechanical_score",
+                            "mass_kg",
+                        ]].sort_values("material_utility_score").head(6),
+                        "compatibility_subset": comp_subset,
+                        "badges": [
+                            f"Detectado · {detected_text}",
+                            f"Compatibilidad · {compatibility_text}",
+                            f"Sugerencia Rex-AI · {recommendation_text}",
+                            f"{order_badge} · {order_label}",
+                        ],
+                        "order_label": order_label,
+                        "order_badge": order_badge,
+                    }
+                )
+
+                decisions_records.append(
+                    {
+                        "manifest_ref": manifest_key,
+                        "flight_id": flight_info.get("flight_id"),
+                        "vehicle": flight_info.get("vehicle"),
+                        "critical_items": critical_count,
+                        "worst_item": focus_row.get("item"),
+                        "mean_score": compatibility_score,
+                        "manual_action": manual_payload.get("action"),
+                        "order_label": order_label,
+                        "severity": severity,
+                    }
+                )
+
+        shipments.sort(
+            key=lambda payload: (-payload.get("severity", 0.0), payload.get("critical_count", 0))
+        )
+
         micro_divider()
-        manifest_table = summary["manifest"]
-        if isinstance(manifest_table, pd.DataFrame) and not manifest_table.empty:
-            st.markdown("**Detalle de ítems evaluados**")
+        st.markdown("### Prioridades por envío")
+        if shipments:
+            for shipment in shipments:
+                flight_info = shipment["flight"]
+                flight_label = flight_info.get("flight_id") or shipment["manifest_ref"]
+                with st.container():
+                    header_cols = st.columns([3, 1])
+                    header_cols[0].markdown(f"**{flight_label} · {shipment['manifest_ref']}**")
+                    badge_group(shipment["badges"], parent=header_cols[0])
+                    header_cols[1].metric(
+                        "Severidad",
+                        f"{shipment['severity']:.2f}",
+                        delta=f"{shipment['critical_count']} críticos",
+                    )
+
+                    chart_cols = st.columns([1, 1])
+                    chart_cols[0].plotly_chart(
+                        shipment["radar_fig"], use_container_width=True
+                    )
+                    spectral_fig = go.Figure(
+                        data=[
+                            go.Scatter(
+                                x=shipment["spectral_curve"]["wavenumber_cm_1"],
+                                y=shipment["spectral_curve"]["transmittance_pct"],
+                                mode="lines",
+                                line=dict(color="#facc15"),
+                            )
+                        ]
+                    )
+                    spectral_fig.update_layout(
+                        margin=dict(t=10, b=0, l=0, r=0),
+                        xaxis_title="Número de onda (cm⁻¹)",
+                        yaxis_title="Transmittancia (%)",
+                        height=220,
+                    )
+                    chart_cols[0].plotly_chart(spectral_fig, use_container_width=True)
+                    chart_cols[0].caption(shipment["spectral_caption"])
+
+                    detail_df = shipment["critical_table"]
+                    chart_cols[1].markdown("**Ítems críticos**")
+                    chart_cols[1].dataframe(
+                        detail_df,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "material_utility_score": st.column_config.NumberColumn(
+                                "Score", format="%.2f"
+                            ),
+                            "spectral_score": st.column_config.NumberColumn(
+                                "Espectral", format="%.2f"
+                            ),
+                            "mechanical_score": st.column_config.NumberColumn(
+                                "Mecánico", format="%.2f"
+                            ),
+                            "mass_kg": st.column_config.NumberColumn("Masa (kg)", format="%.2f"),
+                        },
+                    )
+
+                    if isinstance(shipment["compatibility_subset"], pd.DataFrame) and not shipment[
+                        "compatibility_subset"
+                    ].empty:
+                        chart_cols[1].markdown("**Compatibilidad documentada**")
+                        bullets = []
+                        for _, row in shipment["compatibility_subset"].iterrows():
+                            bullets.append(
+                                f"- `{row.get('material_key')}` ↔ `{row.get('partner_key')}` · {row.get('rule')}"
+                            )
+                        chart_cols[1].markdown("\n".join(bullets))
+                    else:
+                        chart_cols[1].caption("Sin trazas de compatibilidad adicionales.")
+
+                    action_cols = st.columns(3)
+                    if action_cols[0].button(
+                        "Aceptar", key=f"accept_{shipment['manifest_ref']}"
+                    ):
+                        _register_manual_action(shipment["manifest_ref"], "accept")
+                        st.success("Orden manual registrada.")
+                    if action_cols[1].button(
+                        "Rechazar", key=f"reject_{shipment['manifest_ref']}"
+                    ):
+                        _register_manual_action(shipment["manifest_ref"], "reject")
+                        st.warning("La orden fue rechazada manualmente.")
+                    if action_cols[2].button(
+                        "Repriorizar", key=f"reprioritize_{shipment['manifest_ref']}"
+                    ):
+                        _register_manual_action(shipment["manifest_ref"], "reprioritize")
+                        st.info("El envío fue marcado para repriorización.")
+        else:
+            st.success(
+                "El lote evaluado no contiene alertas críticas: Rex-AI mantiene monitoreo nominal."
+            )
+
+        if decisions_records:
+            export_df = pd.DataFrame(decisions_records)
+            csv_buffer = io.StringIO()
+            export_df.to_csv(csv_buffer, index=False)
+            json_payload = json.dumps(
+                export_df.to_dict(orient="records"), ensure_ascii=False, indent=2
+            )
+            export_cols = st.columns(2)
+            with export_cols[0]:
+                st.download_button(
+                    "Descargar decisiones (CSV)",
+                    csv_buffer.getvalue().encode("utf-8"),
+                    file_name="decisiones_mars_control.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
+            with export_cols[1]:
+                st.download_button(
+                    "Descargar decisiones (JSON)",
+                    json_payload.encode("utf-8"),
+                    file_name="decisiones_mars_control.json",
+                    mime="application/json",
+                    use_container_width=True,
+                )
+
+        micro_divider()
+        st.markdown("**Detalle de ítems evaluados**")
+        if not working_manifest.empty:
             st.dataframe(
-                manifest_table,
+                working_manifest,
                 use_container_width=True,
                 hide_index=True,
             )
+        else:
+            st.caption("Sin datos de manifiesto evaluados en esta corrida.")
 
-        recommendations = summary["recommendations"]
         micro_divider()
         st.markdown("**Recomendaciones de política**")
         if isinstance(recommendations, pd.DataFrame) and not recommendations.empty:
@@ -732,7 +1304,6 @@ with tabs[2]:
                 "No se identificaron acciones prioritarias: todos los ítems superan el umbral de utilidad."
             )
 
-        compatibility = summary["compatibility"]
         micro_divider()
         st.markdown("**Trazabilidad de compatibilidad**")
         if isinstance(compatibility, pd.DataFrame) and not compatibility.empty:
@@ -740,7 +1311,6 @@ with tabs[2]:
         else:
             st.caption("Sin datos de compatibilidad asociados al manifiesto.")
 
-        passport = analysis_state.get("material_passport", {})
         micro_divider()
         st.markdown("**Material Passport**")
         st.json(passport)
