@@ -52,6 +52,16 @@ def reference_dataset_tables(monkeypatch):
         generator._official_features_bundle.cache_clear()
 
 
+def test_extend_category_synonyms_updates_normalization(monkeypatch):
+    synonyms_copy = data_sources._CATEGORY_SYNONYMS.copy()
+    monkeypatch.setattr(data_sources, "_CATEGORY_SYNONYMS", synonyms_copy)
+    monkeypatch.setattr(generator, "_CATEGORY_SYNONYMS", synonyms_copy, raising=False)
+
+    data_sources.extend_category_synonyms({"Experimental Packaging": "Packaging"})
+
+    assert generator.normalize_category("Experimental Packaging") == "packaging"
+
+
 def test_load_regolith_vector_matches_data_sources():
     polars_vector = generator._load_regolith_vector()
     pandas_vector = data_sources._load_regolith_vector()

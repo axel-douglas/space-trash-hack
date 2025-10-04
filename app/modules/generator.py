@@ -159,7 +159,7 @@ _SEED_ENV_VAR = "REXAI_GENERATOR_SEED"
 # and EVA Waste) into a single "other packaging glove" bucket.  The updated
 # mapping keeps these families distinct so downstream heuristics can reason
 # about them independently while still tolerating legacy spellings.
-_CATEGORY_SYNONYMS.update(
+ds.extend_category_synonyms(
     {
         "packaging": "packaging",
         "packaging material": "packaging",
