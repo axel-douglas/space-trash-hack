@@ -392,7 +392,8 @@ def _build_scenegraph_layers(
     *,
     events: Sequence[Mapping[str, Any]] | None,
     demo_event: mars_control.DemoEvent | None,
-) -> list[pdk.Layer]:
+    include_metadata: bool = False,
+) -> list[pdk.Layer] | tuple[list[pdk.Layer], list[Mapping[str, Any]]]:
     base_scale = scene_asset.get("scale", (1.0, 1.0, 1.0))
     scale_vec = [float(component) for component in base_scale]
     base_orientation = scene_asset.get("orientation", (0.0, 0.0, 0.0))
@@ -496,7 +497,7 @@ def _build_scenegraph_layers(
         )
 
     if not scene_rows:
-        return []
+        return ([], scene_rows) if include_metadata else []
 
     orbit_layer = pdk.Layer(
         "PathLayer",
@@ -519,7 +520,181 @@ def _build_scenegraph_layers(
         pickable=True,
         _animate=True,
     )
-    return [orbit_layer, scene_layer]
+    layers = [orbit_layer, scene_layer]
+    if include_metadata:
+        return layers, scene_rows
+    return layers
+
+
+def _prepare_orbital_scene(
+    flights_df: pd.DataFrame | None,
+    *,
+    scene_asset: Mapping[str, Any] | None = None,
+    events: Sequence[Mapping[str, Any]] | None = None,
+    demo_event: mars_control.DemoEvent | None = None,
+) -> dict[str, Any]:
+    base_context: dict[str, Any] = {
+        "rendered": False,
+        "layers": [],
+        "scene_rows": [],
+        "view_state": None,
+        "tooltip": {},
+        "caption": (
+            "La vista 3D es la entrada principal para seguir cápsulas y eventos en tiempo real."
+        ),
+        "message": (
+            "Sin telemetría orbital para animar todavía. Ejecutá la simulación desde el radar."
+        ),
+        "capsule_count": 0,
+        "capsule_labels": [],
+        "generated_at": datetime.utcnow().isoformat(timespec="seconds"),
+    }
+
+    if flights_df is None or flights_df.empty:
+        return base_context
+
+    asset = scene_asset or mars_control.load_mars_scenegraph()
+    layers_result = _build_scenegraph_layers(
+        flights_df,
+        asset,
+        events=events,
+        demo_event=demo_event,
+        include_metadata=True,
+    )
+    layers, scene_rows = layers_result
+    base_context["scene_rows"] = scene_rows
+    if not layers:
+        base_context["message"] = (
+            "No hay cápsulas activas para renderizar. Avanzá la simulación para actualizar la escena."
+        )
+        return base_context
+
+    view_state = pdk.ViewState(
+        latitude=18.43,
+        longitude=77.58,
+        zoom=9.2,
+        pitch=62,
+        bearing=32,
+        min_zoom=7.2,
+        max_zoom=16.5,
+    )
+    tooltip_html = (
+        "<div style='font-size:14px;font-weight:600;'>{capsule}</div>"
+        "<div>ETA: {eta_minutes} min</div>"
+        "<div>{status}</div>"
+        "<div>{tooltip}</div>"
+    )
+    tooltip = {
+        "html": tooltip_html,
+        "style": {
+            "backgroundColor": "#0b1220",
+            "color": "#f8fafc",
+            "border": "1px solid #38bdf8",
+            "borderRadius": "8px",
+            "padding": "10px",
+        },
+    }
+
+    capsule_labels = [
+        str(row.get("capsule") or row.get("flight_id") or "").strip()
+        for row in scene_rows
+        if row.get("capsule") or row.get("flight_id")
+    ]
+
+    headline_event: Mapping[str, Any] | mars_control.DemoEvent | None = None
+    if demo_event:
+        headline_event = demo_event
+    elif events:
+        for candidate in events:
+            if not isinstance(candidate, Mapping):
+                continue
+            severity = str(candidate.get("severity") or candidate.get("category") or "").lower()
+            headline_event = candidate
+            if severity in _CRITICAL_EVENT_SEVERITIES:
+                break
+
+    base_context.update(
+        {
+            "rendered": True,
+            "layers": layers,
+            "view_state": view_state,
+            "tooltip": tooltip,
+            "caption": (
+                "La vista 3D es la entrada principal: animamos órbitas, resaltamos eventos críticos"
+                " y sincronizamos el tamaño con el progreso de cada cápsula."
+            ),
+            "message": "",
+            "capsule_count": len(capsule_labels),
+            "capsule_labels": capsule_labels,
+        }
+    )
+
+    if isinstance(headline_event, mars_control.DemoEvent):
+        base_context["last_event_title"] = headline_event.title
+        base_context["last_event_severity"] = headline_event.severity
+    elif isinstance(headline_event, Mapping):
+        base_context["last_event_title"] = str(
+            headline_event.get("title") or headline_event.get("message") or ""
+        ).strip()
+        base_context["last_event_severity"] = str(
+            headline_event.get("severity") or headline_event.get("category") or ""
+        ).strip()
+
+    return base_context
+
+
+def _render_orbital_scene(
+    flights_df: pd.DataFrame | None,
+    *,
+    events: Sequence[Mapping[str, Any]] | None = None,
+    demo_event: mars_control.DemoEvent | None = None,
+    container: st.delta_generator.DeltaGenerator | None = None,
+    height: int | None = None,
+    store_key: str = "mars_orbital_scene_snapshot",
+    show_caption: bool = True,
+) -> dict[str, Any]:
+    target = container or st
+    context = _prepare_orbital_scene(
+        flights_df,
+        events=events,
+        demo_event=demo_event,
+    )
+
+    snapshot = {
+        key: context.get(key)
+        for key in (
+            "rendered",
+            "capsule_count",
+            "capsule_labels",
+            "generated_at",
+            "last_event_title",
+            "last_event_severity",
+            "message",
+        )
+    }
+    st.session_state[store_key] = snapshot
+
+    if not context.get("rendered"):
+        message = context.get("message")
+        if message:
+            target.info(message)
+        return context
+
+    deck = pdk.Deck(
+        layers=context["layers"],
+        initial_view_state=context["view_state"],
+        map_style=None,
+        tooltip=context["tooltip"],
+    )
+    chart_kwargs = {"use_container_width": True}
+    if height is not None:
+        chart_kwargs["height"] = height
+    target.pydeck_chart(deck, **chart_kwargs)
+    if show_caption:
+        target.caption(context["caption"])
+
+    context["deck"] = deck
+    return context
 
 
 def _ensure_manifest_batch(
@@ -720,7 +895,7 @@ st.session_state.setdefault(_MANUAL_DECISIONS_KEY, {})
 
 tabs = st.tabs(
     [
-        "🛰️ Flight Radar / Mapa",
+        "🛰️ Vista orbital 3D",
         "📦 Inventario vivo",
         "🤖 Decisiones IA",
         "🗺️ Planner",
@@ -730,7 +905,7 @@ tabs = st.tabs(
 
 
 with tabs[0]:
-    st.subheader("Flight Radar · logística interplanetaria")
+    st.subheader("Vista orbital 3D · logística interplanetaria")
     passport: Mapping[str, Any] | None = None
     if analysis_state:
         passport = analysis_state.get("material_passport")
@@ -759,6 +934,7 @@ with tabs[0]:
         st.session_state.setdefault("flight_operations_recent_changes", [])
 
     if flights_df is None or flights_df.empty:
+        st.session_state.pop("mars_orbital_scene_snapshot", None)
         st.info("Aún no hay vuelos registrados. Cargá un manifiesto para sincronizar la carga.")
     else:
         control_cols = st.columns([2, 1])
@@ -809,7 +985,24 @@ with tabs[0]:
                 st.session_state.get("flight_operations_recent_changes", [])
             )
 
-        st.markdown("#### Radar orbital y capas de terreno")
+        st.markdown("#### Vista orbital 3D principal")
+        demo_last_event: mars_control.DemoEvent | None = st.session_state.get(
+            "demo_last_event"
+        )
+        _render_orbital_scene(
+            flights_df,
+            events=events,
+            demo_event=demo_last_event,
+            height=620,
+        )
+
+        micro_divider()
+        st.markdown("#### Radar táctico 2D y capas de terreno complementarias")
+        st.caption(
+            "Esta vista 2D complementa la experiencia orbital principal aportando capas analíticas"
+            " para navegación y planificación en superficie."
+        )
+
         overlay_columns = st.columns(2)
         with overlay_columns[0]:
             slope_enabled = st.checkbox(
@@ -1043,7 +1236,9 @@ with tabs[0]:
                 )
                 st.markdown(legend_html, unsafe_allow_html=True)
 
-        st.caption("Mapa operacional de Jezero: cápsulas, zonas clave y perímetro de seguridad.")
+        st.caption(
+            "Radar táctico de Jezero: complementa la vista 3D con capas geoespaciales y estado en superficie."
+        )
 
         micro_divider()
         display_df = flights_df[
@@ -2047,65 +2242,40 @@ with tabs[4]:
         st.caption("El ticker se completará a medida que se emitan eventos del guion demo.")
 
     micro_divider()
-    st.markdown("### Vista orbital 3D")
+    st.markdown("### Vista orbital 3D · referencia del guion")
 
-    flights_snapshot: pd.DataFrame | None = st.session_state.get("flight_operations_table")
-    if flights_snapshot is None or flights_snapshot.empty:
+    scene_snapshot: Mapping[str, Any] = st.session_state.get(
+        "mars_orbital_scene_snapshot", {}
+    )
+    if not scene_snapshot or not scene_snapshot.get("rendered"):
         st.info(
-            "Sin telemetría orbital para animar todavía. Ejecutá la simulación en la pestaña Flight Radar."
+            "La animación 3D se genera en la pestaña principal. Abrila para inicializarla y"
+            " mantener sincronizados los eventos del modo demo."
         )
     else:
-        scene_asset = mars_control.load_mars_scenegraph()
-        sim_events: Sequence[Mapping[str, Any]] = st.session_state.get(
-            "flight_operations_recent_events",
-            [],
+        stats_cols = st.columns([1, 1, 1.2])
+        with stats_cols[0]:
+            st.metric("Cápsulas animadas", int(scene_snapshot.get("capsule_count", 0)))
+        with stats_cols[1]:
+            st.metric(
+                "Último evento",
+                scene_snapshot.get("last_event_title", "Sin novedades"),
+                scene_snapshot.get("last_event_severity", "").title() or None,
+            )
+        with stats_cols[2]:
+            st.metric("Actualización", scene_snapshot.get("generated_at", "—"))
+
+        capsule_labels = [
+            label for label in scene_snapshot.get("capsule_labels", []) if isinstance(label, str)
+        ]
+        if capsule_labels:
+            st.caption("Cápsulas resaltadas en la vista orbital 3D:")
+            badge_group(capsule_labels)
+
+        st.markdown(
+            "🔗 [Abrir pestaña «Vista orbital 3D»](#vista-orbital-3d-principal)"
+            " para interactuar con la animación completa."
         )
-        scene_layers = _build_scenegraph_layers(
-            flights_snapshot,
-            scene_asset,
-            events=sim_events,
-            demo_event=last_event,
-        )
-        if not scene_layers:
-            st.info(
-                "No hay cápsulas activas para renderizar. Avanzá la simulación para actualizar la escena."
-            )
-        else:
-            view_state = pdk.ViewState(
-                latitude=18.43,
-                longitude=77.58,
-                zoom=9.2,
-                pitch=62,
-                bearing=32,
-                min_zoom=7.2,
-                max_zoom=16.5,
-            )
-            tooltip_html = (
-                "<div style='font-size:14px;font-weight:600;'>{capsule}</div>"
-                "<div>ETA: {eta_minutes} min</div>"
-                "<div>{status}</div>"
-                "<div>{tooltip}</div>"
-            )
-            tooltip = {
-                "html": tooltip_html,
-                "style": {
-                    "backgroundColor": "#0b1220",
-                    "color": "#f8fafc",
-                    "border": "1px solid #38bdf8",
-                    "borderRadius": "8px",
-                    "padding": "10px",
-                },
-            }
-            deck = pdk.Deck(
-                layers=scene_layers,
-                initial_view_state=view_state,
-                map_style=None,
-                tooltip=tooltip,
-            )
-            st.pydeck_chart(deck, use_container_width=True)
-            st.caption(
-                "La escena sincroniza la órbita de cada cápsula con la simulación: el tamaño refleja el progreso y los eventos críticos se resaltan en ámbar."
-            )
 
     micro_divider()
     st.markdown("#### Inyectar manifiesto demo")
