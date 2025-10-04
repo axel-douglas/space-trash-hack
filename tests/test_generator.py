@@ -18,7 +18,7 @@ import pandas as pd
 import pyarrow.parquet as pq
 import pytest
 
-from app.modules import data_sources, execution, label_mapper, logging_utils
+from app.modules import data_sources, execution, label_mapper, logging_utils, policy_engine
 from app.modules.generator import GeneratorService
 from app.modules.generator import service as generator
 from app.modules.optimizer import candidate_metrics
@@ -2516,3 +2516,80 @@ def test_empirical_candidate_satisfies_constraints():
 
     metrics = candidate_metrics(candidate, target)
     assert metrics.get("constraint_penalty", 1.0) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_material_utility_score_penalises_losses():
+    bundle = data_sources.load_material_reference_bundle()
+    manifest = pd.DataFrame(
+        [
+            {
+                "item": "HDPE packaging film",
+                "category": "Packaging",
+                "mass_kg": 10.0,
+                "tg_loss_pct": 5.0,
+                "ega_loss_pct": 0.5,
+                "water_l_per_kg": 0.1,
+                "energy_kwh_per_kg": 0.5,
+            },
+            {
+                "item": "HDPE packaging film",
+                "category": "Packaging",
+                "mass_kg": 10.0,
+                "tg_loss_pct": 90.0,
+                "ega_loss_pct": 50.0,
+                "water_l_per_kg": 9.0,
+                "energy_kwh_per_kg": 6.0,
+            },
+        ]
+    )
+
+    mapped = policy_engine.map_manifest_to_bundle(manifest, bundle=bundle)
+    scored = policy_engine.compute_material_utility_scores(mapped, bundle=bundle)
+
+    assert "material_key" in scored.columns
+    assert scored["material_key"].notna().all()
+
+    base_score = float(scored.iloc[0]["material_utility_score"])
+    penalised_score = float(scored.iloc[1]["material_utility_score"])
+    assert base_score > penalised_score
+    assert scored.iloc[1]["penalty_factor"] < scored.iloc[0]["penalty_factor"]
+    assert "penalty_breakdown" in scored.columns
+
+
+def test_analyze_manifest_exports_policy_artifacts(tmp_path):
+    manifest = pd.DataFrame(
+        [
+            {
+                "item": "HDPE packaging film",
+                "category": "Packaging",
+                "mass_kg": 10.0,
+                "tg_loss_pct": 90.0,
+                "ega_loss_pct": 40.0,
+                "water_l_per_kg": 9.0,
+                "energy_kwh_per_kg": 6.0,
+            }
+        ]
+    )
+
+    service = GeneratorService()
+    result = service.analyze_manifest(manifest, output_dir=tmp_path)
+
+    artifacts = result["artifacts"]
+    policy_path = artifacts["policy_recommendations_csv"]
+    compat_path = artifacts["compatibility_matrix_parquet"]
+    passport_path = artifacts["material_passport_json"]
+
+    assert policy_path.exists()
+    assert compat_path.exists()
+    assert passport_path.exists()
+
+    recommendations = pd.read_csv(policy_path)
+    assert not recommendations.empty
+
+    compatibility = pd.read_parquet(compat_path)
+    assert "sources_json" in compatibility.columns
+
+    passport = json.loads(passport_path.read_text("utf-8"))
+    assert passport["total_items"] == 1
+    assert isinstance(passport["compatibility_sources"], list)
+    assert passport["compatibility_sources"]
