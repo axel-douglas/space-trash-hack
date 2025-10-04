@@ -58,6 +58,12 @@ MISSION_STEPS: tuple[MissionStep, ...] = (
         "9_Capacity_Simulator",
         "Simula capacidad y recursos disponibles",
     ),
+    MissionStep(
+        "mission_planner",
+        "Mission Planner",
+        "11_Mission_Planner",
+        "Planifica lotes, rutas y políticas para la próxima misión",
+    ),
 )
 
 _STEP_LOOKUP = {step.key: step for step in MISSION_STEPS}
