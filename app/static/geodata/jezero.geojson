@@ -1,0 +1,75 @@
+{
+  "type": "FeatureCollection",
+  "name": "JezeroOperationalEnvelope",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Jezero Crater",
+        "kind": "boundary",
+        "elevation": -2600
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [77.32, 18.58],
+            [77.41, 18.74],
+            [77.63, 18.86],
+            [77.92, 18.79],
+            [78.05, 18.61],
+            [78.03, 18.37],
+            [77.86, 18.18],
+            [77.55, 18.05],
+            [77.29, 18.16],
+            [77.18, 18.37],
+            [77.19, 18.52],
+            [77.32, 18.58]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Base Jezero",
+        "kind": "zone",
+        "category": "landing_zone"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [77.54, 18.45],
+            [77.63, 18.47],
+            [77.66, 18.39],
+            [77.58, 18.35],
+            [77.49, 18.39],
+            [77.54, 18.45]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Delta Oeste",
+        "kind": "zone",
+        "category": "resource_zone"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [77.36, 18.65],
+            [77.46, 18.69],
+            [77.51, 18.62],
+            [77.42, 18.57],
+            [77.33, 18.6],
+            [77.36, 18.65]
+          ]
+        ]
+      }
+    }
+  ]
+}
