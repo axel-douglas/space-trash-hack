@@ -13,6 +13,7 @@ from app.modules.io import load_process_df
 from app.modules.mars_control import (
     MarsLogisticsData,
     SimulationEvent,
+    aggregate_inventory_by_category,
     load_jezero_geodata,
     load_logistics_baseline,
     apply_simulation_tick,
@@ -580,12 +581,13 @@ class MarsControlCenterService:
     # Inventory telemetry
     # ------------------------------------------------------------------
 
-    def inventory_snapshot(self) -> tuple[pd.DataFrame, dict[str, float]]:
+    def inventory_snapshot(self) -> tuple[pd.DataFrame, dict[str, float], dict[str, Any]]:
         """Return the latest inventory dataframe with aggregated metrics."""
 
         inventory_df = load_inventory_overview()
         metrics = compute_mission_summary(inventory_df)
-        return inventory_df, metrics
+        category_payload = aggregate_inventory_by_category(inventory_df)
+        return inventory_df, metrics, category_payload
 
     # ------------------------------------------------------------------
     # Timeline & simulation synchronisation
