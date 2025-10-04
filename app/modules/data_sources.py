@@ -2189,16 +2189,10 @@ def official_features_bundle() -> OfficialFeaturesBundle:
     table_lazy = table_lazy.with_columns(
         [
             pl.col("category")
-            .map_elements(
-                normalize_category,
-                return_dtype=pl.Utf8,  # keep execution in Rust for normalized text
-            )
+            .map_elements(normalize_category)
             .alias("category_norm"),
             pl.col("subitem")
-            .map_elements(
-                normalize_item,
-                return_dtype=pl.Utf8,  # avoid Python fallbacks when normalizing text
-            )
+            .map_elements(normalize_item)
             .alias("subitem_norm"),
         ]
     )

@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import html
-import math
 from typing import Any, Final, Mapping, MutableMapping, Sequence
 
 import pandas as pd
@@ -16,9 +14,6 @@ from app.modules.mars_control import (
     MarsLogisticsData,
     SimulationEvent,
     aggregate_inventory_by_category,
-    load_jezero_bitmap,
-    load_jezero_ortho_bitmap,
-    load_jezero_slope_bitmap,
     load_jezero_geodata,
     load_logistics_baseline,
     apply_simulation_tick,
@@ -512,42 +507,8 @@ class MarsControlCenterService:
         flights_df: pd.DataFrame,
         *,
         include_geometry: bool = True,
-        include_slope: bool = False,
-        include_ortho: bool = False,
-        slope_opacity: float | None = None,
-        ortho_opacity: float | None = None,
     ) -> dict[str, Any]:
-        bitmap = load_jezero_bitmap()
-        raw_bounds = bitmap.get("bounds") if isinstance(bitmap, Mapping) else None
-        map_bounds = tuple(raw_bounds) if raw_bounds else None
         geometry = load_jezero_geodata() if include_geometry else None
-
-        overlays: dict[str, MutableMapping[str, Any]] = {}
-        if include_slope:
-            slope_layer = deepcopy(load_jezero_slope_bitmap())
-            slope_meta = slope_layer.get("metadata", {}) if isinstance(slope_layer, Mapping) else {}
-            default_opacity = float(slope_meta.get("default_opacity", 0.65))
-            resolved_opacity = slope_opacity if slope_opacity is not None else default_opacity
-            slope_layer["opacity"] = float(max(0.0, min(resolved_opacity, 1.0)))
-            slope_label = slope_meta.get("label", "Mapa de pendientes")
-            slope_layer["label"] = f"{slope_label} · complemento Vista 3D"
-            overlays["slope_layer"] = slope_layer
-
-        if include_ortho:
-            ortho_layer = deepcopy(load_jezero_ortho_bitmap())
-            ortho_meta = ortho_layer.get("metadata", {}) if isinstance(ortho_layer, Mapping) else {}
-            default_opacity = float(ortho_meta.get("default_opacity", 0.75))
-            resolved_opacity = ortho_opacity if ortho_opacity is not None else default_opacity
-            ortho_layer["opacity"] = float(max(0.0, min(resolved_opacity, 1.0)))
-            ortho_label = ortho_meta.get("label", "Ortofoto HiRISE")
-            ortho_layer["label"] = f"{ortho_label} · soporte Vista 3D"
-            overlays["ortho_layer"] = ortho_layer
-
-        active_overlay_labels = [
-            layer.get("label")
-            for layer in overlays.values()
-            if isinstance(layer, Mapping) and layer.get("label")
-        ]
 
         capsules = pd.DataFrame(columns=[])
         if isinstance(flights_df, pd.DataFrame) and not flights_df.empty:
@@ -614,57 +575,7 @@ class MarsControlCenterService:
             "geometry": geometry,
             "capsules": capsules,
             "zones": zones,
-            "bitmap_layer": bitmap,
-            "slope_layer": overlays.get("slope_layer"),
-            "ortho_layer": overlays.get("ortho_layer"),
-            "active_overlay_labels": active_overlay_labels,
-            "map_bounds": map_bounds,
-            "map_center": bitmap.get("center") if isinstance(bitmap, Mapping) else None,
-            "map_view_state": self._view_state_from_bounds(map_bounds, bitmap),
         }
-
-    @staticmethod
-    def _view_state_from_bounds(
-        bounds: tuple[float, float, float, float] | None,
-        bitmap: Mapping[str, Any] | None,
-    ) -> dict[str, float]:
-        default_state: dict[str, float] = {
-            "latitude": 18.43,
-            "longitude": 77.58,
-            "zoom": 9.1,
-            "pitch": 45.0,
-            "bearing": 25.0,
-        }
-
-        if not bounds:
-            return default_state
-
-        min_lon, min_lat, max_lon, max_lat = bounds
-        center_lon = (min_lon + max_lon) / 2.0
-        center_lat = (min_lat + max_lat) / 2.0
-        span_lon = max_lon - min_lon
-        span_lat = max_lat - min_lat
-        max_span = max(span_lon, span_lat, 1e-6)
-        zoom = math.log2(360.0 / max_span)
-        zoom = max(6.0, min(zoom, 16.0))
-
-        view_state: dict[str, float] = {
-            **default_state,
-            "latitude": center_lat,
-            "longitude": center_lon,
-            "zoom": zoom,
-        }
-
-        if isinstance(bitmap, Mapping):
-            metadata = bitmap.get("metadata")
-            if isinstance(metadata, Mapping):
-                width = metadata.get("width_px")
-                height = metadata.get("height_px")
-                if width and height:
-                    view_state["max_zoom"] = max(zoom + 4.0, view_state.get("max_zoom", zoom + 4.0))
-                    view_state["min_zoom"] = min(zoom - 2.0, view_state.get("min_zoom", zoom - 2.0))
-
-        return view_state
 
     # ------------------------------------------------------------------
     # Inventory telemetry

@@ -57,31 +57,6 @@ El script `app/Home.py` centraliza la vista de *Mission Overview* y actúa como
 único entrypoint interactivo, manteniendo alineada la pantalla principal con el
 paso "Overview" de la navegación multipaso.
 
-## Modo Demo 3D en el Mars Control Center
-
-La pestaña **"Modo Demo"** del panel marciano ahora incorpora una escena 3D
-interactiva sincronizada con la simulación logística:
-
-- El modelo GLB de Marte (`app/static/models/24881_Mars_1_6792.glb`) se expone
-  como asset estático y se renderiza mediante un `ScenegraphLayer` de PyDeck.
-- Los assets glTF/GLB que se coloquen en `app/static/models/` quedan
-  automáticamente disponibles en la ruta pública `/static/models/...` cuando se
-  ejecuta la app con `streamlit run`. El helper
-  `mars_control.load_mars_scenegraph()` copia el archivo original desde
-  `datasets/mars/` si es necesario, por lo que basta con sincronizar los modelos
-  en esa carpeta y reiniciar la sesión para que Streamlit los sirva.
-- Cada cápsula orbital adopta una órbita animada cuya posición depende de su
-  `eta_minutes`; la escala se incrementa a medida que se aproxima al nodo de
-  destino.
-- Eventos críticos emitidos por `advance_timeline()` o por el guion demo se
-  resaltan automáticamente en ámbar/rojo, con trayectorias más gruesas para
-  facilitar las presentaciones.
-
-Para activar la vista, ejecutá la simulación desde la pestaña **Flight Radar**
-y luego abrí la subsección *"Vista orbital 3D"* dentro de **Modo Demo**. La
-escena se mantiene en sincronía con los ticks manuales o automáticos del
-simulador y comparte los mismos datos de telemetría que impulsan el radar 2D.
-
 ## Módulos principales
 
 La refactorización de 2025 separó responsabilidades clave para mantener el

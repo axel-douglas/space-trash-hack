@@ -21,7 +21,6 @@ def _generator_page_app(
     *,
     force_control_expander_none: bool = False,
     missing_dataset: bool = False,
-    use_initial_target: bool = True,
 ) -> None:
     import os
     import runpy
@@ -94,7 +93,6 @@ def _generator_page_app(
     import app.modules.ml_models as ml_models
     import app.modules.visualizations as visualizations
     import app.modules.page_data as page_data
-    import app.modules as modules
 
     original_load_theme = ui_blocks.load_theme
     ui_blocks.load_theme = lambda **_: None  # type: ignore[assignment]
@@ -198,18 +196,6 @@ def _generator_page_app(
 
     page_data.build_ranking_table = fake_ranking_table
 
-    default_target = {
-        "name": "Residence Renovations",
-        "scenario": "Residence Renovations",
-        "max_energy_kwh": 2.5,
-        "max_water_l": 1.8,
-        "max_crew_min": 60.0,
-        "crew_time_low": False,
-    }
-
-    original_load_targets = modules.load_targets
-    modules.load_targets = lambda: [default_target]
-
     st.session_state.clear()
 
     class StubService:
@@ -217,8 +203,15 @@ def _generator_page_app(
             return [], pd.DataFrame()
 
     view_model = GeneratorViewModel.from_streamlit(service=StubService())
-    if use_initial_target:
-        view_model.set_target(default_target)
+    view_model.set_target(
+        {
+            "name": "Residence Renovations",
+            "max_energy_kwh": 2.5,
+            "max_water_l": 1.8,
+            "max_crew_min": 60.0,
+            "crew_time_low": False,
+        }
+    )
     candidates_seed = [
         {
             "score": 0.87,
@@ -261,7 +254,6 @@ def _generator_page_app(
         ml_models.get_model_registry = original_model_registry
         visualizations.ConvergenceScene = original_scene
         page_data.build_ranking_table = original_ranking
-        modules.load_targets = original_load_targets
 
 
 @pytest.fixture
@@ -349,16 +341,6 @@ def test_generator_page_renders_without_inventory(
     # Expect at least the generator header to render even with minimal data.
     headers = " ".join(block.body for block in app.header)
     assert "Generador asistido por IA" in headers
-
-
-def test_generator_page_auto_applies_default_target(
-    run_generator_page: Callable[..., object]
-) -> None:
-    app = run_generator_page(None, use_initial_target=False)
-
-    captions = " ".join(block.body for block in app.caption)
-    assert "Se aplicó automáticamente el objetivo" in captions
-    assert "Residence Renovations" in captions
 
 
 def test_generator_page_shows_error_for_missing_dataset(

@@ -869,14 +869,11 @@ def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
 
     combine_exprs: list[pl.Expr] = []
     drop_official: list[str] = []
-    match_checks: list[pl.Expr] = []
     left_columns = set(inventory_pl.columns)
-    available_columns = set(joined_lazy.collect_schema().names())
     for column in bundle.value_columns:
         official_name = f"{column}_official"
-        if official_name not in available_columns:
+        if official_name not in joined_lazy.columns:
             continue
-        match_checks.append(pl.col(official_name).is_not_null())
         if column in left_columns:
             combine_exprs.append(
                 pl.when(pl.col(official_name).is_not_null())
@@ -890,15 +887,19 @@ def _inject_official_features(frame: pd.DataFrame) -> pd.DataFrame:
 
     if combine_exprs:
         joined_lazy = joined_lazy.with_columns(combine_exprs)
+    if drop_official:
+        joined_lazy = joined_lazy.drop(drop_official)
+
+    match_checks = [
+        pl.col(column).is_not_null() for column in bundle.value_columns if column in joined_lazy.columns
+    ]
     if match_checks:
         joined_lazy = joined_lazy.with_columns(
             pl.when(pl.any_horizontal(match_checks))
             .then(pl.col("_official_match_key"))
-            .otherwise(pl.lit(""))
+            .otherwise(pl.col("_official_match_key"))
             .alias("_official_match_key")
         )
-    if drop_official:
-        joined_lazy = joined_lazy.drop(drop_official)
 
     if bundle.l2l_category_features:
         category_rows = [
