@@ -17,6 +17,7 @@ from typing import Any, Mapping, Sequence
 import pandas as pd
 import plotly.graph_objects as go
 import pydeck as pdk
+from pydeck.types import String as DeckString
 import streamlit as st
 
 from app.modules import data_sources as ds
@@ -1975,18 +1976,21 @@ with tabs[4]:
                 max_zoom=16.5,
             )
             tooltip = {
-                "html": (
-                    "<div style='font-size:14px;font-weight:600;'>{capsule}</div>"
-                    "<div>ETA: {eta_minutes} min</div>"
-                    "<div>{status}</div>"
-                    "<div>{tooltip}</div>"
+                "html": DeckString(
+                    (
+                        "<div style='font-size:14px;font-weight:600;'>{capsule}</div>"
+                        "<div>ETA: {eta_minutes} min</div>"
+                        "<div>{status}</div>"
+                        "<div>{tooltip}</div>"
+                    ),
+                    quote_type="'",
                 ),
                 "style": {
-                    "backgroundColor": "#0b1220",
-                    "color": "#f8fafc",
-                    "border": "1px solid #38bdf8",
-                    "borderRadius": "8px",
-                    "padding": "10px",
+                    "backgroundColor": DeckString("#0b1220", quote_type="'"),
+                    "color": DeckString("#f8fafc", quote_type="'"),
+                    "border": DeckString("1px solid #38bdf8", quote_type="'"),
+                    "borderRadius": DeckString("8px", quote_type="'"),
+                    "padding": DeckString("10px", quote_type="'"),
                 },
             }
             deck = pdk.Deck(
