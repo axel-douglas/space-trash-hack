@@ -4,6 +4,10 @@ __pycache__/
 # Generated demo audio clips (synthesised at runtime)
 app/static/audio/*.wav
 
+# Mars textures copied to the static directory at runtime
+/app/static/mars/*
+!/app/static/mars/.gitkeep
+
 # Machine learning artifacts
 # By default ignore model outputs but allow committed reference artefacts
 /data/models/

@@ -862,30 +862,33 @@ with tabs[0]:
 
         layers: list[pdk.Layer] = []
 
-        def _resolve_bitmap_image(payload: Mapping[str, Any] | None) -> str | None:
+        def _resolve_bitmap_image(payload: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
             if not isinstance(payload, Mapping):
                 return None
             image_candidate = payload.get("image")
             if isinstance(image_candidate, Mapping):
-                if isinstance(image_candidate.get("data"), str):
-                    return image_candidate["data"]
-                if isinstance(image_candidate.get("uri"), str):
-                    return image_candidate["uri"]
-            elif isinstance(image_candidate, str):
-                return image_candidate
+                url_candidate = image_candidate.get("url")
+                if isinstance(url_candidate, str):
+                    return {"url": url_candidate}
+                data_candidate = image_candidate.get("data")
+                if isinstance(data_candidate, str):
+                    return {"data": data_candidate}
+                uri_candidate = image_candidate.get("uri")
+                if isinstance(uri_candidate, str):
+                    return {"uri": uri_candidate}
             if isinstance(payload.get("image_uri"), str):
-                return payload["image_uri"]
+                return {"data": payload["image_uri"]}
             return None
 
         if isinstance(bitmap_payload, Mapping):
-            image_resource = _resolve_bitmap_image(bitmap_payload)
+            image_payload = _resolve_bitmap_image(bitmap_payload)
             bounds = bitmap_payload.get("bounds")
-            if image_resource and bounds:
+            if image_payload and bounds:
                 layers.append(
                     pdk.Layer(
                         "BitmapLayer",
                         id="jezero-bitmap",
-                        image=image_resource,
+                        image=image_payload,
                         bounds=bounds,
                         opacity=0.92,
                         desaturate=0.0,
