@@ -11,6 +11,7 @@ Dataclasses
 * :class:`AIOrder`
 * :class:`MarsLogisticsData`
 * :class:`SimulationEvent`
+* :class:`DemoEvent`
 
 Utilities
 =========
@@ -28,19 +29,25 @@ Utilities
 * :func:`iterate_events` and :func:`apply_simulation_tick` – simple simulation
   engine that synthesises logistics events while keeping state in
   ``st.session_state`` to ensure idempotent execution.
+* :func:`demo_event_script`, :func:`generate_demo_event` and
+  :func:`get_demo_event_history` – helpers for the demo control room ticker.
+* :func:`demo_manifest_catalogue` and :func:`load_demo_manifest` – provide
+  ready-to-use manifests for testing and demos.
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from copy import deepcopy
-from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from dataclasses import asdict, dataclass, field, replace
+from datetime import datetime, timezone
+import io
 import json
 import math
 from pathlib import Path
 import re
 from typing import Any, Final
+import wave
 
 import pandas as pd
 import streamlit as st
@@ -56,7 +63,13 @@ _SIM_STATE_KEY: Final[str] = "mars_control_simulation"
 _SIM_EVENTS_HISTORY_KEY: Final[str] = "events"
 _SIM_TICK_KEY: Final[str] = "tick"
 _SIM_LAST_GENERATED_KEY: Final[str] = "last_generated_tick"
+_DEMO_STATE_KEY: Final[str] = "mars_control_demo"
+_DEMO_QUEUE_KEY: Final[str] = "queue"
+_DEMO_CURSOR_KEY: Final[str] = "cursor"
+_DEMO_LAST_TS_KEY: Final[str] = "last_emitted_at"
+_DEMO_HISTORY_KEY: Final[str] = "history"
 _STATIC_ROOT: Final[Path] = Path(__file__).resolve().parents[1] / "static"
+_STATIC_AUDIO_ROOT: Final[Path] = _STATIC_ROOT / "audio"
 _JEZERO_GEOJSON_PATH: Final[Path] = _STATIC_ROOT / "geodata" / "jezero.geojson"
 
 _PERCENTAGE_PATTERN: Final[re.Pattern[str]] = re.compile(r"(\d+(?:\.\d+)?)\s*%")
@@ -102,6 +115,280 @@ _DESTINATION_WEIGHTS: Final[dict[str, dict[str, float]]] = {
     "espumas": {"recycle": 0.8, "reuse": 0.05, "stock": 0.15},
     "mixtos": {"recycle": 0.6, "reuse": 0.25, "stock": 0.15},
 }
+
+_DEMO_AUDIO_CLIPS: Final[dict[str, list[tuple[float, float, float]]]] = {
+    "mission_ping": [
+        (620.0, 0.16, 0.5),
+        (0.0, 0.04, 0.0),
+        (880.0, 0.2, 0.45),
+    ],
+    "alert_burst": [
+        (320.0, 0.12, 0.6),
+        (0.0, 0.04, 0.0),
+        (520.0, 0.12, 0.65),
+        (0.0, 0.04, 0.0),
+        (860.0, 0.16, 0.7),
+    ],
+    "comms_chime": [
+        (660.0, 0.18, 0.4),
+        (825.0, 0.18, 0.4),
+        (990.0, 0.18, 0.38),
+    ],
+}
+
+_DEMO_AUDIO_CACHE: dict[str, bytes] = {}
+
+
+_DEMO_EVENT_PLAYLIST: Final[list[dict[str, Any]]] = [
+    {
+        "event_id": "mission-approach",
+        "category": "mission",
+        "title": "Ares Cargo 7 acoplando",
+        "message": "La cápsula Ares 7 inicia maniobra de acoplamiento sobre Nodo Phobos.",
+        "icon": "🛰️",
+        "audio_clip": "mission_ping",
+        "metadata": {"capsule_id": "ares_cargo_7", "eta_minutes": 12},
+    },
+    {
+        "event_id": "alert-dust-storm",
+        "category": "alert",
+        "title": "Tormenta de polvo sobre Delta Oeste",
+        "message": "Sensores LIDAR registran ráfagas de 95 km/h. Ajustando rutas de superficie.",
+        "severity": "critical",
+        "icon": "⚠️",
+        "audio_clip": "alert_burst",
+        "metadata": {"zone": "Delta Oeste", "impact": "surface_ops"},
+    },
+    {
+        "event_id": "voice-briefing",
+        "category": "voice",
+        "title": "Mensaje de Rex-AI",
+        "message": "Tripulación Delta 3, prioricen separación de polímeros fluorados en línea 2.",
+        "icon": "🎙️",
+        "audio_clip": "comms_chime",
+        "metadata": {"call_sign": "Rex-AI", "channel": "ops"},
+    },
+    {
+        "event_id": "mission-recycle",
+        "category": "mission",
+        "title": "Lote reciclaje listo",
+        "message": "Proceso de sinterizado completado: 420 kg de polvo metálico disponibles.",
+        "icon": "♻️",
+        "metadata": {"process": "sinterizado", "mass_kg": 420},
+    },
+]
+
+_DEMO_MANIFESTS: Final[list[dict[str, Any]]] = [
+    {
+        "key": "ares-resupply",
+        "label": "Ares Resupply · Órbita",
+        "description": "Carga crítica con repuestos orbitales y compuestos ligeros.",
+        "rows": [
+            {
+                "item": "Aleación Ti-Fe estructural",
+                "category": "Structural elements",
+                "mass_kg": 14.2,
+                "tg_loss_pct": 2.5,
+                "ega_loss_pct": 0.4,
+                "water_l_per_kg": 0.0,
+                "energy_kwh_per_kg": 0.8,
+            },
+            {
+                "item": "Panel fotónico modular",
+                "category": "Energy systems",
+                "mass_kg": 9.8,
+                "tg_loss_pct": 1.8,
+                "ega_loss_pct": 0.3,
+                "water_l_per_kg": 0.0,
+                "energy_kwh_per_kg": 0.6,
+            },
+            {
+                "item": "Repuesto de bomba criogénica",
+                "category": "Life support",
+                "mass_kg": 6.4,
+                "tg_loss_pct": 3.2,
+                "ega_loss_pct": 0.6,
+                "water_l_per_kg": 0.05,
+                "energy_kwh_per_kg": 0.9,
+            },
+            {
+                "item": "Textiles Nomex EVA",
+                "category": "Consumables",
+                "mass_kg": 4.1,
+                "tg_loss_pct": 2.1,
+                "ega_loss_pct": 0.5,
+                "water_l_per_kg": 0.0,
+                "energy_kwh_per_kg": 0.35,
+            },
+        ],
+    },
+    {
+        "key": "surface-reuse",
+        "label": "Superficie · Reuso rápido",
+        "description": "Material recuperado para líneas de impresión y sellado.",
+        "rows": [
+            {
+                "item": "Polímeros recuperados",
+                "category": "Packaging",
+                "mass_kg": 11.6,
+                "tg_loss_pct": 5.5,
+                "ega_loss_pct": 1.2,
+                "water_l_per_kg": 0.08,
+                "energy_kwh_per_kg": 0.5,
+            },
+            {
+                "item": "Polvo metálico refinado",
+                "category": "Structural elements",
+                "mass_kg": 7.9,
+                "tg_loss_pct": 4.0,
+                "ega_loss_pct": 0.8,
+                "water_l_per_kg": 0.02,
+                "energy_kwh_per_kg": 1.1,
+            },
+            {
+                "item": "Espuma técnica aislante",
+                "category": "Thermal systems",
+                "mass_kg": 5.5,
+                "tg_loss_pct": 2.4,
+                "ega_loss_pct": 0.4,
+                "water_l_per_kg": 0.01,
+                "energy_kwh_per_kg": 0.7,
+            },
+            {
+                "item": "Compuesto fibra carbono",
+                "category": "Structural elements",
+                "mass_kg": 6.3,
+                "tg_loss_pct": 3.1,
+                "ega_loss_pct": 0.7,
+                "water_l_per_kg": 0.0,
+                "energy_kwh_per_kg": 0.95,
+            },
+        ],
+    },
+    {
+        "key": "science-swap",
+        "label": "Ciencia · Swap laboratorio",
+        "description": "Muestra mixta con consumibles de laboratorio y residuos EVA.",
+        "rows": [
+            {
+                "item": "Consumibles laboratorio húmedo",
+                "category": "Lab supplies",
+                "mass_kg": 3.2,
+                "tg_loss_pct": 1.6,
+                "ega_loss_pct": 0.2,
+                "water_l_per_kg": 0.12,
+                "energy_kwh_per_kg": 0.4,
+            },
+            {
+                "item": "Tejido técnico respirable",
+                "category": "Consumables",
+                "mass_kg": 5.7,
+                "tg_loss_pct": 2.2,
+                "ega_loss_pct": 0.5,
+                "water_l_per_kg": 0.06,
+                "energy_kwh_per_kg": 0.55,
+            },
+            {
+                "item": "Panel dieléctrico reciclable",
+                "category": "Energy systems",
+                "mass_kg": 4.6,
+                "tg_loss_pct": 2.0,
+                "ega_loss_pct": 0.3,
+                "water_l_per_kg": 0.03,
+                "energy_kwh_per_kg": 0.62,
+            },
+            {
+                "item": "Resina fotopolimerizable",
+                "category": "Additive manufacturing",
+                "mass_kg": 2.9,
+                "tg_loss_pct": 1.4,
+                "ega_loss_pct": 0.25,
+                "water_l_per_kg": 0.0,
+                "energy_kwh_per_kg": 0.7,
+            },
+        ],
+    },
+]
+
+
+def _synthesise_audio_sequence(
+    sequence: Sequence[tuple[float, float, float]],
+    *,
+    sample_rate: int = 22050,
+) -> bytes:
+    """Return a WAV-encoded byte payload for the provided tone sequence."""
+
+    frames = bytearray()
+    for frequency, duration, amplitude in sequence:
+        duration = max(float(duration), 0.0)
+        amplitude = max(min(float(amplitude), 1.0), 0.0)
+        samples = max(1, int(duration * sample_rate))
+        for index in range(samples):
+            if frequency <= 0:
+                value = 0
+            else:
+                theta = 2.0 * math.pi * frequency * (index / sample_rate)
+                value = int(amplitude * 32767.0 * math.sin(theta))
+            frames.extend(int(value).to_bytes(2, "little", signed=True))
+
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(bytes(frames))
+    return buffer.getvalue()
+
+
+def _ensure_demo_audio_clip(clip_id: str) -> tuple[str | None, bytes | None]:
+    """Create (if needed) and return the audio clip for ``clip_id``."""
+
+    clip_id = clip_id.strip()
+    if not clip_id:
+        return None, None
+
+    if clip_id in _DEMO_AUDIO_CACHE:
+        data = _DEMO_AUDIO_CACHE[clip_id]
+    else:
+        sequence = _DEMO_AUDIO_CLIPS.get(clip_id)
+        if not sequence:
+            return None, None
+        data = _synthesise_audio_sequence(sequence)
+        _DEMO_AUDIO_CACHE[clip_id] = data
+
+    try:
+        _STATIC_AUDIO_ROOT.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        # If we cannot write to disk we still return the bytes so Streamlit can play them.
+        return None, data
+
+    path = _STATIC_AUDIO_ROOT / f"{clip_id}.wav"
+    if not path.exists():
+        try:
+            path.write_bytes(data)
+        except OSError:
+            return None, data
+
+    return str(path), data
+
+
+def _attach_demo_audio(event: "DemoEvent") -> "DemoEvent":
+    """Ensure the demo event carries synthesised audio assets."""
+
+    clip_id = event.audio_clip
+    if not clip_id and event.audio_path:
+        clip_id = Path(event.audio_path).stem
+    if not clip_id:
+        return event
+
+    path, data = _ensure_demo_audio_clip(clip_id)
+    if data is None and path is None:
+        return event
+
+    updates: dict[str, Any] = {"audio_clip": clip_id, "audio_bytes": data}
+    if path:
+        updates["audio_path"] = path
+    return replace(event, **updates)
 
 
 @dataclass(slots=True, frozen=True)
@@ -200,6 +487,39 @@ class SimulationEvent:
         }
         if self.metadata:
             payload["metadata"] = dict(self.metadata)
+        return payload
+
+
+@dataclass(slots=True, frozen=True)
+class DemoEvent:
+    """Preset event used to drive the demo control room experience."""
+
+    event_id: str
+    category: str
+    title: str
+    message: str
+    severity: str = "info"
+    icon: str = "🛰️"
+    audio_clip: str | None = None
+    audio_path: str | None = None
+    audio_bytes: bytes | None = None
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+    emitted_at: datetime | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = {
+            "event_id": self.event_id,
+            "category": self.category,
+            "title": self.title,
+            "message": self.message,
+            "severity": self.severity,
+            "icon": self.icon,
+            "audio_clip": self.audio_clip,
+            "audio_path": self.audio_path,
+            "metadata": deepcopy(self.metadata),
+        }
+        if self.emitted_at is not None:
+            payload["emitted_at"] = self.emitted_at.isoformat()
         return payload
 
 
@@ -901,6 +1221,19 @@ def _ensure_sim_state(session: MutableMapping[str, Any]) -> MutableMapping[str, 
     return session[_SIM_STATE_KEY]
 
 
+def _ensure_demo_state(session: MutableMapping[str, Any]) -> MutableMapping[str, Any]:
+    state = session.setdefault(_DEMO_STATE_KEY, {})
+    if not isinstance(state.get(_DEMO_QUEUE_KEY), list) or not state.get(_DEMO_QUEUE_KEY):
+        state[_DEMO_QUEUE_KEY] = [deepcopy(record) for record in _DEMO_EVENT_PLAYLIST]
+        state[_DEMO_CURSOR_KEY] = 0
+        state[_DEMO_HISTORY_KEY] = []
+        state[_DEMO_LAST_TS_KEY] = None
+    state.setdefault(_DEMO_CURSOR_KEY, 0)
+    state.setdefault(_DEMO_HISTORY_KEY, [])
+    state.setdefault(_DEMO_LAST_TS_KEY, None)
+    return state
+
+
 def _event_from_record(record: Mapping[str, Any]) -> SimulationEvent:
     metadata = record.get("metadata")
     if not isinstance(metadata, Mapping):
@@ -914,6 +1247,138 @@ def _event_from_record(record: Mapping[str, Any]) -> SimulationEvent:
         capsule_id=(str(record["capsule_id"]).strip() if record.get("capsule_id") else None),
         metadata=metadata,
     )
+
+
+def _demo_event_from_record(record: Mapping[str, Any]) -> DemoEvent:
+    metadata = record.get("metadata")
+    if not isinstance(metadata, Mapping):
+        metadata = {}
+    emitted_at = None
+    emitted_raw = record.get("emitted_at")
+    if emitted_raw:
+        try:
+            emitted_at = datetime.fromisoformat(str(emitted_raw))
+        except ValueError:
+            emitted_at = None
+    return DemoEvent(
+        event_id=str(record.get("event_id", "")).strip() or "demo-event",
+        category=str(record.get("category", "info")).strip(),
+        title=str(record.get("title", "Evento demo")).strip(),
+        message=str(record.get("message", "")).strip(),
+        severity=str(record.get("severity", "info")).strip(),
+        icon=str(record.get("icon", "🛰️")),
+        audio_clip=(str(record.get("audio_clip", "")).strip() or None),
+        audio_path=(str(record["audio_path"]).strip() if record.get("audio_path") else None),
+        metadata=dict(metadata),
+        emitted_at=emitted_at,
+    )
+
+
+def demo_event_script() -> list[DemoEvent]:
+    """Return the static demo event playlist."""
+
+    return [_attach_demo_audio(_demo_event_from_record(record)) for record in _DEMO_EVENT_PLAYLIST]
+
+
+def generate_demo_event(
+    interval_seconds: float,
+    *,
+    session: MutableMapping[str, Any] | None = None,
+    force: bool = False,
+    now: datetime | None = None,
+) -> DemoEvent | None:
+    """Emit the next demo event when the interval has elapsed."""
+
+    session = session or st.session_state
+    state = _ensure_demo_state(session)
+
+    queue: list[dict[str, Any]] = state.get(_DEMO_QUEUE_KEY, [])
+    if not queue:
+        queue = [deepcopy(record) for record in _DEMO_EVENT_PLAYLIST]
+        state[_DEMO_QUEUE_KEY] = queue
+        state[_DEMO_CURSOR_KEY] = 0
+
+    cursor = int(state.get(_DEMO_CURSOR_KEY, 0) or 0)
+    if cursor >= len(queue):
+        cursor = 0
+
+    now_dt = now or datetime.now(timezone.utc)
+    last_raw = state.get(_DEMO_LAST_TS_KEY)
+    due = force
+    if not due:
+        if interval_seconds <= 0:
+            due = True
+        elif last_raw:
+            try:
+                last_dt = datetime.fromisoformat(str(last_raw))
+            except ValueError:
+                last_dt = None
+            if last_dt is None or (now_dt - last_dt).total_seconds() >= interval_seconds:
+                due = True
+        else:
+            due = True
+
+    if not due or not queue:
+        return None
+
+    record = deepcopy(queue[cursor])
+    state[_DEMO_CURSOR_KEY] = (cursor + 1) % len(queue)
+    state[_DEMO_LAST_TS_KEY] = now_dt.isoformat()
+
+    record["emitted_at"] = now_dt.isoformat()
+    event = _attach_demo_audio(_demo_event_from_record(record))
+    if event.audio_path:
+        record["audio_path"] = event.audio_path
+    if event.audio_clip:
+        record["audio_clip"] = event.audio_clip
+
+    history = state.setdefault(_DEMO_HISTORY_KEY, [])
+    history.append(deepcopy(record))
+
+    return event
+
+
+def get_demo_event_history(
+    limit: int | None = None,
+    *,
+    session: MutableMapping[str, Any] | None = None,
+) -> list[DemoEvent]:
+    """Return the emitted demo events in reverse chronological order."""
+
+    session = session or st.session_state
+    state = _ensure_demo_state(session)
+    history = state.get(_DEMO_HISTORY_KEY, [])
+    records = list(history)
+    if limit is not None and limit >= 0:
+        records = records[-limit:]
+    return [_attach_demo_audio(_demo_event_from_record(record)) for record in reversed(records)]
+
+
+def reset_demo_events(*, session: MutableMapping[str, Any] | None = None) -> None:
+    """Reset the demo event generator state."""
+
+    session = session or st.session_state
+    session[_DEMO_STATE_KEY] = {
+        _DEMO_QUEUE_KEY: [deepcopy(record) for record in _DEMO_EVENT_PLAYLIST],
+        _DEMO_CURSOR_KEY: 0,
+        _DEMO_LAST_TS_KEY: None,
+        _DEMO_HISTORY_KEY: [],
+    }
+
+
+def demo_manifest_catalogue() -> list[dict[str, Any]]:
+    """Expose the demo manifest presets for UI consumption."""
+
+    return [deepcopy(entry) for entry in _DEMO_MANIFESTS]
+
+
+def load_demo_manifest(key: str) -> pd.DataFrame:
+    """Return a demo manifest dataframe matching ``key``."""
+
+    for entry in _DEMO_MANIFESTS:
+        if entry.get("key") == key:
+            return pd.DataFrame(deepcopy(entry.get("rows", [])))
+    raise KeyError(f"Unknown demo manifest key: {key}")
 
 
 def iterate_events(
@@ -1034,6 +1499,7 @@ __all__ = [
     "AIOrder",
     "MarsLogisticsData",
     "SimulationEvent",
+    "DemoEvent",
     "load_jezero_geodata",
     "load_logistics_baseline",
     "load_live_inventory",
@@ -1041,6 +1507,12 @@ __all__ = [
     "aggregate_inventory_by_category",
     "score_manifest_batch",
     "summarise_policy_actions",
+    "demo_event_script",
+    "generate_demo_event",
+    "get_demo_event_history",
+    "reset_demo_events",
+    "demo_manifest_catalogue",
+    "load_demo_manifest",
     "iterate_events",
     "apply_simulation_tick",
 ]

@@ -1,6 +1,9 @@
 __pycache__/
 *.pyc
 
+# Generated demo audio clips (synthesised at runtime)
+app/static/audio/*.wav
+
 # Machine learning artifacts
 # By default ignore model outputs but allow committed reference artefacts
 /data/models/
