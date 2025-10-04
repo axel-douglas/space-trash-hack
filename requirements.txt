@@ -22,3 +22,4 @@ skl2onnx==1.17.0
 # Fijamos rich compatible con Streamlit 1.38 para evitar conflictos en Cloud
 rich>=10.14.0,<14
 responses==0.25.3
+pyyaml>=5.4,<7
