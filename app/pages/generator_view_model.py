@@ -6,7 +6,7 @@ from typing import Any, Mapping, MutableMapping
 import pandas as pd
 import streamlit as st
 
-from app.modules.generator.service import GeneratorService
+from app.modules.generator import GeneratorService
 from app.modules.utils import safe_float
 
 __all__ = ["GeneratorViewModel"]
