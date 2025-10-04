@@ -1,7 +1,11 @@
 import pandas as pd
 import pytest
 
-from app.modules.mars_control import load_jezero_bitmap
+from app.modules.mars_control import (
+    load_jezero_bitmap,
+    load_jezero_ortho_bitmap,
+    load_jezero_slope_bitmap,
+)
 from app.modules.mars_control_center import MarsControlCenterService
 
 
@@ -41,3 +45,57 @@ def test_build_map_payload_includes_bitmap_and_bounds():
     assert pytest.approx(bitmap["center"]["latitude"], rel=1e-3) == view_state["latitude"]
     assert pytest.approx(bitmap["center"]["longitude"], rel=1e-3) == view_state["longitude"]
     assert 5.0 < view_state["zoom"] < 16.5
+
+
+def test_load_jezero_slope_bitmap_contains_legend():
+    payload = load_jezero_slope_bitmap()
+
+    metadata = payload.get("metadata")
+    assert isinstance(metadata, dict)
+    legend = metadata.get("legend")
+    assert isinstance(legend, dict)
+    assert legend.get("description")
+    assert isinstance(legend.get("ticks"), list) and legend["ticks"]
+    assert payload.get("image_uri").startswith("data:image/")
+
+
+def test_load_jezero_ortho_bitmap_metadata():
+    payload = load_jezero_ortho_bitmap()
+
+    metadata = payload.get("metadata")
+    assert isinstance(metadata, dict)
+    assert "Ortofoto" in metadata.get("label", "")
+    assert payload.get("bounds")
+
+
+def test_overlay_flags_toggle_layers():
+    service = MarsControlCenterService()
+    flights_df = pd.DataFrame()
+
+    payload_without_overlays = service.build_map_payload(
+        flights_df,
+        include_slope=False,
+        include_ortho=False,
+    )
+    assert payload_without_overlays.get("slope_layer") is None
+    assert payload_without_overlays.get("ortho_layer") is None
+
+    payload_with_slope = service.build_map_payload(
+        flights_df,
+        include_slope=True,
+        include_ortho=False,
+        slope_opacity=0.55,
+    )
+    slope_layer = payload_with_slope.get("slope_layer")
+    assert isinstance(slope_layer, dict)
+    assert pytest.approx(slope_layer.get("opacity"), rel=1e-3) == 0.55
+
+    payload_with_all = service.build_map_payload(
+        flights_df,
+        include_slope=True,
+        include_ortho=True,
+    )
+    assert isinstance(payload_with_all.get("slope_layer"), dict)
+    assert isinstance(payload_with_all.get("ortho_layer"), dict)
+    labels = payload_with_all.get("active_overlay_labels")
+    assert "Pendiente" in " ".join(str(label) for label in labels)

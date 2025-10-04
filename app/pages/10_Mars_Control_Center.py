@@ -490,16 +490,76 @@ with tabs[0]:
                 st.session_state.get("flight_operations_recent_changes", [])
             )
 
-        map_payload = telemetry_service.build_map_payload(flights_df)
+        st.markdown("#### Radar orbital y capas de terreno")
+        overlay_columns = st.columns(2)
+        with overlay_columns[0]:
+            slope_enabled = st.checkbox(
+                "Mapa de pendientes",
+                value=False,
+                key="mars_overlay_slope",
+                help="Superponer el modelo de pendientes (CTX DEM) para identificar taludes críticos.",
+            )
+            slope_opacity = st.slider(
+                "Opacidad mapa de pendientes",
+                min_value=0.1,
+                max_value=1.0,
+                value=0.65,
+                step=0.05,
+                key="mars_overlay_slope_opacity",
+                disabled=not slope_enabled,
+            )
+        with overlay_columns[1]:
+            ortho_enabled = st.checkbox(
+                "Ortofoto HiRISE",
+                value=False,
+                key="mars_overlay_ortho",
+                help="Mostrar ortofoto HiRISE/CTX para apoyar la navegación visual.",
+            )
+            ortho_opacity = st.slider(
+                "Opacidad ortofoto",
+                min_value=0.1,
+                max_value=1.0,
+                value=0.75,
+                step=0.05,
+                key="mars_overlay_ortho_opacity",
+                disabled=not ortho_enabled,
+            )
+
+        map_payload = telemetry_service.build_map_payload(
+            flights_df,
+            include_slope=slope_enabled,
+            include_ortho=ortho_enabled,
+            slope_opacity=slope_opacity if slope_enabled else None,
+            ortho_opacity=ortho_opacity if ortho_enabled else None,
+        )
         capsule_data = map_payload.get("capsules")
         zone_data = map_payload.get("zones")
         geometry = map_payload.get("geometry")
         bitmap_payload = map_payload.get("bitmap_layer")
+        slope_payload = map_payload.get("slope_layer")
+        ortho_payload = map_payload.get("ortho_layer")
+        active_overlay_labels = map_payload.get("active_overlay_labels", [])
         view_state_payload = map_payload.get("map_view_state")
 
         layers: list[pdk.Layer] = []
+
+        def _resolve_bitmap_image(payload: Mapping[str, Any] | None) -> str | None:
+            if not isinstance(payload, Mapping):
+                return None
+            image_candidate = payload.get("image")
+            if isinstance(image_candidate, Mapping):
+                if isinstance(image_candidate.get("data"), str):
+                    return image_candidate["data"]
+                if isinstance(image_candidate.get("uri"), str):
+                    return image_candidate["uri"]
+            elif isinstance(image_candidate, str):
+                return image_candidate
+            if isinstance(payload.get("image_uri"), str):
+                return payload["image_uri"]
+            return None
+
         if isinstance(bitmap_payload, Mapping):
-            image_resource = bitmap_payload.get("image") or bitmap_payload.get("image_uri")
+            image_resource = _resolve_bitmap_image(bitmap_payload)
             bounds = bitmap_payload.get("bounds")
             if image_resource and bounds:
                 layers.append(
@@ -509,6 +569,36 @@ with tabs[0]:
                         image=image_resource,
                         bounds=bounds,
                         opacity=0.92,
+                        desaturate=0.0,
+                    )
+                )
+        if slope_enabled and isinstance(slope_payload, Mapping):
+            slope_image = _resolve_bitmap_image(slope_payload)
+            slope_bounds = slope_payload.get("bounds")
+            slope_opacity_value = float(slope_payload.get("opacity", slope_opacity))
+            if slope_image and slope_bounds:
+                layers.append(
+                    pdk.Layer(
+                        "BitmapLayer",
+                        id="jezero-slope",
+                        image=slope_image,
+                        bounds=slope_bounds,
+                        opacity=slope_opacity_value,
+                        desaturate=0.0,
+                    )
+                )
+        if ortho_enabled and isinstance(ortho_payload, Mapping):
+            ortho_image = _resolve_bitmap_image(ortho_payload)
+            ortho_bounds = ortho_payload.get("bounds")
+            ortho_opacity_value = float(ortho_payload.get("opacity", ortho_opacity))
+            if ortho_image and ortho_bounds:
+                layers.append(
+                    pdk.Layer(
+                        "BitmapLayer",
+                        id="jezero-ortho",
+                        image=ortho_image,
+                        bounds=ortho_bounds,
+                        opacity=ortho_opacity_value,
                         desaturate=0.0,
                     )
                 )
@@ -557,6 +647,16 @@ with tabs[0]:
                 )
             )
 
+        overlay_context_labels: list[str] = []
+        if isinstance(bitmap_payload, Mapping):
+            base_label = bitmap_payload.get("metadata", {}).get("label")
+            if isinstance(base_label, str) and base_label:
+                overlay_context_labels.append(base_label)
+        overlay_context_labels.extend(
+            [label for label in active_overlay_labels if isinstance(label, str) and label]
+        )
+        overlay_context = ", ".join(overlay_context_labels) if overlay_context_labels else "Mapa base"
+
         tooltip = {
             "html": (
                 "<div style='font-size:14px;font-weight:600;'>{vehicle}</div>"
@@ -565,9 +665,15 @@ with tabs[0]:
                 "<div>Materiales: {materials_tooltip}</div>"
                 "<div>Espectro: {material_spectrum}</div>"
                 "<div>Densidad: {density} g/cm³ · Compatibilidad: {compatibility}</div>"
+                f"<div>Capas activas: {html.escape(overlay_context)}</div>"
                 "<div>{tooltip}</div>"
             ),
-            "style": {"backgroundColor": "#0f172a", "color": "white"},
+            "style": {
+                "backgroundColor": "#0f172a",
+                "color": "white",
+                "border": "1px solid #38bdf8",
+                "borderRadius": "6px",
+            },
         }
 
         default_view_state = {
@@ -588,6 +694,33 @@ with tabs[0]:
             ),
             use_container_width=True,
         )
+
+        if slope_enabled and isinstance(slope_payload, Mapping):
+            slope_metadata = slope_payload.get("metadata", {})
+            legend_info = slope_metadata.get("legend") if isinstance(slope_metadata, Mapping) else None
+            if isinstance(legend_info, Mapping):
+                gradient_css = legend_info.get("gradient_css") or "linear-gradient(90deg,#0f172a,#0ea5e9,#facc15,#ef4444)"
+                tick_items = legend_info.get("ticks", [])
+                ticks_html = "".join(
+                    "<span style='flex:1;text-align:center;font-size:0.7rem;color:#cbd5f5'>"
+                    + html.escape(str(item.get("label", item.get("value", ""))))
+                    + "</span>"
+                    for item in tick_items
+                    if isinstance(item, Mapping)
+                )
+                legend_html = (
+                    "<div style='margin-top:0.5rem;'>"
+                    "<div style='font-size:0.8rem;font-weight:600;color:#e2e8f0;'>"
+                    + html.escape(str(legend_info.get("description", "Pendiente")))
+                    + "</div>"
+                    + "<div style='height:10px;border-radius:999px;background:" + gradient_css + ";margin:0.35rem 0;'></div>"
+                    + "<div style='display:flex;gap:0.5rem;'>"
+                    + ticks_html
+                    + "</div>"
+                    + "</div>"
+                )
+                st.markdown(legend_html, unsafe_allow_html=True)
+
         st.caption("Mapa operacional de Jezero: cápsulas, zonas clave y perímetro de seguridad.")
 
         micro_divider()
