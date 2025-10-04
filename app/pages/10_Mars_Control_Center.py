@@ -4,9 +4,16 @@ from datetime import datetime
 import hashlib
 import io
 import json
+import sys
 from pathlib import Path
 import html
 import math
+
+if not __package__:
+    repo_root = Path(__file__).resolve().parents[2]
+    repo_root_str = str(repo_root)
+    if repo_root_str not in sys.path:
+        sys.path.insert(0, repo_root_str)
 
 from app.bootstrap import ensure_streamlit_entrypoint
 
