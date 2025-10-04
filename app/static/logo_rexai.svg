@@ -7,7 +7,7 @@
       - Built on a 160px cap-height with consistent stroke
       - Uses currentColor so you can recolor via CSS or the 'color' attribute
   -->
-  <g stroke="#FFFFFF" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+  <g stroke="currentColor" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
     <!-- R -->
     <g transform="translate(30,16)">
       <!-- Vertical stem -->
