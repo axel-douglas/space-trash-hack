@@ -25,6 +25,7 @@ import math
 import os
 import random
 import re
+import tempfile
 import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -47,6 +48,7 @@ else:
 
 from app.modules import data_sources as ds
 from app.modules import logging_utils
+from app.modules import policy_engine
 from app.modules.spectral_mixer import solve_spectral_recipe
 
 from .adapters import (
@@ -3180,6 +3182,77 @@ class GeneratorService:
             constraints=base_constraints,
         )
         return result.as_dict()
+
+    def analyze_manifest(
+        self,
+        manifest: pd.DataFrame | Mapping[str, Sequence[object]] | Sequence[Mapping[str, object]] | str | Path,
+        *,
+        output_dir: Path | str | None = None,
+        include_pdf: bool = False,
+        bundle: ds.MaterialReferenceBundle | None = None,
+    ) -> dict[str, Any]:
+        """Evaluate a customs manifest and export policy artefacts."""
+
+        if isinstance(manifest, (str, Path)):
+            manifest_df = pd.read_csv(manifest)
+        elif isinstance(manifest, pd.DataFrame):
+            manifest_df = manifest.copy()
+        elif isinstance(manifest, Mapping):
+            manifest_df = pd.DataFrame(manifest)
+        else:
+            manifest_df = pd.DataFrame(list(manifest))
+
+        if bundle is None:
+            bundle = ds.load_material_reference_bundle()
+
+        mapped = policy_engine.map_manifest_to_bundle(manifest_df, bundle=bundle)
+        scored = policy_engine.compute_material_utility_scores(mapped, bundle=bundle)
+        suggestions = policy_engine.propose_policy_actions(scored, bundle=bundle)
+        compatibility = policy_engine.build_manifest_compatibility(scored, bundle=bundle)
+        passport = policy_engine.build_material_passport(
+            scored,
+            suggestions,
+            compatibility,
+            original_manifest=manifest_df,
+        )
+
+        target_dir = Path(output_dir) if output_dir is not None else Path(tempfile.mkdtemp(prefix="policy_engine_"))
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        policy_path = target_dir / "policy_recommendations.csv"
+        suggestions.to_csv(policy_path, index=False)
+
+        compatibility_path = target_dir / "compatibility_matrix.parquet"
+        if compatibility.empty:
+            empty_df = compatibility.copy()
+            empty_df.to_parquet(compatibility_path)
+        else:
+            compatibility.to_parquet(compatibility_path, index=False)
+
+        passport_path = target_dir / "material_passport.json"
+        with passport_path.open("w", encoding="utf-8") as handle:
+            json.dump(passport, handle, indent=2, ensure_ascii=False)
+
+        pdf_path: Path | None = None
+        if include_pdf:
+            pdf_path = target_dir / "material_passport.pdf"
+            if not policy_engine.export_material_passport_pdf(passport, pdf_path):
+                pdf_path = None
+
+        return {
+            "manifest": manifest_df,
+            "mapped_manifest": mapped,
+            "scored_manifest": scored,
+            "policy_recommendations": suggestions,
+            "compatibility_records": compatibility,
+            "material_passport": passport,
+            "artifacts": {
+                "policy_recommendations_csv": policy_path,
+                "compatibility_matrix_parquet": compatibility_path,
+                "material_passport_json": passport_path,
+                "material_passport_pdf": pdf_path,
+            },
+        }
 
 
 _DEFAULT_SERVICE = GeneratorService()
