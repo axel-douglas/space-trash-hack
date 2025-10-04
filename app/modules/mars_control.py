@@ -800,7 +800,7 @@ def _load_bitmap_layer(
         metadata["legend"] = legend
 
     payload: dict[str, Any] = {
-        "image": asset_url,
+        "image": {"url": asset_url},
         "bounds": bounds,
         "center": center,
         "metadata": metadata,
@@ -884,7 +884,12 @@ def _static_base_url() -> str:
         base_url = st.get_option("server.baseUrlPath") or ""
     except Exception:  # pragma: no cover - Streamlit not initialised in tests
         base_url = ""
-    if base_url and not base_url.endswith("/"):
+    base_url = str(base_url or "").strip()
+    if not base_url:
+        return "/"
+    if not base_url.startswith("/"):
+        base_url = f"/{base_url}"
+    if not base_url.endswith("/"):
         base_url = f"{base_url}/"
     return base_url
 

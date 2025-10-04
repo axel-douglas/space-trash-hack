@@ -1,7 +1,9 @@
 import pandas as pd
 import pytest
 
+import app.modules.mars_control as mars_control_module
 from app.modules.mars_control import (
+    _static_base_url,
     load_jezero_bitmap,
     load_jezero_ortho_bitmap,
     load_jezero_slope_bitmap,
@@ -9,13 +11,33 @@ from app.modules.mars_control import (
 from app.modules.mars_control_center import MarsControlCenterService
 
 
+def test_static_base_url_defaults_to_root(monkeypatch):
+    monkeypatch.setattr(mars_control_module.st, "get_option", lambda _option: "")
+
+    assert _static_base_url() == "/"
+
+
+@pytest.mark.parametrize(
+    "configured, expected",
+    [
+        ("app", "/app/"),
+        ("/prefixed/path", "/prefixed/path/"),
+        ("nested/path/", "/nested/path/"),
+    ],
+)
+def test_static_base_url_prefix_and_suffix(monkeypatch, configured, expected):
+    monkeypatch.setattr(mars_control_module.st, "get_option", lambda _option: configured)
+
+    assert _static_base_url() == expected
+
+
 def test_load_jezero_bitmap_payload_structure():
     payload = load_jezero_bitmap()
 
     assert set(payload.keys()) >= {"image", "bounds", "center", "metadata"}
     image_value = payload["image"]
-    assert isinstance(image_value, str)
-    assert image_value.endswith(".jpg")
+    assert isinstance(image_value, dict)
+    assert image_value.get("url", "").endswith(".jpg")
     fallback_value = payload.get("fallback_image_uri")
     assert isinstance(fallback_value, str)
     assert fallback_value.startswith("data:image/")
@@ -32,7 +54,7 @@ def test_load_jezero_bitmap_payload_structure():
     assert isinstance(metadata, dict)
     assert "attribution" in metadata
     assert metadata.get("mime_type") in {"image/jpeg", "image/png"}
-    assert metadata.get("asset_url") == image_value
+    assert metadata.get("asset_url") == image_value.get("url")
     assert metadata.get("license")
     assert metadata.get("provenance")
 
@@ -45,8 +67,9 @@ def test_build_map_payload_includes_bitmap_and_bounds():
 
     bitmap = payload.get("bitmap_layer")
     assert isinstance(bitmap, dict)
-    assert isinstance(bitmap.get("image"), str)
-    assert "static/mars/" in bitmap.get("image", "")
+    image_payload = bitmap.get("image", {})
+    assert isinstance(image_payload, dict)
+    assert "static/mars/" in image_payload.get("url", "")
     assert payload.get("map_bounds") == bitmap.get("bounds")
 
     view_state = payload.get("map_view_state")
@@ -68,8 +91,10 @@ def test_load_jezero_slope_bitmap_contains_legend():
     fallback_value = payload.get("fallback_image_uri")
     assert isinstance(fallback_value, str)
     assert fallback_value.startswith("data:image/")
-    assert isinstance(payload.get("image"), str)
-    assert payload["image"].endswith(".jpg") or payload["image"].endswith(".png")
+    image_payload = payload.get("image")
+    assert isinstance(image_payload, dict)
+    image_url = image_payload.get("url", "")
+    assert image_url.endswith(".jpg") or image_url.endswith(".png")
 
 
 def test_load_jezero_ortho_bitmap_metadata():
@@ -102,6 +127,9 @@ def test_overlay_flags_toggle_layers():
     slope_layer = payload_with_slope.get("slope_layer")
     assert isinstance(slope_layer, dict)
     assert pytest.approx(slope_layer.get("opacity"), rel=1e-3) == 0.55
+    slope_image = slope_layer.get("image")
+    assert isinstance(slope_image, dict)
+    assert slope_image.get("url")
 
     payload_with_all = service.build_map_payload(
         flights_df,
@@ -110,6 +138,8 @@ def test_overlay_flags_toggle_layers():
     )
     assert isinstance(payload_with_all.get("slope_layer"), dict)
     assert isinstance(payload_with_all.get("ortho_layer"), dict)
+    assert isinstance(payload_with_all["slope_layer"].get("image"), dict)
+    assert isinstance(payload_with_all["ortho_layer"].get("image"), dict)
     labels = payload_with_all.get("active_overlay_labels")
     label_text = " ".join(str(label) for label in labels)
     assert "Pendiente" in label_text
