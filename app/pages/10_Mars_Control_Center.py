@@ -1058,20 +1058,20 @@ with tabs[0]:
             if not isinstance(payload, Mapping):
                 return None
             image_candidate = payload.get("image")
-            if isinstance(image_candidate, str):
-                return image_candidate
             if isinstance(image_candidate, Mapping):
                 url_candidate = image_candidate.get("url")
-                if isinstance(url_candidate, str):
+                if isinstance(url_candidate, str) and url_candidate:
                     return url_candidate
                 legacy_candidate = image_candidate.get("uri")
-                if isinstance(legacy_candidate, str):
+                if isinstance(legacy_candidate, str) and legacy_candidate:
                     return legacy_candidate
+            if isinstance(image_candidate, str) and image_candidate:
+                return image_candidate
             fallback_uri = payload.get("fallback_image_uri")
-            if isinstance(fallback_uri, str):
+            if isinstance(fallback_uri, str) and fallback_uri:
                 return fallback_uri
             legacy_data_uri = payload.get("image_uri")
-            if isinstance(legacy_data_uri, str):
+            if isinstance(legacy_data_uri, str) and legacy_data_uri:
                 return legacy_data_uri
             return None
 
