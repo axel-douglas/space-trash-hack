@@ -36,6 +36,7 @@ from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+import json
 import math
 from pathlib import Path
 from typing import Any, Final
@@ -54,6 +55,8 @@ _SIM_STATE_KEY: Final[str] = "mars_control_simulation"
 _SIM_EVENTS_HISTORY_KEY: Final[str] = "events"
 _SIM_TICK_KEY: Final[str] = "tick"
 _SIM_LAST_GENERATED_KEY: Final[str] = "last_generated_tick"
+_STATIC_ROOT: Final[Path] = Path(__file__).resolve().parents[1] / "static"
+_JEZERO_GEOJSON_PATH: Final[Path] = _STATIC_ROOT / "geodata" / "jezero.geojson"
 
 
 @dataclass(slots=True, frozen=True)
@@ -222,6 +225,55 @@ _DEFAULT_DATASET: Final[dict[str, Any]] = {
         ],
     },
 }
+
+_JEZERO_GEODATA_CACHE: dict[str, Any] | None = None
+
+
+def _default_jezero_geometry() -> dict[str, Any]:
+    return {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "properties": {"name": "Jezero", "kind": "boundary"},
+                "geometry": {
+                    "type": "Polygon",
+                    "coordinates": [
+                        [
+                            [77.2, 18.2],
+                            [77.6, 18.4],
+                            [77.9, 18.6],
+                            [77.6, 18.8],
+                            [77.2, 18.6],
+                            [77.2, 18.2],
+                        ]
+                    ],
+                },
+            }
+        ],
+    }
+
+
+def load_jezero_geodata(*, refresh: bool = False) -> dict[str, Any]:
+    """Return the operational geometry for the Jezero landing site."""
+
+    global _JEZERO_GEODATA_CACHE
+    if _JEZERO_GEODATA_CACHE is not None and not refresh:
+        return deepcopy(_JEZERO_GEODATA_CACHE)
+
+    geometry: dict[str, Any]
+    if _JEZERO_GEOJSON_PATH.is_file():
+        try:
+            with _JEZERO_GEOJSON_PATH.open("r", encoding="utf-8") as handle:
+                geometry = json.load(handle)
+        except json.JSONDecodeError as exc:  # pragma: no cover - defensive path
+            st.warning(f"GeoJSON inválido en { _JEZERO_GEOJSON_PATH.name }: {exc}")
+            geometry = _default_jezero_geometry()
+    else:
+        geometry = _default_jezero_geometry()
+
+    _JEZERO_GEODATA_CACHE = geometry
+    return deepcopy(_JEZERO_GEODATA_CACHE)
 
 
 def _read_dataset() -> dict[str, Any]:
@@ -693,6 +745,7 @@ __all__ = [
     "AIOrder",
     "MarsLogisticsData",
     "SimulationEvent",
+    "load_jezero_geodata",
     "load_logistics_baseline",
     "load_live_inventory",
     "compute_mission_summary",

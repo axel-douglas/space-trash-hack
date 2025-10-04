@@ -7,6 +7,7 @@ ensure_streamlit_entrypoint(__file__)
 from typing import Any, Mapping
 
 import pandas as pd
+import pydeck as pdk
 import streamlit as st
 
 from app.modules.generator import GeneratorService
@@ -100,30 +101,326 @@ with tabs[0]:
     if analysis_state:
         passport = analysis_state.get("material_passport")
 
-    radar_df = telemetry_service.flight_radar_snapshot(passport)
-    if radar_df.empty:
+    manifest_signature = "baseline"
+    if passport:
+        manifest_signature = (
+            f"{passport.get('generated_at', 'baseline')}"
+            f":{passport.get('total_items', 0)}:{passport.get('total_mass_kg', 0)}"
+        )
+    elif isinstance(manifest_df, pd.DataFrame) and not manifest_df.empty:
+        manifest_signature = f"uploaded:{manifest_df.shape[0]}:{','.join(manifest_df.columns)}"
+
+    flights_df: pd.DataFrame | None = st.session_state.get("flight_operations_table")
+    previous_signature = st.session_state.get("flight_operations_signature")
+    if flights_df is None or previous_signature != manifest_signature:
+        flights_df = telemetry_service.flight_operations_overview(
+            passport,
+            manifest_df=manifest_df,
+            analysis_state=analysis_state,
+        )
+        st.session_state["flight_operations_table"] = flights_df
+        st.session_state["flight_operations_signature"] = manifest_signature
+        st.session_state["flight_operations_last_decisions"] = {
+            row["flight_id"]: row["ai_decision"]
+            for row in flights_df.to_dict(orient="records")
+        }
+        st.session_state.setdefault("flight_operations_recent_events", [])
+        st.session_state.setdefault("flight_operations_recent_changes", [])
+
+    if flights_df is None or flights_df.empty:
         st.info("Aún no hay vuelos registrados. Cargá un manifiesto para sincronizar la carga.")
     else:
-        map_df = radar_df.rename(columns={"latitude": "lat", "longitude": "lon"})
-        map_df = map_df[["lat", "lon", "vehicle", "phase", "payload_kg"]]
-        st.caption("Posiciones aproximadas (lat/lon) en coordenadas marcianas normalizadas.")
-        st.map(map_df, size="payload_kg")
+        control_cols = st.columns([2, 1])
+        with control_cols[0]:
+            auto_tick = st.toggle(
+                "Tick automático cada 20 s",
+                value=st.session_state.get("mars_auto_tick_toggle", False),
+                key="mars_auto_tick_toggle",
+            )
+        with control_cols[1]:
+            manual_tick = st.button("Avanzar simulación", use_container_width=True)
+
+        tick_triggered = bool(manual_tick)
+        if auto_tick:
+            tick_count = st.autorefresh(
+                interval=20000,
+                limit=None,
+                key="mars_auto_tick_counter",
+            )
+            previous_count = st.session_state.get("mars_auto_tick_prev", 0)
+            if tick_count > previous_count:
+                st.session_state["mars_auto_tick_prev"] = tick_count
+                if tick_count > 0:
+                    tick_triggered = True
+
+        previous_decisions: Mapping[str, str] = st.session_state.get(
+            "flight_operations_last_decisions", {}
+        )
+        if tick_triggered:
+            flights_df, events, changed_flights = telemetry_service.advance_timeline(
+                flights_df,
+                manifest_df=manifest_df,
+                analysis_state=analysis_state,
+                previous_decisions=previous_decisions,
+            )
+            st.session_state["flight_operations_table"] = flights_df
+            st.session_state["flight_operations_last_decisions"] = {
+                row["flight_id"]: row["ai_decision"]
+                for row in flights_df.to_dict(orient="records")
+            }
+            st.session_state["flight_operations_recent_events"] = events
+            st.session_state["flight_operations_recent_changes"] = list(changed_flights)
+        else:
+            events = st.session_state.get("flight_operations_recent_events", [])
+            changed_flights = set(
+                st.session_state.get("flight_operations_recent_changes", [])
+            )
+
+        map_payload = telemetry_service.build_map_payload(flights_df)
+        capsule_data = map_payload["capsules"]
+        zone_data = map_payload["zones"]
+        geometry = map_payload["geometry"]
+
+        layers: list[pdk.Layer] = []
+        if geometry and isinstance(geometry, Mapping) and geometry.get("features"):
+            layers.append(
+                pdk.Layer(
+                    "GeoJsonLayer",
+                    geometry,
+                    id="jezero-boundary",
+                    stroked=True,
+                    filled=False,
+                    get_line_color=[180, 198, 231],
+                    line_width_min_pixels=2,
+                )
+            )
+        if isinstance(zone_data, pd.DataFrame) and not zone_data.empty:
+            layers.append(
+                pdk.Layer(
+                    "ScatterplotLayer",
+                    zone_data,
+                    id="zones",
+                    get_position="[longitude, latitude]",
+                    get_radius="radius_m",
+                    get_fill_color="[color_r, color_g, color_b]",
+                    get_line_color="[color_r, color_g, color_b]",
+                    pickable=True,
+                    stroked=True,
+                    opacity=0.25,
+                    radius_units="meters",
+                )
+            )
+        if isinstance(capsule_data, pd.DataFrame) and not capsule_data.empty:
+            layers.append(
+                pdk.Layer(
+                    "ScatterplotLayer",
+                    capsule_data,
+                    id="capsules",
+                    get_position="[longitude, latitude]",
+                    get_radius="marker_radius_m",
+                    get_fill_color="[category_color_r, category_color_g, category_color_b]",
+                    get_line_color="[status_color_r, status_color_g, status_color_b]",
+                    radius_units="meters",
+                    pickable=True,
+                    stroked=True,
+                    auto_highlight=True,
+                )
+            )
+
+        tooltip = {
+            "html": (
+                "<div style='font-size:14px;font-weight:600;'>{vehicle}</div>"
+                "<div>{status}</div>"
+                "<div>ETA: {eta_minutes} min</div>"
+                "<div>Materiales: {materials_tooltip}</div>"
+                "<div>Espectro: {material_spectrum}</div>"
+                "<div>Densidad: {density} g/cm³ · Compatibilidad: {compatibility}</div>"
+                "<div>{tooltip}</div>"
+            ),
+            "style": {"backgroundColor": "#0f172a", "color": "white"},
+        }
+
+        view_state = pdk.ViewState(
+            latitude=18.43,
+            longitude=77.58,
+            zoom=9.1,
+            pitch=45,
+            bearing=25,
+        )
+
+        st.pydeck_chart(
+            pdk.Deck(layers=layers, initial_view_state=view_state, tooltip=tooltip),
+            use_container_width=True,
+        )
+        st.caption("Mapa operacional de Jezero: cápsulas, zonas clave y perímetro de seguridad.")
+
         micro_divider()
+        display_df = flights_df[
+            [
+                "flight_id",
+                "vehicle",
+                "status_label",
+                "eta_minutes",
+                "key_materials_display",
+                "ai_decision",
+                "decision_indicator",
+            ]
+        ].rename(
+            columns={
+                "flight_id": "Vuelo",
+                "vehicle": "Vehículo",
+                "status_label": "Estado",
+                "eta_minutes": "ETA (min)",
+                "key_materials_display": "Materiales clave",
+                "ai_decision": "Decisión IA",
+                "decision_indicator": "Decisión ∆",
+            }
+        )
+
+        def _status_style(series: pd.Series) -> list[str]:
+            colors = flights_df.loc[series.index, "status_color"]
+            return [
+                f"background-color: {color}; color: white; font-weight:600" for color in colors
+            ]
+
+        def _decision_style(series: pd.Series) -> list[str]:
+            flags = flights_df.loc[series.index, "decision_indicator"].astype(str)
+            return [
+                "background-color: #facc15; color: #1f2937; font-weight:700" if flag else ""
+                for flag in flags
+            ]
+
+        styled_df = (
+            display_df.style.apply(_status_style, subset=["Estado"])
+            .apply(_decision_style, subset=["Decisión ∆"])
+            .format({"ETA (min)": "{:,.0f}"})
+        )
+
         st.dataframe(
-            radar_df,
+            styled_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "ETA (min)": st.column_config.NumberColumn("ETA (min)", format="%d min"),
+                "Materiales clave": st.column_config.TextColumn(
+                    "Materiales clave",
+                    help="Top materiales declarados por masa para la cápsula.",
+                ),
+                "Decisión IA": st.column_config.TextColumn(
+                    "Decisión IA",
+                    help="Última directriz activa para la misión.",
+                ),
+                "Decisión ∆": st.column_config.TextColumn(
+                    "∆",
+                    help="Indicador de cambios recientes en decisiones automáticas.",
+                ),
+            },
+        )
+
+        editor_df = flights_df[
+            [
+                "flight_id",
+                "vehicle",
+                "status_badge",
+                "eta_minutes",
+                "ai_decision",
+                "key_materials_display",
+                "material_spectrum",
+                "material_density",
+                "compatibility_index",
+            ]
+        ].rename(
+            columns={
+                "flight_id": "Vuelo",
+                "vehicle": "Vehículo",
+                "status_badge": "Estado",
+                "eta_minutes": "ETA (min)",
+                "ai_decision": "Decisión IA",
+                "key_materials_display": "Materiales clave",
+                "material_spectrum": "Espectro",
+                "material_density": "Densidad (g/cm³)",
+                "compatibility_index": "Compatibilidad",
+            }
+        )
+
+        editor_result = st.data_editor(
+            editor_df,
+            hide_index=True,
             use_container_width=True,
             column_config={
-                "vehicle": st.column_config.TextColumn("Vehículo"),
-                "phase": st.column_config.TextColumn("Fase actual"),
-                "altitude_km": st.column_config.NumberColumn("Altitud (km)", format="%.1f km"),
-                "eta_minutes": st.column_config.NumberColumn("ETA (min)", format="%d min"),
-                "payload_kg": st.column_config.NumberColumn("Carga útil (kg)", format="%.1f kg"),
+                "Vuelo": st.column_config.TextColumn("Vuelo", disabled=True),
+                "Vehículo": st.column_config.TextColumn("Vehículo", disabled=True),
+                "Estado": st.column_config.TextColumn("Estado", disabled=True),
+                "ETA (min)": st.column_config.NumberColumn("ETA (min)", format="%d min", disabled=True),
+                "Materiales clave": st.column_config.TextColumn(
+                    "Materiales clave",
+                    disabled=True,
+                ),
+                "Espectro": st.column_config.TextColumn("Espectro", disabled=True),
+                "Densidad (g/cm³)": st.column_config.NumberColumn(
+                    "Densidad (g/cm³)", format="%.2f", disabled=True
+                ),
+                "Compatibilidad": st.column_config.NumberColumn(
+                    "Compatibilidad", format="%.2f", disabled=True
+                ),
+                "Decisión IA": st.column_config.TextColumn(
+                    "Decisión IA",
+                    help="Podés forzar una decisión manual que se mantendrá hasta el próximo tick.",
+                ),
             },
-            hide_index=True,
+            key="flight_ops_editor",
         )
-        st.caption(
-            "Sincronizá con logística para alinear ventanas de descenso y despliegue en superficie."
-        )
+
+        if not editor_result.equals(editor_df):
+            for idx in editor_result.index:
+                new_value = editor_result.loc[idx, "Decisión IA"]
+                flights_df.at[idx, "ai_decision"] = new_value
+            flights_df["decision_changed"] = False
+            flights_df["decision_indicator"] = ""
+            st.session_state["flight_operations_table"] = flights_df
+            st.session_state["flight_operations_last_decisions"] = {
+                row["flight_id"]: row["ai_decision"]
+                for row in flights_df.to_dict(orient="records")
+            }
+            st.session_state["flight_operations_recent_changes"] = []
+            st.success("Decisiones actualizadas manualmente.")
+
+        micro_divider()
+
+        timeline_df = telemetry_service.timeline_history()
+        if isinstance(timeline_df, pd.DataFrame) and not timeline_df.empty:
+            st.markdown("#### Timeline de eventos logísticos")
+            st.dataframe(
+                timeline_df[[
+                    "tick",
+                    "category",
+                    "title",
+                    "details",
+                    "capsule_id",
+                    "mass_delta",
+                ]],
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "tick": st.column_config.NumberColumn("Tick"),
+                    "category": st.column_config.TextColumn("Categoría"),
+                    "title": st.column_config.TextColumn("Evento"),
+                    "details": st.column_config.TextColumn("Detalles"),
+                    "capsule_id": st.column_config.TextColumn("Cápsula"),
+                    "mass_delta": st.column_config.NumberColumn("Δ Masa (kg)", format="%.1f"),
+                },
+            )
+
+        if events:
+            st.markdown("**Eventos recientes**")
+            for event in events:
+                tick = event.get("tick")
+                title = event.get("title")
+                category = event.get("category")
+                st.markdown(f"• Tick {tick}: {title} ({category})")
+                details = event.get("details")
+                if details:
+                    st.caption(details)
 
 
 with tabs[1]:
