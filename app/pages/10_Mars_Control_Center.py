@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import html
 
 from app.bootstrap import ensure_streamlit_entrypoint
 
@@ -128,6 +129,83 @@ def _register_manual_action(
     if isinstance(flights_df, pd.DataFrame):
         updated = _apply_manual_overrides(flights_df)
         _store_flight_snapshot(updated)
+
+
+def _demo_event_severity(severity: str | None) -> str:
+    normalized = str(severity or "info").lower()
+    if normalized in {"critical", "alert", "danger", "severe"}:
+        return "critical"
+    if normalized in {"warning", "caution", "warn"}:
+        return "warning"
+    return "info"
+
+
+def _format_demo_timestamp(event: mars_control.DemoEvent) -> str:
+    if event.emitted_at is None:
+        return "En cola"
+    try:
+        return f"{event.emitted_at.strftime('%H:%M:%S')} UTC"
+    except Exception:
+        return str(event.emitted_at)
+
+
+def _render_demo_event_card(event: mars_control.DemoEvent) -> str:
+    severity = _demo_event_severity(event.severity)
+    icon = html.escape(event.icon or "🛰️")
+    category = html.escape(event.category.title())
+    timestamp = html.escape(_format_demo_timestamp(event))
+    metadata_html = ""
+    if event.metadata:
+        tags = []
+        for key, value in event.metadata.items():
+            key_label = html.escape(str(key).replace("_", " ").title())
+            value_label = html.escape(str(value))
+            tags.append(
+                f"<span class='demo-event-card__tag'><strong>{key_label}</strong>: {value_label}</span>"
+            )
+        metadata_html = (
+            "<div class='demo-event-card__meta-tags'>" + " · ".join(tags) + "</div>"
+        )
+    title = html.escape(event.title)
+    message = html.escape(event.message)
+    return (
+        "<div class='demo-event-card demo-event-card--"
+        + severity
+        + "'>"
+        + f"<div class='demo-event-card__icon'>{icon}</div>"
+        + "<div class='demo-event-card__content'>"
+        + "<div class='demo-event-card__header'>"
+        + f"<span class='demo-event-card__category'>{category}</span>"
+        + f"<span class='demo-event-card__timestamp'>{timestamp}</span>"
+        + "</div>"
+        + f"<div class='demo-event-card__title'>{title}</div>"
+        + f"<div class='demo-event-card__message'>{message}</div>"
+        + metadata_html
+        + "</div></div>"
+    )
+
+
+def _render_demo_ticker(events: list[mars_control.DemoEvent]) -> str:
+    if not events:
+        return ""
+    items: list[str] = []
+    for event in events:
+        severity = _demo_event_severity(event.severity)
+        icon = html.escape(event.icon or "🛰️")
+        title = html.escape(event.title)
+        timestamp = html.escape(
+            event.emitted_at.strftime("%H:%M:%S") if event.emitted_at else "—"
+        )
+        items.append(
+            "<div class='demo-event-ticker__item demo-event-ticker__item--"
+            + severity
+            + "'>"
+            + f"<span class='demo-event-ticker__icon'>{icon}</span>"
+            + f"<span class='demo-event-ticker__text'>{title}</span>"
+            + f"<span class='demo-event-ticker__time'>{timestamp}</span>"
+            + "</div>"
+        )
+    return "<div class='demo-event-ticker'>" + "".join(items) + "</div>"
 
 
 def _ensure_manifest_batch(
@@ -1394,16 +1472,155 @@ with tabs[4]:
         "Activá este modo cuando presentes la misión: mantiene un guion sintético sincronizado con la telemetría."
     )
 
-    if st.button("Regenerar guion", use_container_width=True):
-        st.session_state["demo_script"] = telemetry_service.demo_script()
+    loop_cols = st.columns([3, 2, 2])
+    default_auto = st.session_state.get("demo_event_auto", False)
+    default_interval = int(st.session_state.get("demo_event_interval", 20))
+    with loop_cols[0]:
+        auto_loop = st.checkbox(
+            "Loop automático",
+            value=default_auto,
+            key="demo_event_auto_checkbox",
+            help="Genera un evento demo cada n segundos",
+        )
+    with loop_cols[1]:
+        interval_seconds = st.slider(
+            "Intervalo (s)",
+            min_value=5,
+            max_value=60,
+            value=default_interval,
+            step=5,
+            key="demo_event_interval_slider",
+        )
+    with loop_cols[2]:
+        reset_script = st.button("Reiniciar script", use_container_width=True)
 
-    script = st.session_state.get("demo_script")
-    if not script:
-        script = telemetry_service.demo_script()
-        st.session_state["demo_script"] = script
+    trigger_next = st.button("Emitir siguiente evento", use_container_width=True)
 
-    for step in script:
-        with st.container():
-            st.markdown(f"**{step['timestamp']}** · {step['action']}")
-            st.caption(step["notes"])
+    st.session_state["demo_event_interval"] = interval_seconds
+
+    if reset_script:
+        mars_control.reset_demo_events()
+        st.session_state.pop("demo_last_event", None)
+        st.success("Script demo reiniciado")
+        st.experimental_rerun()
+
+    new_event: mars_control.DemoEvent | None = None
+    if trigger_next:
+        new_event = mars_control.generate_demo_event(interval_seconds, force=True)
+
+    if auto_loop:
+        st.session_state["demo_event_auto"] = True
+        st.autorefresh(
+            interval=int(interval_seconds * 1000),
+            limit=None,
+            key="demo_event_autorefresh",
+        )
+        new_event = new_event or mars_control.generate_demo_event(interval_seconds)
+    else:
+        st.session_state["demo_event_auto"] = False
+
+    history = mars_control.get_demo_event_history(limit=8)
+    latest_event = new_event or (history[0] if history else None)
+    if latest_event:
+        st.session_state["demo_last_event"] = latest_event
+
+    last_event: mars_control.DemoEvent | None = st.session_state.get(
+        "demo_last_event"
+    )
+
+    if last_event:
+        st.markdown(_render_demo_event_card(last_event), unsafe_allow_html=True)
+        if last_event.audio_bytes:
+            st.audio(last_event.audio_bytes, format="audio/wav")
+        elif last_event.audio_path:
+            st.audio(last_event.audio_path, format="audio/wav")
+    else:
+        st.info(
+            "Aún no se emitieron eventos demo. Activá el loop o generá uno manualmente."
+        )
+
+    if history:
+        ticker_events = list(reversed(history))
+        st.markdown(_render_demo_ticker(ticker_events), unsafe_allow_html=True)
+
+        log_rows: list[dict[str, str]] = []
+        for event in history:
+            metadata = " · ".join(
+                f"{key}: {value}" for key, value in event.metadata.items()
+            )
+            log_rows.append(
+                {
+                    "Hora": _format_demo_timestamp(event),
+                    "Evento": event.title,
+                    "Detalle": event.message,
+                    "Nivel": event.severity.upper(),
+                    "Metadata": metadata,
+                }
+            )
+        st.dataframe(
+            pd.DataFrame(log_rows),
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.caption("El ticker se completará a medida que se emitan eventos del guion demo.")
+
+    micro_divider()
+    st.markdown("#### Inyectar manifiesto demo")
+    st.caption(
+        "Seleccioná un manifiesto preconfigurado para ver cómo las decisiones IA cambian en vivo."
+    )
+
+    catalogue = mars_control.demo_manifest_catalogue()
+    if catalogue:
+        options = {entry["label"]: entry for entry in catalogue if entry.get("label")}
+        if not options:
+            options = {entry["key"]: entry for entry in catalogue}
+        labels = list(options.keys())
+        default_label = st.session_state.get("demo_manifest_selected", labels[0])
+        selection = st.selectbox(
+            "Seleccioná un manifiesto de prueba",
+            options=labels,
+            index=labels.index(default_label) if default_label in labels else 0,
+        )
+        st.session_state["demo_manifest_selected"] = selection
+        selected_entry = options[selection]
+        if selected_entry.get("description"):
+            st.caption(selected_entry["description"])
+        preview_df = pd.DataFrame(selected_entry.get("rows", []))
+        st.dataframe(preview_df, use_container_width=True, hide_index=True)
+
+        if st.button(
+            "Inyectar manifiesto demo",
+            use_container_width=True,
+            key="inject_demo_manifest_button",
+        ):
+            manifest_df = mars_control.load_demo_manifest(selected_entry["key"])
+            with st.spinner("Generando decisiones Rex-AI para el manifiesto demo..."):
+                analysis = run_policy_analysis(
+                    generator_service, manifest_df, include_pdf=False
+                )
+            st.session_state["policy_analysis"] = analysis
+            st.session_state["uploaded_manifest_df"] = manifest_df
+            st.success(
+                "Manifiesto demo procesado. Revisá Decisiones IA y Flight Radar para ver los cambios."
+            )
+            st.experimental_rerun()
+    else:
+        st.warning("No se encontraron manifiestos demo preconfigurados.")
+
+    with st.expander("Guion demo predefinido"):
+        script_entries = mars_control.demo_event_script()
+        script_df = pd.DataFrame(
+            [
+                {
+                    "Evento": entry.title,
+                    "Categoría": entry.category,
+                    "Nivel": entry.severity,
+                    "Mensaje": entry.message,
+                }
+                for entry in script_entries
+            ]
+        )
+        st.dataframe(script_df, use_container_width=True, hide_index=True)
 
