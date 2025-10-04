@@ -21,6 +21,8 @@ import pytest
 from app.modules import data_sources, execution, label_mapper, logging_utils
 from app.modules.generator import GeneratorService
 from app.modules.generator import service as generator
+from app.modules.optimizer import candidate_metrics
+from app.modules.property_planner import PropertyPlanner
 from app.modules.process_planner import choose_process
 
 pl = generator.pl
@@ -2429,3 +2431,88 @@ def test_compute_feature_vector_uses_l2l_packaging_ratio(monkeypatch):
             features["l2l_logistics_packaging_per_goods_ratio"], rel=1e-6
         )
         assert candidate["logistics_reuse_index"] == pytest.approx(features["logistics_reuse_index"], rel=1e-6)
+
+
+def test_empirical_candidate_satisfies_constraints():
+    picks = pd.DataFrame(
+        [
+            {
+                "kg": 1.25,
+                "material": "polyethylene",
+                "_material_reference_key": "polyethylene",
+                "_source_id": "ZEN-001",
+                "_source_category": "packaging",
+                "_source_flags": "zenodo",
+                "_problematic": 0,
+                "material_density_kg_m3": 950.0,
+                "material_modulus_gpa": 2.6,
+                "material_thermal_conductivity_w_mk": 0.36,
+                "material_tensile_strength_mpa": 65.0,
+                "material_elongation_pct": 14.0,
+                "material_water_absorption_pct": 0.4,
+                "material_oxygen_index_pct": 28.0,
+            }
+        ]
+    )
+
+    proc_df = pd.DataFrame(
+        [
+            {
+                "process_id": "P02",
+                "name": "Press & Heat Lamination",
+                "crew_min_per_batch": 12,
+                "energy_kwh_per_kg": 0.5,
+                "water_l_per_kg": 0.08,
+            }
+        ]
+    )
+
+    target = {
+        "name": "Zenodo demo",
+        "rigidity": 0.4,
+        "tightness": 0.4,
+        "max_energy_kwh": 3.0,
+        "max_water_l": 2.0,
+        "max_crew_min": 90.0,
+        "min_material_modulus_gpa": 2.0,
+        "max_material_density_kg_m3": 1200.0,
+        "min_material_thermal_conductivity_w_mk": 0.2,
+    }
+
+    candidate = generator._build_candidate(
+        picks,
+        proc_df,
+        random.Random(42),
+        target,
+        crew_time_low=False,
+        use_ml=False,
+        tuning={},
+        registry=None,
+    )
+
+    assert candidate is not None
+    features = candidate.get("features", {})
+    assert features.get("prediction_mode") == "empirical"
+
+    features.update(
+        {
+            "material_density_kg_m3": 950.0,
+            "material_modulus_gpa": 2.6,
+            "material_thermal_conductivity_w_mk": 0.36,
+        }
+    )
+
+    candidate["uncertainty"] = {
+        "rigidity": 0.0,
+        "tightness": 0.02,
+        "material_density_kg_m3": 25.0,
+        "material_modulus_gpa": 0.15,
+        "material_thermal_conductivity_w_mk": 0.05,
+    }
+    features["uncertainty"] = candidate["uncertainty"]
+
+    planner = PropertyPlanner()
+    assert planner.is_feasible(candidate, target)
+
+    metrics = candidate_metrics(candidate, target)
+    assert metrics.get("constraint_penalty", 1.0) == pytest.approx(0.0, abs=1e-6)

@@ -1,3 +1,4 @@
+import math
 import sys
 from pathlib import Path
 
@@ -28,7 +29,9 @@ from app.modules.io import (
     load_waste_df,
 )
 from app.modules.navigation import render_breadcrumbs, set_active_step
+from app.modules.optimizer import candidate_metrics, pareto_front
 from app.modules.page_data import build_candidate_metric_table, build_resource_table
+from app.modules.property_planner import PropertyPlanner
 from app.modules.schema import (
     ALUMINIUM_LABEL_COLUMNS,
     ALUMINIUM_LABEL_MAP,
@@ -43,6 +46,7 @@ from app.modules.ui_blocks import (
     initialise_frontend,
     layout_block,
     render_brand_header,
+    render_constraint_chips,
 )
 
 configure_page(page_title="Rex-AI • Resultados", page_icon="📊")
@@ -75,6 +79,11 @@ score = cand.get("score", 0.0)
 safety = selected.get("safety", {"level": "—", "detail": ""})
 process_id = cand.get("process_id", "—")
 process_name = cand.get("process_name", "Proceso")
+
+planner = PropertyPlanner()
+evaluation = planner.evaluate_candidate(cand, target)
+constraint_entries = evaluation.get("entries", [])
+feasible = bool(evaluation.get("feasible", True))
 try:
     inventory_df = load_waste_df()
 except MissingDatasetError as error:
@@ -202,6 +211,7 @@ if target.get("crew_time_low"):
     header_chips.append({"label": "Crew-time low", "tone": "caution"})
 if ci:
     header_chips.append({"label": "CI 95% activo", "tone": "success"})
+header_chips.append({"label": "Restricciones OK" if feasible else "Revisar restricciones"})
 
 st.title(f"📊 {process_id} · {process_name}")
 st.caption(
@@ -212,6 +222,140 @@ if header_chips:
     chip_columns = st.columns(len(header_chips))
     for column, chip in zip(chip_columns, header_chips, strict=False):
         column.markdown(f"**{chip['label']}**")
+
+if constraint_entries:
+    render_constraint_chips(constraint_entries)
+
+if feasible:
+    st.success("La receta cumple las metas de rigidez y propiedades definidas.")
+else:
+    st.error("La receta no cumple todas las restricciones. Ajustá materiales o límites.")
+
+error_rows: list[dict[str, object]] = []
+for entry in constraint_entries:
+    value = entry.get("value")
+    sigma = entry.get("sigma")
+    if value is None or sigma is None:
+        continue
+    try:
+        value_f = float(value)
+        sigma_f = float(sigma)
+    except (TypeError, ValueError):
+        continue
+    if not math.isfinite(value_f) or not math.isfinite(sigma_f):
+        continue
+    label = str(entry.get("label") or entry.get("key") or "")
+    unit = str(entry.get("unit") or "").strip()
+    label_unit = f"{label} ({unit})" if unit else label
+    lower = float(entry.get("lower", value_f - sigma_f))
+    upper = float(entry.get("upper", value_f + sigma_f))
+    meets_flag = bool(entry.get("meets", False))
+    error_rows.append(
+        {
+            "label": label_unit,
+            "value": value_f,
+            "sigma": sigma_f,
+            "lower": lower,
+            "upper": upper,
+            "meets": meets_flag,
+        }
+    )
+
+if error_rows:
+    st.subheader("Bandas de incertidumbre ±σ")
+    error_df = pd.DataFrame(error_rows)
+    base = alt.Chart(error_df)
+    error_bars = base.mark_errorbar(color="#94a3b8").encode(
+        x=alt.X("label:N", title="Indicador"),
+        y=alt.Y("lower:Q", title="Valor", scale=alt.Scale(zero=False)),
+        y2="upper:Q",
+    )
+    points = base.mark_point(filled=True, size=140).encode(
+        x=alt.X("label:N", title="Indicador"),
+        y=alt.Y("value:Q", title="Valor", scale=alt.Scale(zero=False)),
+        color=alt.Color(
+            "meets:N",
+            title="Cumple",
+            scale=alt.Scale(domain=[True, False], range=["#38bdf8", "#f97316"]),
+        ),
+        tooltip=[
+            alt.Tooltip("label:N", title="Indicador"),
+            alt.Tooltip("value:Q", title="Valor", format=".3f"),
+            alt.Tooltip("sigma:Q", title="σ", format=".3f"),
+            alt.Tooltip("meets:N", title="Cumple"),
+        ],
+    )
+    st.altair_chart(error_bars + points, use_container_width=True)
+
+candidates_all = st.session_state.get("candidates", [])
+pareto_rows: list[dict[str, object]] = []
+if isinstance(candidates_all, list) and candidates_all:
+    pareto_candidates = pareto_front(candidates_all, target)
+    pareto_ids = {id(candidate) for candidate in pareto_candidates}
+    selected_id = id(cand)
+    for idx, candidate in enumerate(candidates_all):
+        metrics = candidate_metrics(candidate, target)
+        if isinstance(metrics, dict):
+            metrics.pop("meta::constraint_violations", None)
+        try:
+            score_value = float(metrics.get("score", float("nan")))
+            penalty_value = float(metrics.get("penalty", float("nan")))
+        except (TypeError, ValueError):
+            score_value = float("nan")
+            penalty_value = float("nan")
+        pareto_rows.append(
+            {
+                "candidate": idx,
+                "recipe_id": candidate.get("features", {}).get("recipe_id", f"cand-{idx}"),
+                "score": score_value,
+                "penalty": penalty_value,
+                "constraint_penalty": float(metrics.get("constraint_penalty", 0.0)),
+                "energy": float(metrics.get("energy", float("nan"))),
+                "water": float(metrics.get("water", float("nan"))),
+                "crew": float(metrics.get("crew", float("nan"))),
+                "on_front": id(candidate) in pareto_ids,
+                "selected": id(candidate) == selected_id,
+            }
+        )
+
+if pareto_rows:
+    st.subheader("Frente Pareto de candidatos generados")
+    pareto_df = pd.DataFrame(pareto_rows)
+    scatter = alt.Chart(pareto_df).mark_circle().encode(
+        x=alt.X("score:Q", title="Score"),
+        y=alt.Y("penalty:Q", title="Penalización promedio", scale=alt.Scale(zero=True)),
+        color=alt.Color(
+            "on_front:N",
+            title="Frente Pareto",
+            scale=alt.Scale(domain=[True, False], range=["#22d3ee", "#94a3b8"]),
+        ),
+        size=alt.Size(
+            "constraint_penalty:Q",
+            title="Penalización de restricciones",
+            scale=alt.Scale(range=[60, 280]),
+        ),
+        tooltip=[
+            alt.Tooltip("recipe_id:N", title="Receta"),
+            alt.Tooltip("score:Q", title="Score", format=".3f"),
+            alt.Tooltip("penalty:Q", title="Penalización", format=".3f"),
+            alt.Tooltip("constraint_penalty:Q", title="Restricciones", format=".3f"),
+            alt.Tooltip("energy:Q", title="Energía (norm)", format=".2f"),
+            alt.Tooltip("water:Q", title="Agua (norm)", format=".2f"),
+            alt.Tooltip("crew:Q", title="Crew (norm)", format=".2f"),
+        ],
+    ).properties(height=320)
+
+    selected_df = pareto_df[pareto_df["selected"]]
+    if not selected_df.empty:
+        highlight = alt.Chart(selected_df).mark_circle(size=220, color="#f97316", opacity=0.9).encode(
+            x="score:Q",
+            y="penalty:Q",
+        )
+        pareto_chart = scatter + highlight
+    else:
+        pareto_chart = scatter
+
+    st.altair_chart(pareto_chart, use_container_width=True)
 
 metrics_df = build_candidate_metric_table(props, heur, score, ci, uncertainty)
 st.subheader("Métricas clave")

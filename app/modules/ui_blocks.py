@@ -6,6 +6,7 @@ from functools import lru_cache
 from contextlib import contextmanager
 from html import escape
 from pathlib import Path
+import math
 from typing import Any, Generator, Iterable, Literal, Mapping, Optional
 
 import streamlit as st
@@ -562,6 +563,61 @@ def chipline(
         target = parent if parent is not None else st
         target.markdown(markup, unsafe_allow_html=True)
     return markup
+
+
+def _format_constraint_value(value: float | None) -> str:
+    if value is None or not math.isfinite(value):
+        return "—"
+    absolute = abs(value)
+    if absolute >= 1000:
+        return f"{value:,.0f}".replace(",", " ")
+    if absolute >= 100:
+        return f"{value:.0f}"
+    if absolute >= 10:
+        return f"{value:.1f}"
+    return f"{value:.2f}"
+
+
+def render_constraint_chips(
+    entries: Iterable[Mapping[str, Any]],
+    *,
+    parent: DeltaGenerator | None = None,
+) -> str:
+    chips: list[dict[str, object]] = []
+    for entry in entries:
+        label = str(entry.get("label") or entry.get("key") or "").strip()
+        unit = str(entry.get("unit") or "").strip()
+        minimum = entry.get("minimum")
+        maximum = entry.get("maximum")
+        sigma = entry.get("sigma")
+        meets = bool(entry.get("meets", False))
+
+        bounds: list[str] = []
+        if minimum is not None and maximum is not None:
+            bounds.append(
+                f"{_format_constraint_value(float(minimum))}–{_format_constraint_value(float(maximum))}"
+            )
+        elif minimum is not None:
+            bounds.append(f"≥{_format_constraint_value(float(minimum))}")
+        elif maximum is not None:
+            bounds.append(f"≤{_format_constraint_value(float(maximum))}")
+
+        if sigma is not None and math.isfinite(float(sigma)) and float(sigma) > 0:
+            bounds.append(f"±{_format_constraint_value(float(sigma))}")
+
+        text_parts = [label]
+        if bounds:
+            text_parts.append(" ".join(bounds))
+        if unit:
+            text_parts.append(unit)
+        chip_label = " ".join(part for part in text_parts if part)
+        tone = "positive" if meets else "danger"
+        chips.append({"label": chip_label, "tone": tone})
+
+    if not chips:
+        return ""
+
+    return chipline(chips, parent=parent, render=True)
 
 
 def badge_group(labels: Iterable[str], *, parent: DeltaGenerator | None = None) -> None:
