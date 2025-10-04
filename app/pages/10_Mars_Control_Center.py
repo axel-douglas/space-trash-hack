@@ -6,6 +6,7 @@ import io
 import json
 import sys
 from pathlib import Path
+import time
 import html
 import math
 
@@ -25,6 +26,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import pydeck as pdk
 import streamlit as st
+from streamlit import st_autorefresh
 
 from app.modules import data_sources as ds
 from app.modules import mars_control
@@ -685,11 +687,15 @@ with tabs[0]:
 
         tick_triggered = bool(manual_tick)
         if auto_tick:
-            tick_count = st.autorefresh(
-                interval=20000,
-                limit=None,
-                key="mars_auto_tick_counter",
-            )
+            try:
+                tick_count = st_autorefresh(
+                    interval=20000,
+                    limit=None,
+                    key="mars_auto_tick_counter",
+                )
+            except AttributeError:
+                time.sleep(0.1)
+                st.experimental_rerun()
             previous_count = st.session_state.get("mars_auto_tick_prev", 0)
             if tick_count > previous_count:
                 st.session_state["mars_auto_tick_prev"] = tick_count
@@ -1892,11 +1898,15 @@ with tabs[4]:
 
     if auto_loop:
         st.session_state["demo_event_auto"] = True
-        st.autorefresh(
-            interval=int(interval_seconds * 1000),
-            limit=None,
-            key="demo_event_autorefresh",
-        )
+        try:
+            st_autorefresh(
+                interval=int(interval_seconds * 1000),
+                limit=None,
+                key="demo_event_autorefresh",
+            )
+        except AttributeError:
+            time.sleep(0.1)
+            st.experimental_rerun()
         new_event = new_event or mars_control.generate_demo_event(interval_seconds)
     else:
         st.session_state["demo_event_auto"] = False
