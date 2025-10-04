@@ -23,7 +23,7 @@ import pandas as pd
 
 from app.modules import generator
 from app.modules.dataset_validation import validate_waste_inventory
-from app.modules.data_sources import REGOLITH_CHARACTERIZATION
+from app.modules.data_sources import REGOLITH_CHARACTERIZATION, REGOLITH_VECTOR
 from app.modules.data_pipeline import GoldFeatureRow, GoldLabelRow
 from app.modules.model_training import FEATURE_COLUMNS
 from app.modules.label_mapper import derive_recipe_id
@@ -382,6 +382,27 @@ def build_gold_dataset(
     labels_df = pd.DataFrame(label_rows)
 
     features_df = features_df.drop(columns=["mission", "scenario"], errors="ignore")
+
+    oxide_columns = [column for column in FEATURE_COLUMNS if column.startswith("oxide_")]
+    if oxide_columns:
+        if "regolith_pct" in features_df.columns:
+            regolith_fraction = pd.to_numeric(features_df["regolith_pct"], errors="coerce").fillna(0.0)
+        else:
+            regolith_fraction = pd.Series(0.0, index=features_df.index)
+
+        for column in oxide_columns:
+            oxide_key = column.partition("oxide_")[2]
+            baseline = float(REGOLITH_VECTOR.get(oxide_key, 0.0))
+            fill_values = regolith_fraction * baseline
+
+            if column in features_df.columns:
+                existing = pd.to_numeric(features_df[column], errors="coerce")
+                features_df[column] = existing.where(existing.notna(), fill_values)
+            else:
+                features_df[column] = fill_values
+
+            features_df[column] = features_df[column].fillna(0.0)
+
     labels_df = labels_df.drop(columns=["mission", "scenario"], errors="ignore")
 
     ordered_columns = ["recipe_id", "process_id", *FEATURE_COLUMNS[1:]]
