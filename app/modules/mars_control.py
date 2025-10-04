@@ -37,6 +37,7 @@ Utilities
 
 from __future__ import annotations
 
+from base64 import b64encode
 from collections.abc import Iterable, Mapping, MutableMapping, Sequence
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, replace
@@ -71,6 +72,10 @@ _DEMO_HISTORY_KEY: Final[str] = "history"
 _STATIC_ROOT: Final[Path] = Path(__file__).resolve().parents[1] / "static"
 _STATIC_AUDIO_ROOT: Final[Path] = _STATIC_ROOT / "audio"
 _JEZERO_GEOJSON_PATH: Final[Path] = _STATIC_ROOT / "geodata" / "jezero.geojson"
+_DATASETS_ROOT: Final[Path] = Path(__file__).resolve().parents[2] / "datasets"
+_MARS_DATASETS_ROOT: Final[Path] = _DATASETS_ROOT / "mars"
+_JEZERO_BITMAP_PATH: Final[Path] = _MARS_DATASETS_ROOT / "Katie_1_-_DLR_Jezero_hi_v2.jpg"
+_JEZERO_BITMAP_FALLBACK_PATH: Final[Path] = _MARS_DATASETS_ROOT / "8k_mars.jpg"
 
 _PERCENTAGE_PATTERN: Final[re.Pattern[str]] = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 
@@ -639,6 +644,146 @@ def load_jezero_geodata(*, refresh: bool = False) -> dict[str, Any]:
 
     _JEZERO_GEODATA_CACHE = geometry
     return deepcopy(_JEZERO_GEODATA_CACHE)
+
+
+def _jezero_bounds_from_geometry(geometry: Mapping[str, Any]) -> tuple[float, float, float, float] | None:
+    if not isinstance(geometry, Mapping):
+        return None
+
+    coordinates: list[tuple[float, float]] = []
+
+    def _collect_points(geom: Mapping[str, Any]) -> None:
+        if not isinstance(geom, Mapping):
+            return
+        gtype = str(geom.get("type", ""))
+        raw_coords = geom.get("coordinates")
+        if gtype == "Point" and isinstance(raw_coords, Sequence) and len(raw_coords) >= 2:
+            try:
+                lon = float(raw_coords[0])
+                lat = float(raw_coords[1])
+            except (TypeError, ValueError):
+                return
+            coordinates.append((lon, lat))
+            return
+        if gtype in {"LineString", "MultiPoint"} and isinstance(raw_coords, Sequence):
+            for item in raw_coords:
+                if isinstance(item, Sequence) and len(item) >= 2:
+                    try:
+                        lon = float(item[0])
+                        lat = float(item[1])
+                    except (TypeError, ValueError):
+                        continue
+                    coordinates.append((lon, lat))
+            return
+        if gtype in {"Polygon", "MultiLineString"} and isinstance(raw_coords, Sequence):
+            for ring in raw_coords:
+                if isinstance(ring, Sequence):
+                    for item in ring:
+                        if isinstance(item, Sequence) and len(item) >= 2:
+                            try:
+                                lon = float(item[0])
+                                lat = float(item[1])
+                            except (TypeError, ValueError):
+                                continue
+                            coordinates.append((lon, lat))
+            return
+        if gtype == "GeometryCollection":
+            for entry in geom.get("geometries", []):
+                if isinstance(entry, Mapping):
+                    _collect_points(entry)
+            return
+        if gtype == "MultiPolygon" and isinstance(raw_coords, Sequence):
+            for polygon in raw_coords:
+                if isinstance(polygon, Sequence):
+                    for ring in polygon:
+                        if isinstance(ring, Sequence):
+                            for item in ring:
+                                if isinstance(item, Sequence) and len(item) >= 2:
+                                    try:
+                                        lon = float(item[0])
+                                        lat = float(item[1])
+                                    except (TypeError, ValueError):
+                                        continue
+                                    coordinates.append((lon, lat))
+            return
+
+    features = geometry.get("features") if isinstance(geometry.get("features"), Sequence) else []
+    for feature in features:
+        if isinstance(feature, Mapping):
+            geom = feature.get("geometry")
+            if isinstance(geom, Mapping):
+                _collect_points(geom)
+
+    if not coordinates:
+        return None
+
+    longitudes, latitudes = zip(*coordinates)
+    return (
+        float(min(longitudes)),
+        float(min(latitudes)),
+        float(max(longitudes)),
+        float(max(latitudes)),
+    )
+
+
+def _load_bitmap_dimensions(image_path: Path) -> tuple[int | None, int | None]:
+    try:
+        from PIL import Image  # type: ignore
+
+        with Image.open(image_path) as image:
+            return int(image.width), int(image.height)
+    except Exception:  # pragma: no cover - optional dependency
+        return None, None
+
+
+@st.cache_data(show_spinner=False)
+def load_jezero_bitmap() -> dict[str, Any]:
+    """Return cached bitmap metadata covering the Jezero operational area."""
+
+    image_path = _JEZERO_BITMAP_PATH if _JEZERO_BITMAP_PATH.is_file() else _JEZERO_BITMAP_FALLBACK_PATH
+    if not image_path.is_file():
+        raise FileNotFoundError(
+            "No se encontró la textura de Jezero. Copiá 'Katie_1_-_DLR_Jezero_hi_v2.jpg' o '8k_mars.jpg' en datasets/mars/."
+        )
+
+    try:
+        payload = image_path.read_bytes()
+    except OSError as exc:  # pragma: no cover - defensive path
+        raise RuntimeError(f"No se pudo leer la textura de Jezero ({image_path.name}): {exc}") from exc
+
+    suffix = image_path.suffix.lower()
+    mime_type = "image/jpeg" if suffix in {".jpg", ".jpeg"} else "image/png"
+    encoded = b64encode(payload).decode("ascii")
+    image_uri = f"data:{mime_type};base64,{encoded}"
+
+    geometry = load_jezero_geodata()
+    bounds = _jezero_bounds_from_geometry(geometry) or (77.18, 18.05, 78.05, 18.86)
+
+    width_px, height_px = _load_bitmap_dimensions(image_path)
+    center = {
+        "longitude": (bounds[0] + bounds[2]) / 2.0,
+        "latitude": (bounds[1] + bounds[3]) / 2.0,
+    }
+
+    metadata = {
+        "path": str(image_path),
+        "mime_type": mime_type,
+        "width_px": width_px,
+        "height_px": height_px,
+        "attribution": (
+            "Mars 2020 Jezero landing site mosaic · NASA/JPL-Caltech/University of Arizona/"
+            "DLR/FU Berlin. Public domain unless otherwise noted."
+        ),
+        "source": "Processed Jezero crater mosaic supplied with the hackathon dataset.",
+    }
+
+    return {
+        "image_uri": image_uri,
+        "image": {"data": image_uri},
+        "bounds": bounds,
+        "center": center,
+        "metadata": metadata,
+    }
 
 
 def _read_dataset() -> dict[str, Any]:
@@ -1501,6 +1646,7 @@ __all__ = [
     "SimulationEvent",
     "DemoEvent",
     "load_jezero_geodata",
+    "load_jezero_bitmap",
     "load_logistics_baseline",
     "load_live_inventory",
     "compute_mission_summary",

@@ -491,11 +491,27 @@ with tabs[0]:
             )
 
         map_payload = telemetry_service.build_map_payload(flights_df)
-        capsule_data = map_payload["capsules"]
-        zone_data = map_payload["zones"]
-        geometry = map_payload["geometry"]
+        capsule_data = map_payload.get("capsules")
+        zone_data = map_payload.get("zones")
+        geometry = map_payload.get("geometry")
+        bitmap_payload = map_payload.get("bitmap_layer")
+        view_state_payload = map_payload.get("map_view_state")
 
         layers: list[pdk.Layer] = []
+        if isinstance(bitmap_payload, Mapping):
+            image_resource = bitmap_payload.get("image") or bitmap_payload.get("image_uri")
+            bounds = bitmap_payload.get("bounds")
+            if image_resource and bounds:
+                layers.append(
+                    pdk.Layer(
+                        "BitmapLayer",
+                        id="jezero-bitmap",
+                        image=image_resource,
+                        bounds=bounds,
+                        opacity=0.92,
+                        desaturate=0.0,
+                    )
+                )
         if geometry and isinstance(geometry, Mapping) and geometry.get("features"):
             layers.append(
                 pdk.Layer(
@@ -554,16 +570,22 @@ with tabs[0]:
             "style": {"backgroundColor": "#0f172a", "color": "white"},
         }
 
-        view_state = pdk.ViewState(
-            latitude=18.43,
-            longitude=77.58,
-            zoom=9.1,
-            pitch=45,
-            bearing=25,
-        )
+        default_view_state = {
+            "latitude": 18.43,
+            "longitude": 77.58,
+            "zoom": 9.1,
+            "pitch": 45,
+            "bearing": 25,
+        }
+        view_state = pdk.ViewState(**(view_state_payload or default_view_state))
 
         st.pydeck_chart(
-            pdk.Deck(layers=layers, initial_view_state=view_state, tooltip=tooltip),
+            pdk.Deck(
+                layers=layers,
+                initial_view_state=view_state,
+                tooltip=tooltip,
+                map_style=None,
+            ),
             use_container_width=True,
         )
         st.caption("Mapa operacional de Jezero: cápsulas, zonas clave y perímetro de seguridad.")
