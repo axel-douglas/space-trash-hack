@@ -529,7 +529,8 @@ class MarsControlCenterService:
             default_opacity = float(slope_meta.get("default_opacity", 0.65))
             resolved_opacity = slope_opacity if slope_opacity is not None else default_opacity
             slope_layer["opacity"] = float(max(0.0, min(resolved_opacity, 1.0)))
-            slope_layer["label"] = slope_meta.get("label", "Mapa de pendientes")
+            slope_label = slope_meta.get("label", "Mapa de pendientes")
+            slope_layer["label"] = f"{slope_label} · complemento Vista 3D"
             overlays["slope_layer"] = slope_layer
 
         if include_ortho:
@@ -538,7 +539,8 @@ class MarsControlCenterService:
             default_opacity = float(ortho_meta.get("default_opacity", 0.75))
             resolved_opacity = ortho_opacity if ortho_opacity is not None else default_opacity
             ortho_layer["opacity"] = float(max(0.0, min(resolved_opacity, 1.0)))
-            ortho_layer["label"] = ortho_meta.get("label", "Ortofoto HiRISE")
+            ortho_label = ortho_meta.get("label", "Ortofoto HiRISE")
+            ortho_layer["label"] = f"{ortho_label} · soporte Vista 3D"
             overlays["ortho_layer"] = ortho_layer
 
         active_overlay_labels = [

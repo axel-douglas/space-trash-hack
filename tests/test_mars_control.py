@@ -107,4 +107,6 @@ def test_overlay_flags_toggle_layers():
     assert isinstance(payload_with_all.get("slope_layer"), dict)
     assert isinstance(payload_with_all.get("ortho_layer"), dict)
     labels = payload_with_all.get("active_overlay_labels")
-    assert "Pendiente" in " ".join(str(label) for label in labels)
+    label_text = " ".join(str(label) for label in labels)
+    assert "Pendiente" in label_text
+    assert "Vista 3D" in label_text
