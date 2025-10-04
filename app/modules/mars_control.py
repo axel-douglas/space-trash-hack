@@ -76,6 +76,9 @@ _DATASETS_ROOT: Final[Path] = Path(__file__).resolve().parents[2] / "datasets"
 _MARS_DATASETS_ROOT: Final[Path] = _DATASETS_ROOT / "mars"
 _JEZERO_BITMAP_PATH: Final[Path] = _MARS_DATASETS_ROOT / "Katie_1_-_DLR_Jezero_hi_v2.jpg"
 _JEZERO_BITMAP_FALLBACK_PATH: Final[Path] = _MARS_DATASETS_ROOT / "8k_mars.jpg"
+_JEZERO_SLOPE_BITMAP_PATH: Final[Path] = _MARS_DATASETS_ROOT / "j03_045994_1986_j03_046060_1986_20m_slope_20m-full.jpg"
+_JEZERO_ORTHO_BITMAP_PATH: Final[Path] = _MARS_DATASETS_ROOT / "j03_045994_1986_xn_18n282w_6m_ortho-full.jpg"
+_JEZERO_DEFAULT_BOUNDS: Final[tuple[float, float, float, float]] = (77.18, 18.05, 78.05, 18.86)
 
 _PERCENTAGE_PATTERN: Final[re.Pattern[str]] = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 
@@ -736,14 +739,21 @@ def _load_bitmap_dimensions(image_path: Path) -> tuple[int | None, int | None]:
         return None, None
 
 
-@st.cache_data(show_spinner=False)
-def load_jezero_bitmap() -> dict[str, Any]:
-    """Return cached bitmap metadata covering the Jezero operational area."""
-
-    image_path = _JEZERO_BITMAP_PATH if _JEZERO_BITMAP_PATH.is_file() else _JEZERO_BITMAP_FALLBACK_PATH
+def _load_bitmap_layer(
+    image_path: Path,
+    *,
+    label: str,
+    description: str,
+    layer_type: str,
+    attribution: str,
+    source: str,
+    default_opacity: float = 0.75,
+    legend: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     if not image_path.is_file():
         raise FileNotFoundError(
-            "No se encontró la textura de Jezero. Copiá 'Katie_1_-_DLR_Jezero_hi_v2.jpg' o '8k_mars.jpg' en datasets/mars/."
+            "No se encontró la textura requerida para Jezero. "
+            f"Asegurate de copiar '{image_path.name}' dentro de '{image_path.parent.name}/'."
         )
 
     try:
@@ -757,7 +767,7 @@ def load_jezero_bitmap() -> dict[str, Any]:
     image_uri = f"data:{mime_type};base64,{encoded}"
 
     geometry = load_jezero_geodata()
-    bounds = _jezero_bounds_from_geometry(geometry) or (77.18, 18.05, 78.05, 18.86)
+    bounds = _jezero_bounds_from_geometry(geometry) or _JEZERO_DEFAULT_BOUNDS
 
     width_px, height_px = _load_bitmap_dimensions(image_path)
     center = {
@@ -765,17 +775,20 @@ def load_jezero_bitmap() -> dict[str, Any]:
         "latitude": (bounds[1] + bounds[3]) / 2.0,
     }
 
-    metadata = {
+    metadata: dict[str, Any] = {
         "path": str(image_path),
         "mime_type": mime_type,
         "width_px": width_px,
         "height_px": height_px,
-        "attribution": (
-            "Mars 2020 Jezero landing site mosaic · NASA/JPL-Caltech/University of Arizona/"
-            "DLR/FU Berlin. Public domain unless otherwise noted."
-        ),
-        "source": "Processed Jezero crater mosaic supplied with the hackathon dataset.",
+        "attribution": attribution,
+        "source": source,
+        "label": label,
+        "description": description,
+        "layer_type": layer_type,
+        "default_opacity": float(max(0.0, min(default_opacity, 1.0))),
     }
+    if legend:
+        metadata["legend"] = legend
 
     return {
         "image_uri": image_uri,
@@ -784,6 +797,74 @@ def load_jezero_bitmap() -> dict[str, Any]:
         "center": center,
         "metadata": metadata,
     }
+
+
+@st.cache_data(show_spinner=False)
+def load_jezero_bitmap() -> dict[str, Any]:
+    """Return cached bitmap metadata covering the Jezero operational area."""
+
+    image_path = _JEZERO_BITMAP_PATH if _JEZERO_BITMAP_PATH.is_file() else _JEZERO_BITMAP_FALLBACK_PATH
+    return _load_bitmap_layer(
+        image_path,
+        label="Textura base Jezero",
+        description="Mosaico orbital del cráter Jezero utilizado como fondo base.",
+        layer_type="base",
+        attribution=(
+            "Mars 2020 Jezero landing site mosaic · NASA/JPL-Caltech/University of Arizona/"
+            "DLR/FU Berlin. Public domain unless otherwise noted."
+        ),
+        source="Processed Jezero crater mosaic supplied with the hackathon dataset.",
+        default_opacity=0.92,
+    )
+
+
+@st.cache_data(show_spinner=False)
+def load_jezero_slope_bitmap() -> dict[str, Any]:
+    """Return slope-derived bitmap aligned to the Jezero operational footprint."""
+
+    legend = {
+        "description": "Pendiente del terreno (grados)",
+        "units": "degrees",
+        "range": [0, 35],
+        "ticks": [
+            {"value": 0, "label": "0°", "color": "#0f172a"},
+            {"value": 5, "label": "5°", "color": "#0ea5e9"},
+            {"value": 15, "label": "15°", "color": "#facc15"},
+            {"value": 25, "label": "25°", "color": "#f97316"},
+            {"value": 35, "label": "35°", "color": "#ef4444"},
+        ],
+        "gradient_css": "linear-gradient(90deg,#0f172a 0%,#0ea5e9 30%,#facc15 60%,#ef4444 100%)",
+    }
+
+    return _load_bitmap_layer(
+        _JEZERO_SLOPE_BITMAP_PATH,
+        label="Pendiente 20 m",
+        description="Modelo de pendientes de Jezero a 20 m/px derivado del DEM CTX.",
+        layer_type="slope",
+        attribution=(
+            "CTX DEM slope model · Caltech/JPL/ASU · procesado por el equipo de la misión Mars 2020."
+        ),
+        source="j03_045994_1986_j03_046060_1986_20m_slope_20m (hackathon dataset).",
+        default_opacity=0.65,
+        legend=legend,
+    )
+
+
+@st.cache_data(show_spinner=False)
+def load_jezero_ortho_bitmap() -> dict[str, Any]:
+    """Return orthoimagery aligned to the Jezero polygon."""
+
+    return _load_bitmap_layer(
+        _JEZERO_ORTHO_BITMAP_PATH,
+        label="Ortofoto HiRISE 6 m",
+        description="Ortoimagen HiRISE/CTX corregida geométricamente sobre el delta de Jezero.",
+        layer_type="orthophoto",
+        attribution=(
+            "HiRISE/CTX orthorectified mosaic · NASA/JPL/University of Arizona · uso educativo."
+        ),
+        source="j03_045994_1986_xn_18n282w_6m_ortho (hackathon dataset).",
+        default_opacity=0.75,
+    )
 
 
 def _read_dataset() -> dict[str, Any]:
@@ -1647,6 +1728,8 @@ __all__ = [
     "DemoEvent",
     "load_jezero_geodata",
     "load_jezero_bitmap",
+    "load_jezero_slope_bitmap",
+    "load_jezero_ortho_bitmap",
     "load_logistics_baseline",
     "load_live_inventory",
     "compute_mission_summary",
