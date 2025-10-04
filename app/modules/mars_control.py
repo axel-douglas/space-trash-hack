@@ -799,13 +799,16 @@ def _load_bitmap_layer(
     if legend:
         metadata["legend"] = legend
 
-    return {
-        "image_uri": image_uri,
-        "image": {"url": asset_url},
+    payload: dict[str, Any] = {
+        "image": asset_url,
         "bounds": bounds,
         "center": center,
         "metadata": metadata,
     }
+    if image_uri:
+        payload["fallback_image_uri"] = image_uri
+
+    return payload
 
 
 @st.cache_data(show_spinner=False)

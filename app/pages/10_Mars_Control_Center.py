@@ -1054,22 +1054,25 @@ with tabs[0]:
 
         layers: list[pdk.Layer] = []
 
-        def _resolve_bitmap_image(payload: Mapping[str, Any] | None) -> Mapping[str, Any] | None:
+        def _resolve_bitmap_image(payload: Mapping[str, Any] | None) -> str | None:
             if not isinstance(payload, Mapping):
                 return None
             image_candidate = payload.get("image")
+            if isinstance(image_candidate, str):
+                return image_candidate
             if isinstance(image_candidate, Mapping):
                 url_candidate = image_candidate.get("url")
                 if isinstance(url_candidate, str):
-                    return {"url": url_candidate}
-                data_candidate = image_candidate.get("data")
-                if isinstance(data_candidate, str):
-                    return {"data": data_candidate}
-                uri_candidate = image_candidate.get("uri")
-                if isinstance(uri_candidate, str):
-                    return {"uri": uri_candidate}
-            if isinstance(payload.get("image_uri"), str):
-                return {"data": payload["image_uri"]}
+                    return url_candidate
+                legacy_candidate = image_candidate.get("uri")
+                if isinstance(legacy_candidate, str):
+                    return legacy_candidate
+            fallback_uri = payload.get("fallback_image_uri")
+            if isinstance(fallback_uri, str):
+                return fallback_uri
+            legacy_data_uri = payload.get("image_uri")
+            if isinstance(legacy_data_uri, str):
+                return legacy_data_uri
             return None
 
         if isinstance(bitmap_payload, Mapping):
