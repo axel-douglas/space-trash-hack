@@ -47,6 +47,7 @@ else:
 
 from app.modules import data_sources as ds
 from app.modules import logging_utils
+from app.modules.spectral_mixer import solve_spectral_recipe
 
 from .adapters import (
     _load_jax_namespace,
@@ -3126,6 +3127,59 @@ class GeneratorService:
             backend_kind=backend_kind,
             seed=seed,
         )
+
+    def propose_spectral_mix(
+        self,
+        target_curve: pd.DataFrame | str | Path,
+        stock_df: pd.DataFrame | None = None,
+        constraints: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        """Return a constrained spectral recipe approximating the target curve."""
+
+        base_constraints = dict(constraints or {})
+        per_material_caps: dict[str, float] = {
+            str(key): float(value)
+            for key, value in dict(base_constraints.get("per_material_max", {})).items()
+        }
+
+        if stock_df is not None and not stock_df.empty:
+            weight_columns = (
+                "available_mass_kg",
+                "kg",
+                "mass_kg",
+                "weight_kg",
+            )
+            weights = None
+            for column in weight_columns:
+                if column not in stock_df.columns:
+                    continue
+                series = pd.to_numeric(stock_df[column], errors="coerce")
+                if series.notna().any():
+                    weights = series.fillna(0.0).clip(lower=0.0)
+                    break
+            total_weight = float(weights.sum()) if weights is not None else 0.0
+            if total_weight > 0:
+                for idx, weight in enumerate(weights):
+                    row = stock_df.iloc[idx]
+                    spectral_key = None
+                    for candidate in ("spectral_key", "material_key", "material"):
+                        value = row.get(candidate)
+                        if isinstance(value, str) and value.strip():
+                            spectral_key = value.strip()
+                            break
+                    if spectral_key is None:
+                        continue
+                    per_material_caps.setdefault(spectral_key, float(weight) / total_weight)
+
+        base_constraints["per_material_max"] = per_material_caps
+        base_constraints.setdefault("max_fraction", 1.0)
+
+        result = solve_spectral_recipe(
+            target_curve=target_curve,
+            availability=stock_df,
+            constraints=base_constraints,
+        )
+        return result.as_dict()
 
 
 _DEFAULT_SERVICE = GeneratorService()
