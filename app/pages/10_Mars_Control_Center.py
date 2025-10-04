@@ -7,6 +7,7 @@ ensure_streamlit_entrypoint(__file__)
 from typing import Any, Mapping
 
 import pandas as pd
+import plotly.graph_objects as go
 import pydeck as pdk
 import streamlit as st
 
@@ -21,7 +22,9 @@ from app.modules.mars_control_center import (
     MarsControlCenterService,
     summarize_artifacts,
 )
+from app.modules.mission_overview import _format_metric, render_mission_objective
 from app.modules.ui_blocks import (
+    badge_group,
     configure_page,
     initialise_frontend,
     micro_divider,
@@ -426,21 +429,220 @@ with tabs[0]:
 with tabs[1]:
     st.subheader("Inventario vivo")
     try:
-        inventory_df, metrics = telemetry_service.inventory_snapshot()
+        inventory_df, metrics, category_payload = telemetry_service.inventory_snapshot()
     except Exception as exc:
         st.error(f"No se pudo cargar el inventario en vivo: {exc}")
     else:
-        metric_cols = st.columns(4)
-        metric_cols[0].metric("Masa total (kg)", f"{metrics.get('mass_kg', 0.0):.1f}")
-        metric_cols[1].metric("Volumen (m³)", f"{metrics.get('volume_m3', 0.0):.3f}")
-        metric_cols[2].metric("Agua recuperable (L)", f"{metrics.get('water_l', 0.0):.1f}")
-        metric_cols[3].metric("Energía estimada (kWh)", f"{metrics.get('energy_kwh', 0.0):.1f}")
+        render_mission_objective(metrics)
 
         problematic = int(metrics.get("problematic_count", 0))
         st.caption(
             "Residuos problemáticos detectados: "
             f"{problematic}. Coordiná protocolos especiales según severidad."
         )
+
+        category_stats = category_payload.get("categories")
+        flows_df = category_payload.get("flows")
+        palette = category_payload.get("group_palette", {})
+        group_labels = category_payload.get("material_groups", {})
+        destination_info = category_payload.get("destinations", {})
+
+        has_breakdown = isinstance(category_stats, pd.DataFrame) and not category_stats.empty
+
+        if has_breakdown:
+            micro_divider()
+            st.markdown("**Flujos circulares por categoría**")
+
+            badge_emojis = {
+                "polimeros": "🟦",
+                "metales": "🟧",
+                "textiles": "🟩",
+                "espumas": "🟪",
+                "mixtos": "⬜",
+            }
+            legend_labels: list[str] = []
+            for key in ("polimeros", "metales", "textiles", "espumas", "mixtos"):
+                label = group_labels.get(key, key.title())
+                color = palette.get(key)
+                emoji = badge_emojis.get(key, "•")
+                legend_labels.append(
+                    f"{emoji} {label}{f' · {color}' if color else ''}"
+                )
+            badge_group(legend_labels)
+            st.caption("Colores sincronizados con el bubble chart según familia de material.")
+
+            sankey_col, bubble_col = st.columns((1.1, 1))
+
+            if isinstance(flows_df, pd.DataFrame) and not flows_df.empty:
+                categories = category_stats["category"].astype(str).tolist()
+                destination_keys = list(destination_info.keys())
+                node_labels = categories + [
+                    destination_info[key]["display"] for key in destination_keys
+                ]
+                node_colors = [
+                    palette.get(group, "#94a3b8")
+                    for group in category_stats["material_group"].astype(str)
+                ] + [destination_info[key]["color"] for key in destination_keys]
+
+                link_sources: list[int] = []
+                link_targets: list[int] = []
+                link_values: list[float] = []
+                link_custom: list[list[Any]] = []
+
+                for _, flow_row in flows_df.iterrows():
+                    destination_key = str(flow_row.get("destination_key"))
+                    if destination_key not in destination_keys:
+                        continue
+                    category = str(flow_row.get("category"))
+                    try:
+                        source_index = categories.index(category)
+                        target_index = len(categories) + destination_keys.index(destination_key)
+                    except ValueError:
+                        continue
+                    mass_value = float(flow_row.get("mass_kg", 0.0))
+                    if mass_value <= 0:
+                        continue
+                    link_sources.append(source_index)
+                    link_targets.append(target_index)
+                    link_values.append(mass_value)
+                    display = destination_info[destination_key]["label"]
+                    link_custom.append([category, display, mass_value])
+
+                if link_values:
+                    sankey_fig = go.Figure(
+                        data=[
+                            go.Sankey(
+                                arrangement="snap",
+                                node=dict(
+                                    pad=16,
+                                    thickness=18,
+                                    label=node_labels,
+                                    color=node_colors,
+                                ),
+                                link=dict(
+                                    source=link_sources,
+                                    target=link_targets,
+                                    value=link_values,
+                                    customdata=link_custom,
+                                    hovertemplate=(
+                                        "<b>%{customdata[0]}</b> → <b>%{customdata[1]}</b>"
+                                        "<br>Masa: %{customdata[2]:,.1f} kg<extra></extra>"
+                                    ),
+                                ),
+                            )
+                        ]
+                    )
+                    sankey_fig.update_layout(
+                        margin=dict(t=30, b=10, l=10, r=10),
+                        font=dict(color="#e2e8f0"),
+                        paper_bgcolor="rgba(12,18,28,1)",
+                    )
+                    sankey_col.plotly_chart(sankey_fig, use_container_width=True)
+                else:
+                    sankey_col.info("No hay datos suficientes para el flujo Sankey.")
+            else:
+                sankey_col.info("No hay datos suficientes para el flujo Sankey.")
+
+            stock_sizes = category_stats["stock_mass_kg"].astype(float).fillna(0.0)
+            max_stock = float(stock_sizes.max()) if not stock_sizes.empty else 0.0
+            if max_stock <= 0:
+                marker_sizes = [15.0 for _ in stock_sizes]
+                size_reference = 1.0
+            else:
+                min_size = max_stock * 0.1
+                marker_sizes = stock_sizes.clip(lower=min_size).tolist()
+                size_reference = 2.0 * max(marker_sizes) / (32.0**2)
+
+            bubble_colors = [
+                palette.get(group, "#94a3b8")
+                for group in category_stats["material_group"].astype(str)
+            ]
+            bubble_custom = [
+                [
+                    float(row.stock_mass_kg),
+                    float(row.water_l),
+                    float(row.energy_kwh),
+                    float(row.cross_contamination_risk),
+                ]
+                for row in category_stats.itertuples()
+            ]
+
+            bubble_fig = go.Figure(
+                data=[
+                    go.Scatter3d(
+                        x=category_stats["water_l"].astype(float),
+                        y=category_stats["energy_kwh"].astype(float),
+                        z=category_stats["purity_index"].astype(float),
+                        text=category_stats["category"].astype(str),
+                        mode="markers",
+                        customdata=bubble_custom,
+                        marker=dict(
+                            size=marker_sizes,
+                            sizemode="area",
+                            sizeref=size_reference,
+                            opacity=0.85,
+                            color=bubble_colors,
+                            line=dict(color="rgba(255,255,255,0.55)", width=1),
+                        ),
+                        hovertemplate=(
+                            "<b>%{text}</b><br>Stock estratégico: %{customdata[0]:,.1f} kg"
+                            "<br>Agua recuperable: %{x:,.1f} L"
+                            "<br>Energía estimada: %{y:,.1f} kWh"
+                            "<br>Pureza: %{z:.1f}% · Contaminación: %{customdata[3]:.1f}%"
+                            "<extra></extra>"
+                        ),
+                    )
+                ]
+            )
+            bubble_fig.update_layout(
+                margin=dict(t=30, b=10, l=0, r=0),
+                paper_bgcolor="rgba(12,18,28,1)",
+                plot_bgcolor="rgba(12,18,28,1)",
+                font=dict(color="#e2e8f0"),
+                scene=dict(
+                    xaxis=dict(
+                        title="Agua recuperable (L)",
+                        backgroundcolor="rgba(15,23,42,0.18)",
+                        gridcolor="rgba(148,163,184,0.3)",
+                    ),
+                    yaxis=dict(
+                        title="Energía estimada (kWh)",
+                        backgroundcolor="rgba(15,23,42,0.18)",
+                        gridcolor="rgba(148,163,184,0.3)",
+                    ),
+                    zaxis=dict(
+                        title="Índice de pureza (%)",
+                        range=[0, 100],
+                        backgroundcolor="rgba(15,23,42,0.18)",
+                        gridcolor="rgba(148,163,184,0.3)",
+                    ),
+                ),
+            )
+            bubble_col.plotly_chart(bubble_fig, use_container_width=True)
+
+            top_categories = (
+                category_stats.sort_values("stock_mass_kg", ascending=False).head(3)
+            )
+            if not top_categories.empty:
+                st.markdown("**Indicadores clave por stock estratégico**")
+                indicator_cols = st.columns(len(top_categories))
+                for column, (_, row) in zip(indicator_cols, top_categories.iterrows()):
+                    column.metric(
+                        str(row["category"]),
+                        _format_metric(float(row["stock_mass_kg"]), "kg"),
+                        delta=(
+                            f"Pureza {row['purity_index']:.0f}% · Contam. "
+                            f"{row['cross_contamination_risk']:.0f}%"
+                        ),
+                    )
+                    column.caption(
+                        " · ".join(
+                            [
+                                _format_metric(float(row["energy_kwh"]), "kWh"),
+                                _format_metric(float(row["water_l"]), "L"),
+                            ]
+                        )
+                    )
 
         micro_divider()
         st.dataframe(

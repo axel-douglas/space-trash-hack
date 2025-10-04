@@ -39,6 +39,7 @@ from datetime import datetime
 import json
 import math
 from pathlib import Path
+import re
 from typing import Any, Final
 
 import pandas as pd
@@ -57,6 +58,50 @@ _SIM_TICK_KEY: Final[str] = "tick"
 _SIM_LAST_GENERATED_KEY: Final[str] = "last_generated_tick"
 _STATIC_ROOT: Final[Path] = Path(__file__).resolve().parents[1] / "static"
 _JEZERO_GEOJSON_PATH: Final[Path] = _STATIC_ROOT / "geodata" / "jezero.geojson"
+
+_PERCENTAGE_PATTERN: Final[re.Pattern[str]] = re.compile(r"(\d+(?:\.\d+)?)\s*%")
+
+_MATERIAL_GROUP_LABELS: Final[dict[str, str]] = {
+    "polimeros": "Polímeros",
+    "metales": "Metales",
+    "textiles": "Textiles",
+    "espumas": "Espumas técnicas",
+    "mixtos": "Mixtos",
+}
+
+_MATERIAL_GROUP_COLORS: Final[dict[str, str]] = {
+    "polimeros": "#0ea5e9",
+    "metales": "#f97316",
+    "textiles": "#22c55e",
+    "espumas": "#a855f7",
+    "mixtos": "#64748b",
+}
+
+_DESTINATION_INFO: Final[dict[str, dict[str, str]]] = {
+    "recycle": {
+        "label": "Reciclaje",
+        "display": "♻️ Reciclaje",
+        "color": "#22c55e",
+    },
+    "reuse": {
+        "label": "Reutilización",
+        "display": "🔁 Reutilización",
+        "color": "#facc15",
+    },
+    "stock": {
+        "label": "Stock",
+        "display": "📦 Stock estratégico",
+        "color": "#38bdf8",
+    },
+}
+
+_DESTINATION_WEIGHTS: Final[dict[str, dict[str, float]]] = {
+    "polimeros": {"recycle": 0.7, "reuse": 0.15, "stock": 0.15},
+    "metales": {"recycle": 0.2, "reuse": 0.2, "stock": 0.6},
+    "textiles": {"recycle": 0.25, "reuse": 0.55, "stock": 0.2},
+    "espumas": {"recycle": 0.8, "reuse": 0.05, "stock": 0.15},
+    "mixtos": {"recycle": 0.6, "reuse": 0.25, "stock": 0.15},
+}
 
 
 @dataclass(slots=True, frozen=True)
@@ -482,6 +527,250 @@ def compute_mission_summary(
     return base_metrics
 
 
+def _material_group_key(record: Mapping[str, Any]) -> str:
+    category = str(record.get("category") or "").lower()
+    family = str(record.get("material_family") or "").lower()
+    flags = str(record.get("flags") or "").lower()
+    key_materials = str(record.get("key_materials") or "").lower()
+    tokens = " ".join([category, family, flags, key_materials])
+
+    if "foam" in tokens or "pvdf" in tokens:
+        return "espumas"
+    if any(term in tokens for term in ("textile", "fabric", "cotton", "nomex", "garment", "towel")):
+        return "textiles"
+    if any(term in tokens for term in ("alloy", "aluminium", "titanium", "steel", "structural", "strut")):
+        return "metales"
+    if any(term in tokens for term in ("poly", "plastic", "polymer", "eva")):
+        return "polimeros"
+    return "mixtos"
+
+
+def _dominant_percentage(text: str) -> float | None:
+    matches = _PERCENTAGE_PATTERN.findall(text)
+    if not matches:
+        return None
+    try:
+        values = [float(match) for match in matches]
+    except ValueError:
+        return None
+    if not values:
+        return None
+    return max(values)
+
+
+def _estimate_purity(record: Mapping[str, Any]) -> float:
+    key_materials = str(record.get("key_materials") or "")
+    flags = str(record.get("flags") or "").lower()
+    dominant = _dominant_percentage(key_materials)
+
+    if dominant is not None:
+        purity = float(dominant)
+    else:
+        separators = re.split(r"[;\n\-/|]", key_materials)
+        tokens = [token.strip() for token in separators if token.strip()]
+        if not tokens:
+            purity = 80.0
+        elif len(tokens) == 1:
+            purity = 92.0
+        elif len(tokens) == 2:
+            purity = 74.0
+        else:
+            purity = 58.0
+
+    if "multilayer" in flags or "composite" in flags:
+        purity -= 20.0
+    if "foam" in flags:
+        purity -= 10.0
+    return float(max(20.0, min(purity, 100.0)))
+
+
+def _estimate_contamination(record: Mapping[str, Any], *, purity: float) -> float:
+    flags = str(record.get("flags") or "").lower()
+    category = str(record.get("category") or "").lower()
+    base = max(0.0, 100.0 - purity)
+    if record.get("_problematic"):
+        base += 12.0
+    if any(term in flags for term in ("multilayer", "adhesive", "foam")):
+        base += 10.0
+    if any(term in category for term in ("food", "packaging")):
+        base += 6.0
+    return float(max(0.0, min(base, 100.0)))
+
+
+def _allocate_destination_masses(
+    group: str,
+    *,
+    mass_kg: float,
+    purity: float,
+    contamination: float,
+) -> dict[str, float]:
+    if not math.isfinite(mass_kg) or mass_kg <= 0:
+        return {key: 0.0 for key in _DESTINATION_INFO}
+
+    base_weights = _DESTINATION_WEIGHTS.get(group, _DESTINATION_WEIGHTS["mixtos"]).copy()
+    purity_norm = max(0.0, min(purity / 100.0, 1.0))
+    contamination_norm = max(0.0, min(contamination / 100.0, 1.0))
+
+    adjusted = {
+        "recycle": base_weights["recycle"] * (0.45 + 0.55 * contamination_norm),
+        "reuse": base_weights["reuse"] * (0.4 + 0.6 * purity_norm),
+        "stock": base_weights["stock"] * (0.35 + 0.65 * purity_norm),
+    }
+    total_weight = sum(adjusted.values()) or 1.0
+    return {key: mass_kg * weight / total_weight for key, weight in adjusted.items()}
+
+
+def aggregate_inventory_by_category(
+    inventory: pd.DataFrame | None,
+) -> dict[str, Any]:
+    """Aggregate inventory metrics grouped by category and destination."""
+
+    empty_payload = {
+        "normalized": pd.DataFrame(),
+        "categories": pd.DataFrame(
+            columns=[
+                "category",
+                "material_group",
+                "material_group_label",
+                "total_mass_kg",
+                "water_l",
+                "energy_kwh",
+                "purity_index",
+                "cross_contamination_risk",
+                "recycle_mass_kg",
+                "reuse_mass_kg",
+                "stock_mass_kg",
+            ]
+        ),
+        "flows": pd.DataFrame(columns=["category", "destination_key", "destination_label", "mass_kg"]),
+        "material_groups": _MATERIAL_GROUP_LABELS.copy(),
+        "group_palette": _MATERIAL_GROUP_COLORS.copy(),
+        "destinations": _DESTINATION_INFO.copy(),
+    }
+
+    if inventory is None or inventory.empty:
+        return empty_payload
+
+    working = inventory.copy(deep=True)
+    working["category"] = working.get("category", "").fillna("").astype(str)
+    working["material_family"] = working.get("material_family", "").fillna("").astype(str)
+    working["flags"] = working.get("flags", "").fillna("").astype(str)
+    working["key_materials"] = working.get("key_materials", "").fillna("").astype(str)
+    if "_problematic" in working.columns:
+        working["_problematic"] = working["_problematic"].astype(bool)
+    else:
+        working["_problematic"] = False
+
+    mass = pd.to_numeric(working.get("mass_kg", working.get("kg")), errors="coerce").fillna(0.0)
+    volume_l = pd.to_numeric(working.get("volume_l"), errors="coerce").fillna(0.0)
+    moisture_ratio = pd.to_numeric(working.get("moisture_pct"), errors="coerce").fillna(0.0) / 100.0
+    difficulty = pd.to_numeric(working.get("difficulty_factor"), errors="coerce").fillna(1.0)
+    difficulty = difficulty.clip(lower=1.0, upper=3.0)
+
+    working["mass_kg"] = mass
+    working["volume_l"] = volume_l
+    working["material_group"] = working.apply(_material_group_key, axis=1)
+    working["material_group_label"] = working["material_group"].map(
+        _MATERIAL_GROUP_LABELS
+    )
+    working["material_group_label"] = working["material_group_label"].fillna(
+        _MATERIAL_GROUP_LABELS["mixtos"]
+    )
+
+    purity_series = working.apply(_estimate_purity, axis=1)
+    working["purity_index"] = purity_series
+    working["cross_contamination_risk"] = working.apply(
+        lambda row: _estimate_contamination(row, purity=float(row["purity_index"])),
+        axis=1,
+    )
+
+    base_energy = 0.12
+    max_energy = 0.70
+    energy_per_kg = base_energy + (difficulty - 1.0) / 2.0 * (max_energy - base_energy)
+    working["water_l"] = mass * moisture_ratio
+    working["energy_kwh"] = mass * energy_per_kg
+    working["volume_m3"] = volume_l / 1000.0
+
+    allocations = working.apply(
+        lambda row: _allocate_destination_masses(
+            str(row.get("material_group")),
+            mass_kg=float(row.get("mass_kg", 0.0)),
+            purity=float(row.get("purity_index", 0.0)),
+            contamination=float(row.get("cross_contamination_risk", 0.0)),
+        ),
+        axis=1,
+    )
+    allocation_df = pd.DataFrame(list(allocations), index=working.index).fillna(0.0)
+    for key in _DESTINATION_INFO:
+        working[f"{key}_mass_kg"] = allocation_df.get(key, 0.0)
+
+    working["purity_mass"] = working["purity_index"] * working["mass_kg"]
+    working["contamination_mass"] = working["cross_contamination_risk"] * working["mass_kg"]
+
+    def _mode(series: pd.Series) -> str:
+        try:
+            modes = series.mode(dropna=True)
+            if not modes.empty:
+                return str(modes.iloc[0])
+        except Exception:
+            pass
+        return str(series.iloc[0]) if not series.empty else ""
+
+    grouped = (
+        working.groupby("category", as_index=False)
+        .agg(
+            material_group=("material_group", _mode),
+            material_group_label=("material_group_label", _mode),
+            total_mass_kg=("mass_kg", "sum"),
+            water_l=("water_l", "sum"),
+            energy_kwh=("energy_kwh", "sum"),
+            purity_mass=("purity_mass", "sum"),
+            contamination_mass=("contamination_mass", "sum"),
+            recycle_mass_kg=("recycle_mass_kg", "sum"),
+            reuse_mass_kg=("reuse_mass_kg", "sum"),
+            stock_mass_kg=("stock_mass_kg", "sum"),
+        )
+        .reset_index(drop=True)
+    )
+
+    safe_mass = grouped["total_mass_kg"].where(grouped["total_mass_kg"] != 0, pd.NA)
+    grouped["purity_index"] = (grouped["purity_mass"] / safe_mass).fillna(0.0)
+    grouped["cross_contamination_risk"] = (
+        grouped["contamination_mass"] / safe_mass
+    ).fillna(0.0)
+
+    grouped = grouped.drop(columns=["purity_mass", "contamination_mass"])
+    grouped = grouped.sort_values("total_mass_kg", ascending=False).reset_index(drop=True)
+
+    flow_records: list[dict[str, Any]] = []
+    for _, row in grouped.iterrows():
+        for key, info in _DESTINATION_INFO.items():
+            mass_value = float(row.get(f"{key}_mass_kg", 0.0))
+            if mass_value <= 0:
+                continue
+            flow_records.append(
+                {
+                    "category": row["category"],
+                    "destination_key": key,
+                    "destination_label": info["label"],
+                    "destination_display": info["display"],
+                    "mass_kg": mass_value,
+                }
+            )
+
+    flows = pd.DataFrame(flow_records)
+
+    payload = {
+        "normalized": working,
+        "categories": grouped,
+        "flows": flows,
+        "material_groups": _MATERIAL_GROUP_LABELS.copy(),
+        "group_palette": _MATERIAL_GROUP_COLORS.copy(),
+        "destinations": _DESTINATION_INFO.copy(),
+    }
+    return payload
+
+
 def _resolve_manifest_label(manifest: Any, index: int) -> str:
     if isinstance(manifest, pd.DataFrame) and manifest.attrs.get("name"):
         return str(manifest.attrs["name"])
@@ -749,6 +1038,7 @@ __all__ = [
     "load_logistics_baseline",
     "load_live_inventory",
     "compute_mission_summary",
+    "aggregate_inventory_by_category",
     "score_manifest_batch",
     "summarise_policy_actions",
     "iterate_events",
