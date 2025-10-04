@@ -338,3 +338,18 @@ feature columns (`oxide_<oxide_name>`) written by the generator.
   `water_release` fields set the default `regolith_pct` used throughout
   candidate generation, while the remaining property columns (e.g.
   `density_bulk`) stay available for future feature engineering.
+
+## Mars logistics baseline & geodata
+
+The Mars Control Center relies on two lightweight artefacts to simulate flight
+operations and map overlays:
+
+| File | Description | Refresh strategy |
+| ---- | ----------- | ---------------- |
+| `data/mars_logistics.yaml` | Curated baseline of capsules, scheduled flights, industrial processes and Rex-AI orders used by `app.modules.mars_control.load_logistics_baseline`. | Edit the YAML directly when new capsules/routes are introduced. The helper accepts ISO-8601 timestamps (`Z` suffix) and falls back to `_DEFAULT_DATASET` when optional sections are omitted. |
+| `app/static/geodata/jezero.geojson` | GeoJSON footprint covering the Jezero operational envelope, landing zones and resource areas displayed on the pydeck map. | Update polygon coordinates or feature properties in place. The loader caches the geometry and emits a Streamlit warning if the file is not valid GeoJSON. |
+
+Both artefacts are versioned because they seed the demo experience. When
+iterating on them locally you can force a reload by calling
+`mars_control.load_logistics_baseline(refresh=True)` or
+`mars_control.load_jezero_geodata(refresh=True)` inside a Python shell.

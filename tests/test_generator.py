@@ -2585,11 +2585,33 @@ def test_analyze_manifest_exports_policy_artifacts(tmp_path):
 
     recommendations = pd.read_csv(policy_path)
     assert not recommendations.empty
+    expected_columns = {
+        "item_index",
+        "item_name",
+        "current_material_key",
+        "current_score",
+        "recommended_material_key",
+        "recommended_score",
+        "recommended_quota",
+        "action",
+        "justification",
+        "evidence_json",
+    }
+    assert expected_columns.issubset(set(recommendations.columns))
+    for payload in recommendations["evidence_json"].dropna():
+        parsed = json.loads(payload)
+        assert set(parsed).issuperset({"sources", "evidence"})
 
     compatibility = pd.read_parquet(compat_path)
     assert "sources_json" in compatibility.columns
+    for payload in compatibility["sources_json"].dropna():
+        json.loads(payload)
 
     passport = json.loads(passport_path.read_text("utf-8"))
     assert passport["total_items"] == 1
     assert isinstance(passport["compatibility_sources"], list)
     assert passport["compatibility_sources"]
+    assert passport["recommendations"]
+    for entry in passport["recommendations"]:
+        assert "evidence_json" in entry
+        json.loads(entry["evidence_json"])

@@ -57,6 +57,49 @@ El script `app/Home.py` centraliza la vista de *Mission Overview* y actúa como
 único entrypoint interactivo, manteniendo alineada la pantalla principal con el
 paso "Overview" de la navegación multipaso.
 
+### Mars Orbit Hub — Centro de control
+
+El nuevo *Mars Orbit Hub* vive dentro del multipage de Streamlit. Podés abrirlo
+de dos maneras equivalentes:
+
+```bash
+# Abre el multipage completo y navegá hasta "10 · Mars Control Center"
+streamlit run app/Home.py
+
+# O bien ejecutá sólo el hub táctico
+streamlit run app/pages/10_Mars_Control_Center.py
+```
+
+La experiencia está organizada en cinco tabs sincronizados con los servicios de
+`app.modules.mars_control` y `app.modules.mars_control_center`:
+
+1. **🛰️ Flight Radar / Mapa**. Fusiona la telemetría de vuelos del YAML
+   `data/mars_logistics.yaml` con la geometría GeoJSON de
+   `app/static/geodata/jezero.geojson` para renderizar rutas, zonas operativas y
+   cápsulas activas.
+   El botón *Avanzar simulación* y el *auto tick* de 20 s alimentan la cola de
+   eventos sintetizados por `apply_simulation_tick()`.
+2. **📦 Inventario vivo**. Expone las agregaciones de
+   `aggregate_inventory_by_category()` con destino, pureza estimada, energía y
+   agua requeridos. Es la vista recomendada para auditar el backlog por
+   categoría y material.
+3. **🤖 Decisiones IA**. Consume el bundle generado por
+   `GeneratorService.analyze_manifest()` para mostrar puntuaciones medias,
+   compatibilidades y el resumen compacto de acciones (ganancia promedio, cuota
+   sugerida, top recomendaciones) que entrega `summarise_policy_actions()`.
+4. **🗺️ Planner**. Vincula los ítems críticos del manifiesto con procesos
+   sugeridos mediante `MarsControlCenterService.build_planner_schedule()`,
+   priorizando masa declarada y razones de asignación.
+5. **🎛️ Modo Demo**. Activa el guion sintético del control room. Permite
+   habilitar un loop automático, reiniciar el script, inyectar manifiestos demo
+   y reproducir los clips de audio WAV empaquetados en `app/static/audio/`.
+
+> ℹ️ **Modo demo**: cuando el loop automático está activo, `generate_demo_event`
+> emite un evento cada `n` segundos (configurable). El botón "Inyectar
+> manifiesto demo" ejecuta `run_policy_analysis()` sobre los presets de
+> `mars_control.demo_manifest_catalogue()`, refrescando en vivo el radar y las
+> decisiones IA.
+
 ## Módulos principales
 
 La refactorización de 2025 separó responsabilidades clave para mantener el
