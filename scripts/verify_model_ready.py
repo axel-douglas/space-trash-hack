@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Mapping
 
 from app.modules import ml_models
 
 
-def _check_residuals(metadata: Dict[str, Any]) -> Dict[str, Any]:
+def _check_residuals(metadata: Mapping[str, Any]) -> Dict[str, Any]:
     required = set(ml_models.TARGET_COLUMNS)
     residual_std = metadata.get("residual_std", {})
     if required - residual_std.keys():
@@ -29,6 +29,61 @@ def _check_residuals(metadata: Dict[str, Any]) -> Dict[str, Any]:
         "residuals_summary": summary,
         "sources": {source: payload.get("count", 0) for source, payload in by_source.items()},
     }
+
+
+def _collect_regression_metrics(metadata: Mapping[str, Any]) -> Dict[str, Dict[str, Dict[str, float]]]:
+    """Extract MAE/RMSE metrics for each artefact and target."""
+
+    metrics_payload: Dict[str, Dict[str, Dict[str, float]]] = {}
+    artifacts = metadata.get("artifacts", {}) if isinstance(metadata, Mapping) else {}
+    if not isinstance(artifacts, Mapping):
+        return metrics_payload
+
+    for name, info in artifacts.items():
+        if not isinstance(info, Mapping):
+            continue
+        metric_block = info.get("metrics")
+        if not isinstance(metric_block, Mapping):
+            continue
+        targets: Dict[str, Dict[str, float]] = {}
+        for target, values in metric_block.items():
+            if not isinstance(values, Mapping):
+                continue
+            entry: Dict[str, float] = {}
+            for key in ("mae", "rmse"):
+                value = values.get(key)
+                if value is None:
+                    continue
+                try:
+                    entry[key] = float(value)
+                except (TypeError, ValueError):
+                    continue
+            if entry:
+                targets[str(target)] = entry
+        if targets:
+            metrics_payload[str(name)] = targets
+    return metrics_payload
+
+
+def _collect_classifier_curves(classifiers: Mapping[str, Any]) -> Dict[str, Dict[str, str]]:
+    """Return verified ROC/PR curve paths for each classifier."""
+
+    curves: Dict[str, Dict[str, str]] = {}
+    for name, payload in classifiers.items():
+        if not isinstance(payload, Mapping):
+            continue
+        curve_paths: Dict[str, str] = {}
+        for key in ("roc_curve_path", "pr_curve_path"):
+            raw_path = payload.get(key)
+            if not raw_path:
+                continue
+            candidate = Path(raw_path)
+            if not candidate.exists():
+                raise SystemExit(f"Classifier {name} declares {key} but file is missing: {candidate}")
+            curve_paths[key] = candidate.as_posix()
+        if curve_paths:
+            curves[str(name)] = curve_paths
+    return curves
 
 
 def main() -> None:
@@ -65,6 +120,8 @@ def main() -> None:
         name: info.get("path") for name, info in classifiers.items() if info.get("path")
     }
 
+    regression_metrics = _collect_regression_metrics(metadata)
+
     payload = {
         "ready": registry.ready,
         "trained_on": trained_on,
@@ -75,7 +132,28 @@ def main() -> None:
         "artefacts": artefacts,
         "classifiers": classifier_paths,
         "residuals": residuals,
+        "regression_metrics": regression_metrics,
     }
+
+    if regression_metrics:
+        overall_mae = []
+        overall_rmse = []
+        for targets in regression_metrics.values():
+            for values in targets.values():
+                mae = values.get("mae")
+                rmse = values.get("rmse")
+                if mae is not None:
+                    overall_mae.append(mae)
+                if rmse is not None:
+                    overall_rmse.append(rmse)
+        if overall_mae:
+            payload["mae_mean"] = sum(overall_mae) / len(overall_mae)
+        if overall_rmse:
+            payload["rmse_mean"] = sum(overall_rmse) / len(overall_rmse)
+
+    classifier_curves = _collect_classifier_curves(classifiers)
+    if classifier_curves:
+        payload["classifier_curves"] = classifier_curves
 
     print(json.dumps(payload, indent=2, sort_keys=True))
 
