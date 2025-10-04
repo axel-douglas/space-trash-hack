@@ -19,6 +19,7 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
+from app.modules import load_targets
 from app.modules.candidate_showroom import render_candidate_showroom
 from app.modules.io import (  # si tu IO usa load_process_catalog, cámbialo aquí
     MissingDatasetError,
@@ -118,6 +119,22 @@ _playbook_prefilters, _playbook_prefill_label = view_model.pop_playbook_prefill(
 st.header("Generador asistido por IA")
 
 target = view_model.get_target()
+auto_applied_target_name: str | None = None
+if target is None:
+    try:
+        presets = load_targets()
+    except MissingDatasetError:
+        presets = []
+
+    if presets:
+        target = dict(presets[0])
+        view_model.set_target(target)
+        auto_applied_target_name = str(target.get("name") or "Objetivo predefinido").strip() or "Objetivo predefinido"
+
+if auto_applied_target_name:
+    st.caption(
+        f"Se aplicó automáticamente el objetivo **{auto_applied_target_name}** desde los presets disponibles."
+    )
 
 
 def _collect_external_profiles(candidate: Mapping[str, Any], inventory: pd.DataFrame) -> dict[str, Any]:
