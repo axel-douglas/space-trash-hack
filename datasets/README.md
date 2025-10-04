@@ -48,6 +48,46 @@ requires `pandas` + `openpyxl`.
 > the raw files therefore live under `datasets/raw/external_polymer_composites/`
 > and the processed CSV/Parquet exports can be regenerated locally when needed.
 
+## Zenodo material reference bundle
+
+The `datasets/zenodo/` bundle consolidates public reference sheets that feed
+the material lookup used by the generator and the policy engine. Each artefact
+is mirrored from an open repository and normalised into tidy CSV/Parquet tables
+so the attribution metadata survives downstream merges.
+
+| Local file | Upstream record | DOI / Licence | Normalisation steps |
+| ---------- | --------------- | ------------- | ------------------- |
+| `MNL1 Mecha.xlsx` | *PE/EVOH Multinanolayer films – mechanical characterisation* (Zenodo) | DOI: 10.5281/zenodo.7998429 · CC BY 4.0 | Extract the `Composition`/`Mecha MNL1` sheets, coerce wt.% to fractions, infer laminate geometry (`layers`, `lme_position`) and reshape mechanical metrics into canonical `series` mixing rules. |
+| `PS_c4_50.csv` | *ATR-FTIR spectral library of microplastics* (Zenodo, Primpke et al.) | DOI: 10.5281/zenodo.1195724 · CC BY 4.0 | Strip metadata headers, parse the wavenumber/transmittance pairs and store them as float columns while preserving instrument notes inside `bundle.metadata["polystyrene_transmittance"]`. |
+| `pvdf_ftir_phases_1um_160C.csv` | *Crystallisation behaviour of PVDF thin films* (Mendeley Data) | DOI: 10.17632/sfbpt6sjb3.1 · CC BY 4.0 | Import the FTIR absorbance curves, tag the phase/temperature in metadata and expose them via `bundle.spectral_curves["pvdf_alpha_160c"]`. |
+| `rexai_materials_ref_polyolefins_evoh_nbr.csv` | Combination of the Zenodo laminate workbook above + manufacturer data sheets | DOI as above · Mixed licences (CC BY 4.0 / vendor terms) | Harmonise densities and tensile metrics to SI units, surface laminate variants, and aggregate the composition evidence that seeds the compatibility matrix. |
+
+All tables retain the original `source`/`license` strings to keep downstream
+reports auditable. The loader in `app.modules.data_sources.load_material_reference_bundle`
+builds a `MaterialReferenceBundle` that now exposes the following artefacts:
+
+* `mixing_rules` – composite formulations derived from `MNL1 Mecha.xlsx` with
+  explicit `series` vs. `parallel` assumptions and fraction evidence.
+* `compatibility_matrix` – the same workbook plus regolith heuristics yields a
+  canonical compatibility graph stored under `bundle.compatibility_matrix` and
+  exported as `compatibility_matrix.parquet` during passport generation.
+* `spectral_curves` – FTIR references for PVDF and polystyrene are exposed as
+  pandas dataframes (`bundle.spectral_curves[material]`) so the Streamlit views
+  can plot them without re-reading raw files.
+
+When refreshing the bundle, run the ingestion helpers below to keep the
+normalised files reproducible:
+
+```bash
+python -m scripts.convert_polymer_composites --skip-origin
+python -m scripts.convert_aluminium_alloys
+```
+
+These commands regenerate the vendor CSVs, after which executing
+`app.modules.data_sources.load_material_reference_bundle.cache_clear()` inside a
+Python shell will rebuild the cached Polars table, spectral curves and
+compatibility graph from the mirrored Zenodo/Mendeley sources.
+
 ## Aluminium alloy reference
 
 | Processed file | Source asset | Notes |
