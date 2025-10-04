@@ -202,12 +202,16 @@ def merge_reference_dataset(
         return base
 
     base_lazy, base_kind = to_lazy_frame(base)
-    base_columns = list(base_lazy.columns)
+    base_columns = list(base_lazy.collect_schema().names())
+    base_column_set = set(base_columns)
 
     extra_lazy = pl.scan_csv(path)
-    extra_columns = extra_lazy.columns
+    extra_columns = list(extra_lazy.collect_schema().names())
+    extra_column_set = set(extra_columns)
 
-    join_cols = [col for col in ("category", "subitem") if col in base_columns and col in extra_columns]
+    join_cols = [
+        col for col in ("category", "subitem") if col in base_column_set and col in extra_column_set
+    ]
     if not join_cols:
         return base
 
@@ -227,7 +231,11 @@ def merge_reference_dataset(
     if rename_map:
         extra_lazy = extra_lazy.rename(rename_map)
 
-    added_columns = [rename_map.get(col, col) for col in extra_columns if col not in join_cols and col not in drop_cols]
+    added_columns = [
+        rename_map.get(col, col)
+        for col in extra_columns
+        if col not in join_cols and col not in drop_cols
+    ]
 
     merged_lazy = base_lazy.join(extra_lazy, on=join_cols, how="left")
     if added_columns:
@@ -270,18 +278,21 @@ def _load_waste_summary_data() -> _WasteSummary:
         return _WasteSummary({}, {})
 
     table = pl.scan_csv(path)
-    if "category" not in table.columns:
+    column_names = list(table.collect_schema().names())
+    column_set = set(column_names)
+
+    if "category" not in column_set:
         return _WasteSummary({}, {})
 
     mass_columns = [
         column
-        for column in table.columns
+        for column in column_names
         if column.lower().endswith("mass_kg") and not column.lower().startswith("subitem_")
     ]
     if not mass_columns:
         return _WasteSummary({}, {})
 
-    has_subitem = "subitem" in table.columns
+    has_subitem = "subitem" in column_set
     subitem_expr = (
         pl.when(pl.col("subitem").is_not_null())
         .then(pl.col("subitem").map_elements(normalize_item, return_dtype=pl.String))
@@ -349,7 +360,7 @@ def extract_grouped_metrics(filename: str, prefix: str) -> Dict[str, Dict[str, f
     if row_count == 0:
         return {}
 
-    schema = table.schema
+    schema = table.collect_schema()
     numeric_cols = [
         name
         for name, dtype in schema.items()
@@ -366,7 +377,8 @@ def extract_grouped_metrics(filename: str, prefix: str) -> Dict[str, Dict[str, f
         "propulsion",
         "architecture",
     }
-    group_columns = [col for col in table.columns if col.lower() in group_candidates]
+    column_names = list(schema.names())
+    group_columns = [col for col in column_names if col.lower() in group_candidates]
 
     aggregated: Dict[str, Dict[str, float]] = {}
 
@@ -1056,12 +1068,14 @@ def extract_reference_metrics(spec: ReferenceMetricSpec) -> Dict[str, Dict[str, 
         return {}
 
     table = pl.scan_csv(path)
+    column_names = list(table.collect_schema().names())
+    column_set = set(column_names)
 
-    missing_groups = [column for column in spec.group_columns if column not in table.columns]
+    missing_groups = [column for column in spec.group_columns if column not in column_set]
     if missing_groups:
         return {}
 
-    numeric_columns = [column for column in spec.value_columns if column in table.columns]
+    numeric_columns = [column for column in spec.value_columns if column in column_set]
     if not numeric_columns:
         return {}
 
@@ -1294,7 +1308,8 @@ def official_features_bundle() -> OfficialFeaturesBundle:
         return default
 
     table_lazy = pl.scan_csv(_OFFICIAL_FEATURES_PATH)
-    duplicate_suffixes = [column for column in table_lazy.columns if column.endswith(".1")]
+    initial_columns = list(table_lazy.collect_schema().names())
+    duplicate_suffixes = [column for column in initial_columns if column.endswith(".1")]
     if duplicate_suffixes:
         table_lazy = table_lazy.drop(duplicate_suffixes)
 
