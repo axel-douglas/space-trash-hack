@@ -296,6 +296,17 @@ class MaterialReferenceBundle(NamedTuple):
         Additional descriptors extracted from the Zenodo artefacts (licence,
         source file names, etc.).  These are serialised together with the model
         metadata to preserve attribution in downstream reports.
+    mixing_rules:
+        Dictionary describing known composite formulations and the mixing rule
+        (``series`` or ``parallel``) inferred from the Zenodo workbooks.  Each
+        entry documents the component fractions and the source workbook so the
+        generator can surface traceability information alongside the features.
+    compatibility_matrix:
+        Nested dictionary capturing polymer↔polymer/regolith compatibility. The
+        outer keys refer to canonical material identifiers (``slugify`` of the
+        reference key) and the inner mapping lists the supported partners with
+        their associated mixing rule and evidences extracted from the source
+        datasets.
     """
 
     table: pl.DataFrame
@@ -305,6 +316,8 @@ class MaterialReferenceBundle(NamedTuple):
     property_columns: tuple[str, ...]
     spectral_curves: Dict[str, pd.DataFrame]
     metadata: Dict[str, Dict[str, Any]]
+    mixing_rules: Dict[str, Dict[str, Any]]
+    compatibility_matrix: Dict[str, Dict[str, Any]]
 
 
 @lru_cache(maxsize=1)
@@ -336,6 +349,8 @@ def load_material_reference_bundle() -> MaterialReferenceBundle:
         property_columns,
         {},
         {},
+        {},
+        {},
     )
 
     if not bundle_dir.exists():
@@ -347,6 +362,8 @@ def load_material_reference_bundle() -> MaterialReferenceBundle:
     alias_map: Dict[str, str] = {}
     spectral_curves: Dict[str, pd.DataFrame] = {}
     metadata: Dict[str, Dict[str, Any]] = {}
+    mixing_rules: Dict[str, Dict[str, Any]] = {}
+    compatibility_matrix: Dict[str, Dict[str, Any]] = {}
 
     def _safe_float(value: Any) -> float | None:
         if value is None:
@@ -448,6 +465,341 @@ def load_material_reference_bundle() -> MaterialReferenceBundle:
 
         if meta:
             metadata[slug] = {str(k): v for k, v in meta.items()}
+
+    def _merge_compatibility(
+        base: Dict[str, Dict[str, Any]],
+        extra: Mapping[str, Mapping[str, Any]],
+    ) -> None:
+        for material, partners in extra.items():
+            target = base.setdefault(material, {})
+            for partner, payload in partners.items():
+                existing = target.get(partner, {})
+                merged: Dict[str, Any] = dict(existing)
+                for key, value in payload.items():
+                    if key in {"sources", "evidence"}:
+                        current: list[Any] = list(merged.get(key, []))
+                        for item in value:
+                            if item not in current:
+                                current.append(item)
+                        merged[key] = current
+                    elif key == "rule":
+                        merged[key] = value or merged.get(key)
+                    else:
+                        merged[key] = value
+                if "sources" not in merged:
+                    merged["sources"] = []
+                if "evidence" not in merged:
+                    merged["evidence"] = []
+                target[partner] = merged
+
+    def _parse_mnl1_mecha_workbook(
+        workbook: Path,
+        alias_snapshot: Mapping[str, str],
+    ) -> tuple[Dict[str, Dict[str, Any]], Dict[str, Dict[str, Any]]]:
+        if not workbook.exists():
+            return {}, {}
+
+        try:
+            composition_df = pd.read_excel(workbook, sheet_name="Composition", header=None)
+            mechanical_df = pd.read_excel(workbook, sheet_name="Mecha MNL1", header=None)
+        except Exception:
+            return {}, {}
+
+        if composition_df.empty:
+            return {}, {}
+
+        # Identify component descriptors (PE, EVOH) from the composition sheet.
+        component_descriptors: list[dict[str, Any]] = []
+        if len(composition_df.index) > 2:
+            header_row = composition_df.iloc[2]
+            alias_override = {
+                "pe": "polyethylene",
+                "evoh": "ethylene_vinyl_alcohol",
+            }
+            for column_idx, raw in header_row.items():
+                if not isinstance(raw, str):
+                    continue
+                tokens = [token.strip() for token in raw.splitlines() if token.strip()]
+                if not tokens:
+                    continue
+                base_label = tokens[-1]
+                slug = slugify(normalize_item(base_label))
+                canonical_slug = slugify(alias_override.get(slug, slug))
+                canonical_key = alias_snapshot.get(canonical_slug)
+                descriptor = {
+                    "column": column_idx,
+                    "label": base_label,
+                    "slug": slug,
+                    "canonical_slug": canonical_slug,
+                    "canonical_key": canonical_key,
+                }
+                component_descriptors.append(descriptor)
+
+        if not component_descriptors:
+            return {}, {}
+
+        component_lookup: Dict[str, dict[str, Any]] = {}
+        for descriptor in component_descriptors:
+            for key in {
+                descriptor["slug"],
+                descriptor["canonical_slug"],
+                descriptor.get("canonical_key") or "",
+            }:
+                if key:
+                    component_lookup[key] = descriptor
+
+        composite_slug = slugify("pe_evoh_multilayer_film")
+        composite_key = alias_snapshot.get(composite_slug, composite_slug)
+
+        def _add_pair(
+            matrix: Dict[str, Dict[str, Any]],
+            a: str | None,
+            b: str | None,
+            *,
+            rule: str,
+            source: str,
+            evidence: Mapping[str, Any] | None = None,
+        ) -> None:
+            if not a or not b:
+                return
+            partner_map = matrix.setdefault(a, {})
+            payload = partner_map.setdefault(
+                b,
+                {"rule": rule, "sources": [], "evidence": []},
+            )
+            if rule and rule not in {payload.get("rule"), None}:
+                payload["rule"] = rule
+            sources: list[str] = list(payload.get("sources", []))
+            if source and source not in sources:
+                sources.append(source)
+            payload["sources"] = sources
+            if evidence:
+                evidence_list = list(payload.get("evidence", []))
+                evidence_list.append(dict(evidence))
+                payload["evidence"] = evidence_list
+
+        variants: list[dict[str, Any]] = []
+        if not mechanical_df.empty:
+            for _, row in mechanical_df.iterrows():
+                label = str(row.iloc[0]) if len(row) > 0 else ""
+                if not label or "PE/EVOH" not in label:
+                    continue
+                label = label.strip()
+                setup = str(row.iloc[1]) if len(row) > 1 else ""
+                lme_match = re.search(r"(\d+)\s*LME", setup)
+                layers_match = re.search(r"(\d+)\s*layer", setup, flags=re.IGNORECASE)
+                lme_position = int(lme_match.group(1)) if lme_match else None
+                layers = int(layers_match.group(1)) if layers_match else None
+
+                tokens = label.split()
+                materials_part = tokens[0] if tokens else ""
+                ratio_part = tokens[1] if len(tokens) > 1 else ""
+                material_tokens = [tok.strip() for tok in materials_part.split("/") if tok.strip()]
+                ratio_tokens = [tok.strip() for tok in ratio_part.split("/") if tok.strip()]
+                ratios: list[float] = []
+                for tok in ratio_tokens:
+                    try:
+                        ratios.append(float(tok))
+                    except (TypeError, ValueError):
+                        ratios.append(float("nan"))
+                if len(material_tokens) != len(ratios) or not material_tokens:
+                    continue
+                total = sum(value for value in ratios if math.isfinite(value))
+                if not total:
+                    continue
+
+                composition: Dict[str, float] = {}
+                component_aliases: Dict[str, str] = {}
+                for token, ratio in zip(material_tokens, ratios):
+                    slug = slugify(normalize_item(token))
+                    descriptor = component_lookup.get(slug)
+                    if descriptor is None:
+                        descriptor = {
+                            "slug": slug,
+                            "canonical_slug": slug,
+                            "canonical_key": alias_snapshot.get(slug),
+                            "label": token,
+                        }
+                    key = descriptor.get("canonical_key") or descriptor.get("canonical_slug") or descriptor.get("slug")
+                    if not key:
+                        continue
+                    fraction = float(ratio) / float(total)
+                    composition[key] = fraction
+                    component_aliases[key] = descriptor.get("label", token)
+
+                if not composition:
+                    continue
+
+                metric_mapping = [
+                    (2, "machine_direction", "tensile_modulus_mpa"),
+                    (3, "machine_direction", "stress_at_yield_mpa"),
+                    (4, "machine_direction", "elongation_at_yield_pct"),
+                    (5, "machine_direction", "stress_at_break_mpa"),
+                    (6, "machine_direction", "elongation_at_break_pct"),
+                    (7, "transversal_direction", "tensile_modulus_mpa"),
+                    (8, "transversal_direction", "stress_at_yield_mpa"),
+                    (9, "transversal_direction", "elongation_at_yield_pct"),
+                    (10, "transversal_direction", "stress_at_break_mpa"),
+                    (11, "transversal_direction", "elongation_at_break_pct"),
+                ]
+
+                mechanical: Dict[str, Dict[str, float | None]] = {}
+                for idx, section, metric in metric_mapping:
+                    if idx >= len(row):
+                        continue
+                    value = row.iloc[idx]
+                    numeric = None
+                    if isinstance(value, str):
+                        match = re.search(r"([-+]?[0-9]+(?:\.[0-9]+)?)", value.replace(",", "."))
+                        if match:
+                            numeric = float(match.group(1))
+                    elif isinstance(value, (int, float, np.floating)) and not math.isnan(value):
+                        numeric = float(value)
+                    if section not in mechanical:
+                        mechanical[section] = {}
+                    mechanical[section][metric] = numeric
+
+                variants.append(
+                    {
+                        "label": label,
+                        "composition": composition,
+                        "component_labels": component_aliases,
+                        "lme_position": lme_position,
+                        "layers": layers,
+                        "mechanical": mechanical,
+                    }
+                )
+
+        if not variants:
+            return {}, {}
+
+        source = f"datasets/zenodo/{workbook.name}"
+        components_payload: Dict[str, Dict[str, Any]] = {}
+        for descriptor in component_descriptors:
+            key = descriptor.get("canonical_key") or descriptor.get("canonical_slug") or descriptor.get("slug")
+            if not key:
+                continue
+            components_payload[key] = {
+                "label": descriptor.get("label"),
+                "canonical_slug": descriptor.get("canonical_slug"),
+                "canonical_key": descriptor.get("canonical_key"),
+            }
+
+        mixing_payload = {
+            composite_key: {
+                "rule": "series",
+                "source": source,
+                "components": components_payload,
+                "variants": variants,
+            }
+        }
+
+        compatibility_payload: Dict[str, Dict[str, Any]] = {}
+        for variant in variants:
+            composition = variant.get("composition", {})
+            for key_a, frac_a in composition.items():
+                for key_b, frac_b in composition.items():
+                    if key_a == key_b:
+                        continue
+                    evidence = {
+                        "variant": variant.get("label"),
+                        "component_fraction": frac_a,
+                        "partner_fraction": frac_b,
+                        "layers": variant.get("layers"),
+                        "lme_position": variant.get("lme_position"),
+                    }
+                    _add_pair(
+                        compatibility_payload,
+                        key_a,
+                        key_b,
+                        rule="series",
+                        source=source,
+                        evidence=evidence,
+                    )
+                for component_key, fraction in composition.items():
+                    evidence = {
+                        "variant": variant.get("label"),
+                        "component_fraction": fraction,
+                        "layers": variant.get("layers"),
+                        "lme_position": variant.get("lme_position"),
+                    }
+                    _add_pair(
+                        compatibility_payload,
+                        composite_key,
+                        component_key,
+                        rule="series",
+                        source=source,
+                        evidence=evidence,
+                    )
+                    _add_pair(
+                        compatibility_payload,
+                        component_key,
+                        composite_key,
+                        rule="series",
+                        source=source,
+                        evidence=evidence,
+                    )
+
+        return mixing_payload, compatibility_payload
+
+    def _build_regolith_compatibility(alias_snapshot: Mapping[str, str]) -> Dict[str, Dict[str, Any]]:
+        regolith_path = DATASETS_ROOT / "raw" / "mgs1_properties.csv"
+        if not regolith_path.exists():
+            return {}
+        try:
+            reg_df = pd.read_csv(regolith_path)
+        except Exception:
+            return {}
+
+        metrics: Dict[str, float | None] = {}
+        for _, row in reg_df.iterrows():
+            prop = str(row.get("property", "")).strip().lower()
+            value = _safe_float(row.get("value"))
+            if prop:
+                metrics[prop] = value
+
+        source = f"datasets/raw/{regolith_path.name}"
+        regolith_key = "mgs_1_regolith"
+        compatibility_payload: Dict[str, Dict[str, Any]] = {}
+
+        def _add_regolith_pair(material_key: str) -> None:
+            evidence = {
+                "density_bulk_g_cm3": metrics.get("density_bulk"),
+                "median_grain_size_um": metrics.get("median_grain_size"),
+                "assumption": "Regolith fillers disperse in parallel with polymer matrices.",
+            }
+            _merge_compatibility(
+                compatibility_payload,
+                {
+                    material_key: {
+                        regolith_key: {
+                            "rule": "parallel",
+                            "sources": [source],
+                            "evidence": [evidence],
+                        }
+                    },
+                    regolith_key: {
+                        material_key: {
+                            "rule": "parallel",
+                            "sources": [source],
+                            "evidence": [evidence],
+                        }
+                    },
+                },
+            )
+
+        for candidate in (
+            "polyethylene",
+            "polypropylene",
+            "nitrile rubber",
+            "pe_evoh_multilayer_film",
+        ):
+            slug = slugify(normalize_item(candidate))
+            key = alias_snapshot.get(slug)
+            if key:
+                _add_regolith_pair(key)
+
+        return compatibility_payload
 
     # ------------------------------------------------------------------
     # HDPE / Polyethylene
@@ -738,6 +1090,17 @@ def load_material_reference_bundle() -> MaterialReferenceBundle:
                 aliases=["ps", "polystyrene"],
             )
 
+    workbook_path = bundle_dir / "MNL1 Mecha.xlsx"
+    workbook_rules, workbook_compat = _parse_mnl1_mecha_workbook(workbook_path, alias_map)
+    if workbook_rules:
+        mixing_rules.update(workbook_rules)
+    if workbook_compat:
+        _merge_compatibility(compatibility_matrix, workbook_compat)
+
+    regolith_compat = _build_regolith_compatibility(alias_map)
+    if regolith_compat:
+        _merge_compatibility(compatibility_matrix, regolith_compat)
+
     if not records_map:
         return default
 
@@ -752,6 +1115,8 @@ def load_material_reference_bundle() -> MaterialReferenceBundle:
         property_columns,
         spectral_curves,
         metadata,
+        mixing_rules,
+        compatibility_matrix,
     )
 
 

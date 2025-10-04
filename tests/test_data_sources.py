@@ -20,6 +20,7 @@ from app.modules.data_sources import (
     load_regolith_spectra,
     load_regolith_thermogravimetry,
 )
+from app.modules.generator.assembly import CandidateAssembler
 
 
 def test_merge_reference_dataset_lazyframe_matches_eager(tmp_path, monkeypatch) -> None:
@@ -100,6 +101,50 @@ def test_material_reference_bundle_exposes_properties() -> None:
 
     metadata = bundle.metadata.get("pvdf_alpha_160c")
     assert metadata and "source" in metadata
+
+
+def test_material_reference_bundle_includes_mixing_information() -> None:
+    bundle = load_material_reference_bundle.cache_clear() or load_material_reference_bundle()
+
+    mixing = bundle.mixing_rules
+    assert "pe_evoh_multilayer_film" in mixing
+
+    pe_rule = mixing["pe_evoh_multilayer_film"]
+    assert pe_rule["rule"] == "series"
+    variants = pe_rule.get("variants") or []
+    assert variants
+    first_variant = variants[0]
+    composition = first_variant.get("composition") or {}
+    assert composition.get("hdpe_natural") == pytest.approx(0.95, rel=1e-2)
+    assert composition.get("ethylene_vinyl_alcohol") == pytest.approx(0.05, rel=1e-2)
+
+    compatibility = bundle.compatibility_matrix
+    assert "pe_evoh_multilayer_film" in compatibility
+    assert "mgs_1_regolith" in compatibility
+
+    reg_entry = compatibility["pe_evoh_multilayer_film"]["mgs_1_regolith"]
+    assert reg_entry["rule"] == "parallel"
+    assert reg_entry["sources"]
+
+
+def test_candidate_assembler_resolves_mixing_profile_aliases() -> None:
+    bundle = load_material_reference_bundle()
+    assembler = CandidateAssembler(material_reference=bundle)
+
+    picks = pd.DataFrame([
+        {"material": "PE/EVOH multilayer film", "kg": 4.0},
+    ])
+
+    profile = assembler.build_mixing_profile(picks, regolith_pct=0.2)
+    assert profile
+
+    composites = {entry["material_key"] for entry in profile.get("composites", [])}
+    assert "pe_evoh_multilayer_film" in composites
+
+    compatibility_pairs = {
+        tuple(sorted(pair["materials"])) for pair in profile.get("compatibility_pairs", [])
+    }
+    assert ("mgs_1_regolith", "pe_evoh_multilayer_film") in compatibility_pairs
 
 
 def test_particle_size_loader_produces_expected_metrics() -> None:

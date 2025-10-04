@@ -59,6 +59,11 @@ class CandidateAssembler:
     _properties: Dict[str, Dict[str, float]] = field(init=False, repr=False, default_factory=dict)
     _property_columns: tuple[str, ...] = field(init=False, repr=False, default_factory=tuple)
     _density_map: Dict[str, float] = field(init=False, repr=False, default_factory=dict)
+    _mixing_rules: Dict[str, Dict[str, Any]] = field(init=False, repr=False, default_factory=dict)
+    _compatibility: Dict[str, Dict[str, Any]] = field(
+        init=False, repr=False, default_factory=dict
+    )
+    _metadata: Dict[str, Dict[str, Any]] = field(init=False, repr=False, default_factory=dict)
 
     def __post_init__(self) -> None:
         reference = self.material_reference
@@ -66,6 +71,11 @@ class CandidateAssembler:
         self._properties = dict(getattr(reference, "properties", {}))
         self._property_columns = tuple(getattr(reference, "property_columns", ()))
         self._density_map = dict(getattr(reference, "density_map", {}))
+        self._mixing_rules = dict(getattr(reference, "mixing_rules", {}))
+        self._compatibility = {
+            key: dict(value) for key, value in getattr(reference, "compatibility_matrix", {}).items()
+        }
+        self._metadata = dict(getattr(reference, "metadata", {}))
 
         overrides = {
             "Polyethylene_pct": "polyethylene",
@@ -84,6 +94,87 @@ class CandidateAssembler:
             if density is not None:
                 self.composition_density_map = dict(self.composition_density_map)
                 self.composition_density_map[column] = float(density)
+
+    def build_mixing_profile(
+        self,
+        picks: pd.DataFrame,
+        regolith_pct: float | None = None,
+    ) -> Dict[str, Any]:
+        if picks.empty and (not regolith_pct or regolith_pct <= 0):
+            return {}
+
+        canonical_keys: list[str] = []
+        row_indices: Dict[str, list[int]] = {}
+        for idx, row in picks.iterrows():
+            key = self._resolve_material_key(row)
+            if not key:
+                continue
+            canonical_keys.append(key)
+            row_indices.setdefault(key, []).append(int(idx))
+
+        if regolith_pct and regolith_pct > 0:
+            canonical_keys.append("mgs_1_regolith")
+
+        if not canonical_keys:
+            return {}
+
+        composites: list[Dict[str, Any]] = []
+        for key in canonical_keys:
+            rule = self._mixing_rules.get(key)
+            if not rule:
+                continue
+            entry = {
+                "material_key": key,
+                "rule": rule.get("rule"),
+                "source": rule.get("source"),
+                "components": rule.get("components", {}),
+                "variants": rule.get("variants", []),
+                "rows": row_indices.get(key, []),
+            }
+            meta = self._metadata.get(key)
+            if meta:
+                entry["metadata"] = meta
+            composites.append(entry)
+
+        compatibility_pairs: list[Dict[str, Any]] = []
+        seen_pairs: set[tuple[str, str]] = set()
+        for key_a in canonical_keys:
+            partners = self._compatibility.get(key_a)
+            if not partners:
+                continue
+            for key_b, payload in partners.items():
+                if key_b not in canonical_keys:
+                    continue
+                pair = tuple(sorted((key_a, key_b)))
+                if pair in seen_pairs:
+                    continue
+                detail = dict(payload)
+                evidence = [dict(item) for item in detail.get("evidence", [])]
+                detail["evidence"] = evidence
+                detail["sources"] = list(detail.get("sources", []))
+                meta_a = self._metadata.get(key_a)
+                meta_b = self._metadata.get(key_b)
+                if meta_a or meta_b:
+                    detail = dict(detail)
+                    detail["metadata"] = {}
+                    if meta_a:
+                        detail["metadata"]["material_a"] = meta_a
+                    if meta_b:
+                        detail["metadata"]["material_b"] = meta_b
+                compatibility_pairs.append(
+                    {
+                        "materials": [key_a, key_b],
+                        "details": detail,
+                    }
+                )
+                seen_pairs.add(pair)
+
+        profile: Dict[str, Any] = {}
+        if composites:
+            profile["composites"] = composites
+        if compatibility_pairs:
+            profile["compatibility_pairs"] = compatibility_pairs
+        return profile
 
     def _resolve_material_key(self, row: Mapping[str, Any]) -> str | None:
         for candidate in (
