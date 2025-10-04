@@ -41,6 +41,7 @@ __all__ = [
     "slugify",
     "normalize_text",
     "normalize_category",
+    "extend_category_synonyms",
     "normalize_item",
     "token_set",
     "merge_reference_dataset",
@@ -154,6 +155,32 @@ _CATEGORY_SYNONYMS = {
 def normalize_category(value: Any) -> str:
     normalized = normalize_text(value)
     return _CATEGORY_SYNONYMS.get(normalized, normalized)
+
+
+def extend_category_synonyms(
+    synonyms: Mapping[str, str] | Iterable[tuple[str, str]],
+) -> None:
+    """Extend the category synonym map with *synonyms*.
+
+    The provided mapping is normalised using :func:`normalize_text` to ensure
+    consistent lookups regardless of capitalisation or punctuation.  Existing
+    entries with the same normalised key are overwritten so callers can update
+    canonical targets when ingesting new inventories.
+    """
+
+    if isinstance(synonyms, Mapping):
+        items = synonyms.items()
+    else:
+        items = synonyms
+
+    for source, target in items:
+        normalized_source = normalize_text(source)
+        if not normalized_source:
+            continue
+        normalized_target = normalize_text(target)
+        if not normalized_target:
+            normalized_target = normalized_source
+        _CATEGORY_SYNONYMS[normalized_source] = normalized_target
 
 
 def normalize_item(value: Any) -> str:
