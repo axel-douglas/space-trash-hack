@@ -508,10 +508,50 @@ def _build_scenegraph_layers(
         width_units="meters",
         opacity=0.55,
     )
+    scenegraph_cls = getattr(pdk.types, "Scenegraph", None)
+
+    def _wrap_scenegraph(url: str | Path | None) -> Any:
+        if isinstance(url, Path):
+            url = str(url)
+        if isinstance(url, str):
+            candidate = url.strip()
+            if not candidate:
+                return None
+            if scenegraph_cls is not None:
+                try:
+                    return scenegraph_cls(url=candidate)
+                except Exception:  # pragma: no cover - pydeck API mismatch fallback
+                    return {"url": candidate}
+            return {"url": candidate}
+        return None
+
+    scenegraph_source = scene_asset.get("scenegraph")
+    prepared_scenegraph: Any
+    if scenegraph_cls is not None and isinstance(scenegraph_source, scenegraph_cls):
+        prepared_scenegraph = scenegraph_source
+    elif isinstance(scenegraph_source, Mapping):
+        prepared_scenegraph = dict(scenegraph_source)
+        url_value = prepared_scenegraph.get("url")
+        wrapped = _wrap_scenegraph(url_value)
+        if isinstance(wrapped, Mapping):
+            prepared_scenegraph.update(wrapped)
+        elif wrapped is not None:
+            prepared_scenegraph = wrapped
+    elif isinstance(scenegraph_source, str):
+        prepared_scenegraph = _wrap_scenegraph(scenegraph_source)
+    else:
+        prepared_scenegraph = None
+
+    if prepared_scenegraph is None:
+        prepared_scenegraph = _wrap_scenegraph(scene_asset.get("url"))
+    if prepared_scenegraph is None:
+        fallback_candidate = scene_asset.get("asset_path") or scene_asset.get("path")
+        prepared_scenegraph = _wrap_scenegraph(fallback_candidate)
+
     scene_layer = pdk.Layer(
         "ScenegraphLayer",
         data=scene_rows,
-        scenegraph=scene_asset.get("url"),
+        scenegraph=prepared_scenegraph,
         get_position="position",
         get_orientation="orientation",
         get_color="color",
@@ -548,12 +588,15 @@ def _prepare_orbital_scene(
         "capsule_count": 0,
         "capsule_labels": [],
         "generated_at": datetime.utcnow().isoformat(timespec="seconds"),
+        "scene_asset": None,
     }
 
     if flights_df is None or flights_df.empty:
         return base_context
 
     asset = scene_asset or mars_control.load_mars_scenegraph()
+    base_context["scene_asset"] = asset
+
     layers_result = _build_scenegraph_layers(
         flights_df,
         asset,
@@ -679,6 +722,41 @@ def _render_orbital_scene(
         if message:
             target.info(message)
         return context
+
+    scene_asset = context.get("scene_asset") or {}
+    asset_url = scene_asset.get("url") if isinstance(scene_asset, Mapping) else None
+    fallback_path = None
+    if isinstance(scene_asset, Mapping):
+        fallback_path = scene_asset.get("asset_path") or scene_asset.get("path")
+
+    if fallback_path and (not isinstance(asset_url, str) or not asset_url.strip()):
+        fallback_url = str(fallback_path)
+        scenegraph_cls = getattr(pdk.types, "Scenegraph", None)
+        if scenegraph_cls is not None:
+            try:
+                fallback_scenegraph = scenegraph_cls(url=fallback_url)
+            except Exception:  # pragma: no cover - pydeck API mismatch fallback
+                fallback_scenegraph = {"url": fallback_url}
+        else:
+            fallback_scenegraph = {"url": fallback_url}
+
+        layers_with_fallback: list[pdk.Layer] = []
+        for layer in context.get("layers", []):
+            if isinstance(layer, pdk.Layer) and layer.type == "ScenegraphLayer":
+                current_scenegraph = getattr(layer, "scenegraph", None)
+                needs_update = current_scenegraph is None
+                if not needs_update and isinstance(current_scenegraph, Mapping):
+                    needs_update = not str(current_scenegraph.get("url") or "").strip()
+                if not needs_update and scenegraph_cls is not None and isinstance(
+                    current_scenegraph, scenegraph_cls
+                ):
+                    needs_update = not str(getattr(current_scenegraph, "url", "") or "").strip()
+                if not needs_update and isinstance(current_scenegraph, str):
+                    needs_update = not current_scenegraph.strip()
+                if needs_update:
+                    layer.scenegraph = fallback_scenegraph
+            layers_with_fallback.append(layer)
+        context["layers"] = layers_with_fallback
 
     deck = pdk.Deck(
         layers=context["layers"],

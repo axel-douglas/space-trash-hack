@@ -938,9 +938,17 @@ def load_mars_scenegraph() -> dict[str, Any]:
     )
 
     asset_url = f"{_static_base_url()}static/models/{asset_path.name}"
+    scenegraph_payload: Mapping[str, Any] | None
+    if asset_url:
+        scenegraph_payload = {"url": asset_url}
+    else:
+        scenegraph_payload = None
+
     return {
         "url": asset_url,
+        "asset_path": str(asset_path),
         "path": str(asset_path),
+        "scenegraph": scenegraph_payload,
         "scale": (0.0075, 0.0075, 0.0075),
         "orientation": (0.0, 180.0, 0.0),
         "translation": (0.0, 0.0, 0.0),

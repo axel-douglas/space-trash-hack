@@ -9,9 +9,16 @@ def test_load_mars_scenegraph_exposes_static_asset():
     assert isinstance(payload, dict)
     assert payload["url"].endswith("24881_Mars_1_6792.glb")
 
-    static_path = Path(payload["path"])
+    static_path = Path(payload["asset_path"])
     assert static_path.is_file()
     assert static_path.name == "24881_Mars_1_6792.glb"
+
+    scenegraph = payload["scenegraph"]
+    if isinstance(scenegraph, dict):
+        assert scenegraph["url"].endswith("24881_Mars_1_6792.glb")
+    else:
+        url_value = getattr(scenegraph, "url", None)
+        assert isinstance(url_value, str) and url_value.endswith("24881_Mars_1_6792.glb")
 
     scale = payload["scale"]
     orientation = payload["orientation"]

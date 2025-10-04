@@ -64,6 +64,12 @@ interactiva sincronizada con la simulación logística:
 
 - El modelo GLB de Marte (`app/static/models/24881_Mars_1_6792.glb`) se expone
   como asset estático y se renderiza mediante un `ScenegraphLayer` de PyDeck.
+- Los assets glTF/GLB que se coloquen en `app/static/models/` quedan
+  automáticamente disponibles en la ruta pública `/static/models/...` cuando se
+  ejecuta la app con `streamlit run`. El helper
+  `mars_control.load_mars_scenegraph()` copia el archivo original desde
+  `datasets/mars/` si es necesario, por lo que basta con sincronizar los modelos
+  en esa carpeta y reiniciar la sesión para que Streamlit los sirva.
 - Cada cápsula orbital adopta una órbita animada cuya posición depende de su
   `eta_minutes`; la escala se incrementa a medida que se aproxima al nodo de
   destino.
