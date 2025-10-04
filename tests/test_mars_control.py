@@ -14,6 +14,9 @@ def test_load_jezero_bitmap_payload_structure():
 
     assert set(payload.keys()) >= {"image_uri", "image", "bounds", "center", "metadata"}
     assert payload["image_uri"].startswith("data:image/")
+    image_payload = payload["image"]
+    assert isinstance(image_payload, dict)
+    assert image_payload.get("url", "").endswith(".jpg")
 
     bounds = payload["bounds"]
     assert isinstance(bounds, tuple)
@@ -27,6 +30,9 @@ def test_load_jezero_bitmap_payload_structure():
     assert isinstance(metadata, dict)
     assert "attribution" in metadata
     assert metadata.get("mime_type") in {"image/jpeg", "image/png"}
+    assert metadata.get("asset_url") == image_payload.get("url")
+    assert metadata.get("license")
+    assert metadata.get("provenance")
 
 
 def test_build_map_payload_includes_bitmap_and_bounds():
@@ -37,7 +43,8 @@ def test_build_map_payload_includes_bitmap_and_bounds():
 
     bitmap = payload.get("bitmap_layer")
     assert isinstance(bitmap, dict)
-    assert bitmap.get("image")
+    assert isinstance(bitmap.get("image"), dict)
+    assert "static/mars/" in bitmap.get("image", {}).get("url", "")
     assert payload.get("map_bounds") == bitmap.get("bounds")
 
     view_state = payload.get("map_view_state")
@@ -57,6 +64,8 @@ def test_load_jezero_slope_bitmap_contains_legend():
     assert legend.get("description")
     assert isinstance(legend.get("ticks"), list) and legend["ticks"]
     assert payload.get("image_uri").startswith("data:image/")
+    assert isinstance(payload.get("image"), dict)
+    assert payload["image"].get("url")
 
 
 def test_load_jezero_ortho_bitmap_metadata():

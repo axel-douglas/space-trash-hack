@@ -72,6 +72,7 @@ _DEMO_LAST_TS_KEY: Final[str] = "last_emitted_at"
 _DEMO_HISTORY_KEY: Final[str] = "history"
 _STATIC_ROOT: Final[Path] = Path(__file__).resolve().parents[1] / "static"
 _STATIC_AUDIO_ROOT: Final[Path] = _STATIC_ROOT / "audio"
+_STATIC_MARS_ROOT: Final[Path] = _STATIC_ROOT / "mars"
 _JEZERO_GEOJSON_PATH: Final[Path] = _STATIC_ROOT / "geodata" / "jezero.geojson"
 _DATASETS_ROOT: Final[Path] = Path(__file__).resolve().parents[2] / "datasets"
 _MARS_DATASETS_ROOT: Final[Path] = _DATASETS_ROOT / "mars"
@@ -758,6 +759,8 @@ def _load_bitmap_layer(
             f"Asegurate de copiar '{image_path.name}' dentro de '{image_path.parent.name}/'."
         )
 
+    asset_path, asset_url = _ensure_static_bitmap(image_path)
+
     try:
         payload = image_path.read_bytes()
     except OSError as exc:  # pragma: no cover - defensive path
@@ -779,11 +782,15 @@ def _load_bitmap_layer(
 
     metadata: dict[str, Any] = {
         "path": str(image_path),
+        "asset_path": str(asset_path),
+        "asset_url": asset_url,
         "mime_type": mime_type,
         "width_px": width_px,
         "height_px": height_px,
         "attribution": attribution,
         "source": source,
+        "license": attribution,
+        "provenance": source,
         "label": label,
         "description": description,
         "layer_type": layer_type,
@@ -794,7 +801,7 @@ def _load_bitmap_layer(
 
     return {
         "image_uri": image_uri,
-        "image": {"data": image_uri},
+        "image": {"url": asset_url},
         "bounds": bounds,
         "center": center,
         "metadata": metadata,
@@ -869,10 +876,23 @@ def load_jezero_ortho_bitmap() -> dict[str, Any]:
     )
 
 
-def _ensure_static_asset(source: Path, destination: Path) -> Path:
+def _static_base_url() -> str:
+    try:
+        base_url = st.get_option("server.baseUrlPath") or ""
+    except Exception:  # pragma: no cover - Streamlit not initialised in tests
+        base_url = ""
+    if base_url and not base_url.endswith("/"):
+        base_url = f"{base_url}/"
+    return base_url
+
+
+def _ensure_static_asset(
+    source: Path, destination: Path, *, missing_message: str | None = None
+) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     if not source.is_file():
-        raise FileNotFoundError(f"No se encontró el modelo 3D requerido en {source}.")
+        message = missing_message or f"No se encontró el asset requerido en {source}."
+        raise FileNotFoundError(message)
     should_copy = True
     if destination.exists():
         try:
@@ -884,22 +904,32 @@ def _ensure_static_asset(source: Path, destination: Path) -> Path:
     return destination
 
 
+def _ensure_static_bitmap(image_path: Path) -> tuple[Path, str]:
+    asset_path = _ensure_static_asset(
+        image_path,
+        _STATIC_MARS_ROOT / image_path.name,
+        missing_message=(
+            "No se encontró la textura requerida para Jezero. "
+            f"Asegurate de copiar '{image_path.name}' dentro de '{image_path.parent.name}/'."
+        ),
+    )
+    asset_url = f"{_static_base_url()}static/mars/{asset_path.name}"
+    return asset_path, asset_url
+
+
 @st.cache_data(show_spinner=False)
 def load_mars_scenegraph() -> dict[str, Any]:
     """Expose the Mars orbital model as a static asset ready for the 3D scene."""
 
     source = _MARS_DATASETS_ROOT / _MARS_SCENEGRAPH_FILENAME
     destination = _STATIC_ROOT / "models" / _MARS_SCENEGRAPH_FILENAME
-    asset_path = _ensure_static_asset(source, destination)
+    asset_path = _ensure_static_asset(
+        source,
+        destination,
+        missing_message=f"No se encontró el modelo 3D requerido en {source}.",
+    )
 
-    try:
-        base_url = st.get_option("server.baseUrlPath") or ""
-    except Exception:  # pragma: no cover - Streamlit not initialised in tests
-        base_url = ""
-    if base_url and not base_url.endswith("/"):
-        base_url = f"{base_url}/"
-
-    asset_url = f"{base_url}static/models/{asset_path.name}"
+    asset_url = f"{_static_base_url()}static/models/{asset_path.name}"
     return {
         "url": asset_url,
         "path": str(asset_path),

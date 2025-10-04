@@ -27,6 +27,10 @@ reproducible.
 | `mars/Katie_1_-_DLR_Jezero_hi_v2.jpg` | HiRISE orthomosaic for the Mars 2020 Jezero landing ellipse · NASA/JPL-Caltech/University of Arizona with processing by DLR/FU Berlin | NASA imagery is released into the public domain; DLR requires the credit line above when reusing the mosaic. | High-resolution texture used for the Jezero bitmap layer. Derived from the Mars 2020 mission press kit curated for the hackathon. |
 | `mars/8k_mars.jpg` | Mars Global Color Map (MGS/MOLA/VO) assembled by NASA/JPL-Caltech/USGS | Public domain (NASA) | Global fallback texture when the Jezero-specific mosaic is not available. Downsampled to 8K resolution for browser rendering. |
 
+These assets are mirrored into the Streamlit static directory and exposed under
+`/static/mars/<archivo>` so the dashboard layers can reference a CDN-friendly
+URL while keeping the original provenance metadata bundled with the dataset.
+
 ## Polymer composite supplier data
 
 | Processed file | Source asset | Notes |
