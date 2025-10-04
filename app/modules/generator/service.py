@@ -18,8 +18,6 @@ in environments where the extras are installed.
 
 from __future__ import annotations
 
-import importlib
-import importlib.util
 import itertools
 import json
 import logging
@@ -50,87 +48,29 @@ else:
 from app.modules import data_sources as ds
 from app.modules import logging_utils
 
-
-class _JaxNamespace(NamedTuple):
-    jnp: Any
-    jit: Callable[[Callable[..., Any]], Callable[..., Any]]
-
-
-class _PyArrowNamespace(NamedTuple):
-    pa: Any
-    pq: Any
-
-
-@lru_cache(maxsize=1)
-def _load_jax_namespace() -> _JaxNamespace | None:
-    """Return the imported :mod:`jax` namespace when available."""
-
-    if importlib.util.find_spec("jax") is None:
-        return None
-
-    try:
-        jax_module = importlib.import_module("jax")
-        jnp_module = importlib.import_module("jax.numpy")
-    except Exception:
-        return None
-
-    jit_impl = getattr(jax_module, "jit", None)
-    if not callable(jit_impl):
-
-        def _identity(fn: Callable[..., Any]) -> Callable[..., Any]:
-            return fn
-
-        jit_impl = _identity
-
-    return _JaxNamespace(jnp=jnp_module, jit=jit_impl)
+from .adapters import (
+    _load_jax_namespace,
+    _load_pyarrow_namespace,
+    _load_torch_module,
+    optional_jit,
+    optional_jnp,
+)
+from .assembly import (
+    CATEGORY_DENSITY_DEFAULTS,
+    COMPOSITION_DENSITY_MAP,
+    CandidateAssembler,
+)
+from .normalization import build_match_key, normalize_category, normalize_item, token_set
 
 
-@lru_cache(maxsize=1)
-def _load_torch_module() -> Any | None:
-    """Return the :mod:`torch` module if it can be imported."""
-
-    if importlib.util.find_spec("torch") is None:
-        return None
-
-    try:
-        return importlib.import_module("torch")
-    except Exception:
-        return None
-
-
-@lru_cache(maxsize=1)
-def _load_pyarrow_namespace() -> _PyArrowNamespace | None:
-    """Return the :mod:`pyarrow` namespace when present."""
-
-    pa_mod = getattr(logging_utils, "pa", None)
-    pq_mod = getattr(logging_utils, "pq", None)
-    if pa_mod is not None and pq_mod is not None:
-        return _PyArrowNamespace(pa=pa_mod, pq=pq_mod)
-
-    if importlib.util.find_spec("pyarrow") is None:
-        return None
-
-    try:
-        pa_mod = importlib.import_module("pyarrow")
-        pq_mod = importlib.import_module("pyarrow.parquet")
-    except Exception:
-        return None
-
-    return _PyArrowNamespace(pa=pa_mod, pq=pq_mod)
 
 
 def _optional_jnp() -> Any | None:
-    namespace = _load_jax_namespace()
-    return None if namespace is None else namespace.jnp
+    return optional_jnp()
 
 
 def _optional_jit() -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    namespace = _load_jax_namespace()
-    if namespace is None:
-        return lambda fn: fn
-    return namespace.jit
-
-
+    return optional_jit()
 _CATEGORY_SYNONYMS = ds._CATEGORY_SYNONYMS
 DATASETS_ROOT = ds.DATASETS_ROOT
 GAS_MEAN_YIELD = ds.GAS_MEAN_YIELD
@@ -182,6 +122,8 @@ _CATEGORY_FAMILY_FALLBACKS: Dict[str, tuple[str, ...]] = {
     "other packaging": ("other packaging", "packaging"),
     "gloves": ("gloves", "other packaging", "packaging"),
     "other packaging glove": ("other packaging", "gloves", "packaging"),
+    "structural element": ("structural elements", "structural element"),
+    "structural elements": ("structural elements", "structural element"),
 }
 _PYARROW_NAMESPACE = _load_pyarrow_namespace()
 pa = _PYARROW_NAMESPACE.pa if _PYARROW_NAMESPACE is not None else None
@@ -252,22 +194,7 @@ def _close_inference_log_writer() -> None:
 
     logging_utils.shutdown_inference_logging()
 
-_COMPOSITION_DENSITY_MAP = {
-    "Aluminum_pct": 2700.0,
-    "Carbon_Fiber_pct": 1700.0,
-    "Polyethylene_pct": 950.0,
-    "PVDF_pct": 1780.0,
-    "Nomex_pct": 1350.0,
-    "Nylon_pct": 1140.0,
-    "Polyester_pct": 1380.0,
-    "Cotton_Cellulose_pct": 1550.0,
-    "EVOH_pct": 1250.0,
-    "PET_pct": 1370.0,
-    "Nitrile_pct": 1030.0,
-    "approx_moisture_pct": 1000.0,
-    "Other_pct": 500.0,
-    "Plastic_Resin_pct": 950.0,
-}
+_COMPOSITION_DENSITY_MAP = dict(COMPOSITION_DENSITY_MAP)
 
 _MATERIAL_METRIC_COLUMNS: tuple[tuple[str, str, Any], ...] = (
     ("pc_density_density_g_per_cm3", "official_density_kg_m3", lambda value: float(value) * 1000.0),
@@ -294,17 +221,7 @@ _REFERENCE_METRIC_LOOKUPS: Dict[str, tuple[str, ...]] = {
     "aluminium": ("aluminium_processing_route", "aluminium_class_id"),
 }
 
-_CATEGORY_DENSITY_DEFAULTS = {
-    "foam packaging": 100.0,
-    "food packaging": 650.0,
-    "structural elements": 1800.0,
-    "structural element": 1800.0,
-    "packaging": 420.0,
-    "other packaging": 420.0,
-    "gloves": 420.0,
-    "eva waste": 240.0,
-    "fabric": 350.0,
-}
+_CATEGORY_DENSITY_DEFAULTS = dict(CATEGORY_DENSITY_DEFAULTS)
 
 
 def _normalize_category(value: Any) -> str:
@@ -328,51 +245,23 @@ def _token_set(value: Any) -> frozenset[str]:
 def _build_match_key(category: Any, subitem: Any | None = None) -> str:
     """Return the canonical key used to match NASA reference tables."""
 
-    if subitem:
-        return f"{normalize_category(category)}|{normalize_item(subitem)}"
-    return normalize_category(category)
+    normalized = normalize_category(category)
+    canonical_category = _CATEGORY_FAMILY_FALLBACKS.get(normalized, (normalized,))[0]
+    if subitem is None:
+        return canonical_category
+    return f"{canonical_category}|{normalize_item(subitem)}"
+
+
+_ASSEMBLER = CandidateAssembler(
+    composition_density_map=_COMPOSITION_DENSITY_MAP,
+    category_density_defaults=_CATEGORY_DENSITY_DEFAULTS,
+)
+
+
 def _estimate_density_from_row(row: pd.Series) -> float | None:
     """Estimate a material density with packaging-aware fallbacks."""
 
-    # The NASA features bundle exposes aggregate density and composition values
-    # per category.  Now that the packaging families are disambiguated the
-    # estimator first honours category-specific defaults (e.g. ``gloves`` vs.
-    # ``other packaging``) before falling back to the more general packaging
-    # prior used by legacy data dumps.
-    category = normalize_category(row.get("category", ""))
-
-    try:
-        cat_mass = float(row.get("category_total_mass_kg"))
-        cat_volume = float(row.get("category_total_volume_m3"))
-    except (TypeError, ValueError):
-        cat_mass = cat_volume = float("nan")
-
-    if pd.notna(cat_mass) and pd.notna(cat_volume) and cat_volume > 0:
-        return float(np.clip(cat_mass / cat_volume, 20.0, 4000.0))
-
-    composition_weights: list[tuple[float, float]] = []
-    total = 0.0
-    for column, density in _COMPOSITION_DENSITY_MAP.items():
-        try:
-            pct = float(row.get(column, 0.0))
-        except (TypeError, ValueError):
-            pct = 0.0
-        if pct and not np.isnan(pct):
-            frac = pct / 100.0
-            if frac > 0:
-                composition_weights.append((frac, density))
-                total += frac
-
-    if total > 0 and composition_weights:
-        weighted = sum(frac * density for frac, density in composition_weights) / total
-        if category == "foam packaging":
-            return float(min(weighted, _CATEGORY_DENSITY_DEFAULTS.get(category, weighted)))
-        return float(np.clip(weighted, 20.0, 4000.0))
-
-    if category in _CATEGORY_DENSITY_DEFAULTS:
-        return float(_CATEGORY_DENSITY_DEFAULTS[category])
-
-    return None
+    return _ASSEMBLER.estimate_density_from_row(row)
 
 
 _L2L_PARAMETERS: _L2LParameters | Mapping[str, Any] | None = None
@@ -849,6 +738,8 @@ def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], s
         row.get("key_materials"),
     )
 
+    canonical_family = families[0]
+
     for candidate in candidates:
         normalized = normalize_item(candidate)
         if not normalized:
@@ -862,7 +753,7 @@ def _lookup_official_feature_values(row: pd.Series) -> tuple[Dict[str, float], s
                 if metrics:
                     payload = dict(payload)
                     payload.update(metrics)
-                return payload, key
+                return payload, f"{canonical_family}|{normalized}"
 
     for family in families:
         category_index = bundle.direct_map.get(family)
@@ -2935,7 +2826,7 @@ def _build_candidate(
 _PARALLEL_THRESHOLD = DEFAULT_PARALLEL_THRESHOLD
 
 
-def generate_candidates(
+def _generate_candidates_impl(
     waste_df: pd.DataFrame,
     proc_df: pd.DataFrame,
     target: dict,
@@ -3060,7 +2951,74 @@ def generate_candidates(
     return candidates, history
 
 
+class GeneratorService:
+    """Service wrapper for candidate generation workflows."""
+
+    def __init__(self) -> None:
+        self.assembler = _ASSEMBLER
+
+    def generate_candidates(
+        self,
+        waste_df: pd.DataFrame,
+        proc_df: pd.DataFrame,
+        target: dict,
+        n: int = 6,
+        crew_time_low: bool = False,
+        optimizer_evals: int = 0,
+        use_ml: bool = True,
+        backend: ExecutionBackend | None = None,
+        backend_kind: str | None = None,
+        seed: int | None = None,
+    ) -> tuple[list[dict], pd.DataFrame]:
+        """Generate candidate plans using the module implementation."""
+
+        return _generate_candidates_impl(
+            waste_df,
+            proc_df,
+            target,
+            n=n,
+            crew_time_low=crew_time_low,
+            optimizer_evals=optimizer_evals,
+            use_ml=use_ml,
+            backend=backend,
+            backend_kind=backend_kind,
+            seed=seed,
+        )
+
+
+_DEFAULT_SERVICE = GeneratorService()
+
+
+def generate_candidates(
+    waste_df: pd.DataFrame,
+    proc_df: pd.DataFrame,
+    target: dict,
+    n: int = 6,
+    crew_time_low: bool = False,
+    optimizer_evals: int = 0,
+    use_ml: bool = True,
+    backend: ExecutionBackend | None = None,
+    backend_kind: str | None = None,
+    seed: int | None = None,
+) -> tuple[list[dict], pd.DataFrame]:
+    """Backward-compatible wrapper around :class:`GeneratorService`."""
+
+    return _DEFAULT_SERVICE.generate_candidates(
+        waste_df,
+        proc_df,
+        target,
+        n=n,
+        crew_time_low=crew_time_low,
+        optimizer_evals=optimizer_evals,
+        use_ml=use_ml,
+        backend=backend,
+        backend_kind=backend_kind,
+        seed=seed,
+    )
+
+
 __all__ = [
+    "GeneratorService",
     "generate_candidates",
     "PredProps",
     "append_inference_log",

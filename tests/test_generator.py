@@ -17,7 +17,9 @@ import pandas as pd
 import pyarrow.parquet as pq
 import pytest
 
-from app.modules import data_sources, execution, generator, label_mapper, logging_utils
+from app.modules import data_sources, execution, label_mapper, logging_utils
+from app.modules.generator import GeneratorService
+from app.modules.generator import service as generator
 from app.modules.process_planner import choose_process
 
 pl = generator.pl
@@ -50,6 +52,11 @@ def reference_dataset_tables(monkeypatch):
         yield tables
     finally:
         generator._official_features_bundle.cache_clear()
+
+
+@pytest.fixture
+def generator_service() -> GeneratorService:
+    return GeneratorService()
 
 
 def test_extend_category_synonyms_updates_normalization(monkeypatch):
@@ -799,7 +806,9 @@ def _read_inference_log(day_dir: Path) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True, sort=False)
 
 
-def test_generate_candidates_uses_parallel_backend(monkeypatch):
+def test_generate_candidates_uses_parallel_backend(
+    monkeypatch: pytest.MonkeyPatch, generator_service: GeneratorService
+) -> None:
     monkeypatch.setattr(generator, "_PARALLEL_THRESHOLD", 1)
 
     class DummyBackend(execution.ExecutionBackend):
@@ -911,7 +920,7 @@ def test_generate_candidates_uses_parallel_backend(monkeypatch):
         }
     )
 
-    candidates, history = generator.generate_candidates(
+    candidates, history = generator_service.generate_candidates(
         waste_df,
         proc_df,
         target={},
@@ -931,7 +940,9 @@ def test_generate_candidates_uses_parallel_backend(monkeypatch):
     assert history.empty
 
 
-def test_generate_candidates_parallel_is_deterministic(monkeypatch):
+def test_generate_candidates_parallel_is_deterministic(
+    monkeypatch: pytest.MonkeyPatch, generator_service: GeneratorService
+) -> None:
     monkeypatch.setattr(generator, "_PARALLEL_THRESHOLD", 1)
     monkeypatch.setattr(generator, "prepare_waste_frame", lambda df: df)
     monkeypatch.setattr(generator, "_pick_materials", lambda df, rng, n=2, bias=2.0: pd.DataFrame(
@@ -1020,7 +1031,7 @@ def test_generate_candidates_parallel_is_deterministic(monkeypatch):
     def run_once() -> list[float]:
         backend = execution.ThreadPoolBackend(max_workers=4)
         try:
-            candidates, _ = generator.generate_candidates(
+            candidates, _ = generator_service.generate_candidates(
                 waste_df,
                 proc_df,
                 target={},
@@ -1040,7 +1051,9 @@ def test_generate_candidates_parallel_is_deterministic(monkeypatch):
     assert scores_a == scores_b
 
 
-def test_generate_candidates_seed_reproducible(monkeypatch):
+def test_generate_candidates_seed_reproducible(
+    monkeypatch: pytest.MonkeyPatch, generator_service: GeneratorService
+) -> None:
     monkeypatch.delenv("REXAI_GENERATOR_SEED", raising=False)
     monkeypatch.setattr(generator, "_PARALLEL_THRESHOLD", 1)
     monkeypatch.setattr(generator, "prepare_waste_frame", lambda df: df)
@@ -1098,7 +1111,7 @@ def test_generate_candidates_seed_reproducible(monkeypatch):
     def run_once(seed_value: int | None) -> list[float]:
         backend = execution.SynchronousBackend()
         try:
-            candidates, _ = generator.generate_candidates(
+            candidates, _ = generator_service.generate_candidates(
                 waste_df,
                 proc_df,
                 target={},
@@ -1191,7 +1204,11 @@ def test_append_inference_log_handles_schema_evolution(monkeypatch, tmp_path):
     assert set(log_df["session_id"].dropna()) == {"alpha"}
 
 
-def test_generate_candidates_appends_inference_log(monkeypatch, tmp_path):
+def test_generate_candidates_appends_inference_log(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    generator_service: GeneratorService,
+) -> None:
     dummy_registry = DummyRegistry()
     monkeypatch.setattr(generator, "get_model_registry", lambda: dummy_registry)
     monkeypatch.setattr(logging_utils, "LOGS_ROOT", tmp_path)
@@ -1222,7 +1239,7 @@ def test_generate_candidates_appends_inference_log(monkeypatch, tmp_path):
         }
     )
 
-    candidates, history = generator.generate_candidates(waste_df, proc_df, target={}, n=1)
+    candidates, history = generator_service.generate_candidates(waste_df, proc_df, target={}, n=1)
 
     assert candidates, "Expected at least one candidate to be generated"
     assert history.empty
@@ -1257,7 +1274,11 @@ def test_generate_candidates_appends_inference_log(monkeypatch, tmp_path):
     shutil.rmtree(log_dir.parent, ignore_errors=True)
 
 
-def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch, tmp_path):
+def test_generate_candidates_heuristic_mode_skips_ml(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    generator_service: GeneratorService,
+) -> None:
     calls: list[str] = []
 
     class NoCallRegistry:
@@ -1303,7 +1324,7 @@ def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch, tmp_path):
         }
     )
 
-    candidates, history = generator.generate_candidates(
+    candidates, history = generator_service.generate_candidates(
         waste_df, proc_df, target={}, n=1, use_ml=False
     )
 
@@ -1321,7 +1342,12 @@ def test_generate_candidates_heuristic_mode_skips_ml(monkeypatch, tmp_path):
     assert "auxiliary" in cand
 
 
-def test_generate_candidates_handles_missing_curated_labels(monkeypatch, tmp_path, caplog):
+def test_generate_candidates_handles_missing_curated_labels(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    generator_service: GeneratorService,
+) -> None:
     caplog.set_level(logging.WARNING, logger="app.modules.label_mapper")
     monkeypatch.setattr(label_mapper, "_LABELS_CACHE", None, raising=False)
     monkeypatch.setattr(label_mapper, "_LABELS_CACHE_PATH", None, raising=False)
@@ -1384,7 +1410,7 @@ def test_generate_candidates_handles_missing_curated_labels(monkeypatch, tmp_pat
         }
     )
 
-    candidates, history = generator.generate_candidates(waste_df, proc_df, target={}, n=1)
+    candidates, history = generator_service.generate_candidates(waste_df, proc_df, target={}, n=1)
 
     assert calls, "ensure_gold_dataset should have been invoked"
     assert candidates, "Expected heuristic candidates even when gold labels fail"
