@@ -1,0 +1,22 @@
+material,property,method,unit,value
+PET-P (Ertalyte TX),tensile_strength,ISO 527,MPa,76.0
+PET-P (Ertalyte TX),tensile_modulus,ISO 527,MPa,3300.0
+PET-P (Ertalyte TX),elongation_at_break,ISO 527,%,8.0
+PET-P (Ertalyte TX),flexural_strength,ISO 178,MPa,105.0
+PET-P (Ertalyte TX),flexural_modulus,ISO 178,MPa,3200.0
+PET-P (Ertalyte TX),compressive_strength,ISO 604,MPa,102.0
+PET-P (Ertalyte TX),impact_strength_charpy_unnotched,ISO 179/1eU,kJ/m2,35.0
+PET-P (Ertalyte TX),impact_strength_charpy_notched,ISO 179/1eA,kJ/m2,3.5
+PET-P (Ertalyte TX),hardness_shoreD,ISO 868,Shore D,85.0
+PET-P (Ertalyte TX),hardness_rockwell,ISO 2039-2,M scale,105.0
+PET-P (Ertalyte TX),density,ISO 1183,g/cm3,1.44
+PET-P (Ertalyte TX),water_absorption,ISO 62,%,0.2
+PET-P (Ertalyte TX),melting_temperature,ISO 3146,°C,245.0
+PET-P (Ertalyte TX),glass_transition_temperature,DSC,°C,100.0
+PET-P (Ertalyte TX),heat_deflection_temp,ISO 75,°C,210.0
+PET-P (Ertalyte TX),service_temperature_continuous,-,°C,110.0
+PET-P (Ertalyte TX),thermal_expansion,ISO 11359,10^-6/K,65.0
+PET-P (Ertalyte TX),volume_resistivity,IEC 60093,Ohm·cm,100000000000000.0
+PET-P (Ertalyte TX),surface_resistivity,IEC 60093,Ohm,100000000000000.0
+PET-P (Ertalyte TX),dielectric_strength,IEC 60243-1,kV/mm,20.0
+PET-P (Ertalyte TX),dielectric_constant_1MHz,IEC 60250,-,3.3
