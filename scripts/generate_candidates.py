@@ -4,11 +4,26 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
 import pandas as pd
+
+
+def _ensure_project_root() -> Path:
+    """Ensure the repository root is available on ``sys.path`` when run as a script."""
+
+    module_path = Path(__file__).resolve()
+    root = module_path.parents[1]
+    root_str = str(root)
+    if root_str not in sys.path:
+        sys.path.insert(0, root_str)
+    return root
+
+
+_ensure_project_root()
 
 from app.modules.generator import PredProps, generate_candidates
 from app.modules.io import load_process_df, load_targets, load_waste_df
