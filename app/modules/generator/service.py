@@ -2774,6 +2774,10 @@ def _finalize_candidate(
         features["recipe_id"] = recipe_id
     features["prediction_mode"] = "heuristic"
 
+    mixing_profile = _ASSEMBLER.build_mixing_profile(picks, regolith_pct)
+    if mixing_profile:
+        features["mixing_profile"] = mixing_profile
+
     heuristic = heuristic_props(picks, proc, weights, regolith_pct)
     if heuristic.source != "heuristic" and features.get("prediction_mode") == "heuristic":
         features["prediction_model"] = heuristic.source
