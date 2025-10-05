@@ -2511,6 +2511,10 @@ def test_empirical_candidate_satisfies_constraints():
     }
     features["uncertainty"] = candidate["uncertainty"]
 
+    bundle = data_sources.load_material_reference_bundle()
+    for column in bundle.property_columns:
+        assert column in features
+
     planner = PropertyPlanner()
     assert planner.is_feasible(candidate, target)
 

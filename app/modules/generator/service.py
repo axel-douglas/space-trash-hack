@@ -2772,6 +2772,24 @@ def _finalize_candidate(
     used_mats = components.used_mats
 
     features = dict(features)
+    property_columns = getattr(_ASSEMBLER.material_reference, "property_columns", ())
+    if property_columns:
+        aggregated = _ASSEMBLER.aggregate_material_properties(picks, weights)
+        for column in property_columns:
+            value = aggregated.get(column)
+            numeric: float | None
+            if value is None:
+                numeric = None
+            else:
+                try:
+                    numeric = float(value)
+                except (TypeError, ValueError):
+                    numeric = None
+            if numeric is None or not math.isfinite(numeric):
+                features[column] = float("nan")
+            else:
+                features[column] = numeric
+
     recipe_id = derive_recipe_id(picks, proc, features)
     if recipe_id:
         features["recipe_id"] = recipe_id

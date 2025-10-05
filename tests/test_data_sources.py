@@ -93,6 +93,27 @@ def test_material_reference_bundle_exposes_properties() -> None:
     assert bundle.table.height > 0
     assert "material_density_kg_m3" in bundle.property_columns
 
+    extended_columns = {
+        "material_service_temperature_short_c",
+        "material_service_temperature_long_c",
+        "material_service_temperature_min_c",
+        "material_coefficient_thermal_expansion_per_k_min",
+        "material_coefficient_thermal_expansion_per_k_max",
+        "material_ball_indentation_hardness_mpa",
+        "material_shore_d_hardness",
+        "material_rockwell_m_hardness",
+        "material_surface_resistivity_ohm",
+        "material_volume_resistivity_ohm_cm",
+        "material_dielectric_strength_kv_mm",
+        "material_relative_permittivity_low_freq",
+        "material_relative_permittivity_high_freq",
+        "material_dielectric_loss_tan_delta_low_freq",
+        "material_dielectric_loss_tan_delta_high_freq",
+        "material_comparative_tracking_index_cti",
+    }
+    assert extended_columns.issubset(set(bundle.property_columns))
+    assert extended_columns.issubset(set(bundle.table.columns))
+
     slug = data_sources.slugify(data_sources.normalize_item("Nomex 410"))
     assert bundle.alias_map.get(slug)
 
@@ -101,6 +122,16 @@ def test_material_reference_bundle_exposes_properties() -> None:
 
     metadata = bundle.metadata.get("pvdf_alpha_160c")
     assert metadata and "source" in metadata
+
+    poly_slug = data_sources.slugify(data_sources.normalize_item("polyethylene"))
+    poly_key = bundle.alias_map[poly_slug]
+    poly_props = bundle.properties[poly_key]
+    assert poly_props["material_service_temperature_short_c"] == pytest.approx(90.0)
+    assert poly_props["material_dielectric_strength_kv_mm"] == pytest.approx(50.0)
+
+    nylon_props = bundle.properties["nylon_6_6"]
+    assert nylon_props["material_relative_permittivity_low_freq"] == pytest.approx(5.6)
+    assert nylon_props["material_dielectric_loss_tan_delta_low_freq"] == pytest.approx(0.0715, rel=1e-4)
 
 
 def test_material_reference_bundle_includes_mixing_information() -> None:
@@ -145,6 +176,21 @@ def test_candidate_assembler_resolves_mixing_profile_aliases() -> None:
         tuple(sorted(pair["materials"])) for pair in profile.get("compatibility_pairs", [])
     }
     assert ("mgs_1_regolith", "pe_evoh_multilayer_film") in compatibility_pairs
+
+
+def test_candidate_assembler_aggregates_extended_metrics() -> None:
+    bundle = load_material_reference_bundle()
+    assembler = CandidateAssembler(material_reference=bundle)
+
+    table = bundle.table.to_pandas()
+    sample = table.loc[table["material_key"] == "hdpe_natural"].copy()
+    assert not sample.empty
+    sample["kg"] = 5.0
+
+    aggregated = assembler.aggregate_material_properties(sample, [1.0])
+    assert "material_service_temperature_short_c" in aggregated
+    assert aggregated["material_service_temperature_short_c"] == pytest.approx(90.0)
+    assert aggregated["material_coefficient_thermal_expansion_per_k_min"] == pytest.approx(1.3e-4, rel=1e-6)
 
 
 def test_particle_size_loader_produces_expected_metrics() -> None:
