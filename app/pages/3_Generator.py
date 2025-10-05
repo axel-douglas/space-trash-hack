@@ -50,6 +50,7 @@ from app.modules.ui_blocks import (
     micro_divider,
     pill,
     render_brand_header,
+    render_nasa_badge,
     render_dataset_badge,
 )
 from app.modules.visualizations import ConvergenceScene
@@ -986,8 +987,12 @@ try:
     waste_df = load_waste_df()
     proc_df = load_process_df()
 except MissingDatasetError as error:
+    render_nasa_badge(missing_datasets=("waste_inventory",))
     st.error(format_missing_dataset_message(error))
     st.stop()
+else:
+    render_nasa_badge()
+
 polymer_density_distribution = numeric_series(
     waste_df, "pc_density_density_g_per_cm3"
 )

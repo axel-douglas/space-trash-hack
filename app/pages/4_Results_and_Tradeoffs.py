@@ -47,6 +47,7 @@ from app.modules.ui_blocks import (
     initialise_frontend,
     layout_block,
     render_brand_header,
+    render_nasa_badge,
     render_constraint_chips,
     render_dataset_badge,
 )
@@ -70,6 +71,25 @@ target = st.session_state.get("target")
 if not selected or not target:
     st.warning("Seleccioná una receta en **3 · Generador**.")
     st.stop()
+
+missing_badge_sources: list[str] = []
+try:
+    inventory_df = load_waste_df()
+except MissingDatasetError as error:
+    render_nasa_badge(missing_datasets=("waste_inventory",))
+    st.error(format_missing_dataset_message(error))
+    st.stop()
+else:
+    regolith_context = _load_regolith_context()
+    thermal_bundle = regolith_context.get("thermal")
+    gran_df = regolith_context.get("granulometry")
+    spectra_df = regolith_context.get("spectra")
+    gran_missing = gran_df is None or getattr(gran_df, "empty", True)
+    spectra_missing = spectra_df is None or getattr(spectra_df, "empty", True)
+    thermal_missing = thermal_bundle is None or getattr(thermal_bundle, "tg_curve", pd.DataFrame()).empty
+    if gran_missing or spectra_missing or thermal_missing:
+        missing_badge_sources.append("mgs1_regolith")
+    render_nasa_badge(missing_datasets=missing_badge_sources or None)
 
 cand = selected["data"]
 props = cand["props"]
@@ -103,11 +123,6 @@ planner = PropertyPlanner()
 evaluation = planner.evaluate_candidate(cand, target)
 constraint_entries = evaluation.get("entries", [])
 feasible = bool(evaluation.get("feasible", True))
-try:
-    inventory_df = load_waste_df()
-except MissingDatasetError as error:
-    st.error(format_missing_dataset_message(error))
-    st.stop()
 polymer_density_distribution = numeric_series(
     inventory_df, "pc_density_density_g_per_cm3"
 )
@@ -651,7 +666,7 @@ with st.container():
         st.dataframe(pd.DataFrame(comparisons).T.style.format("{:.3f}"), use_container_width=True)
 
 with st.expander("🛰️ Contexto y trazabilidad", expanded=True):
-    context_data = _load_regolith_context()
+    context_data = regolith_context
     materials_text = ", ".join(materials) if materials else "—"
     ids_text = ", ".join(cand.get("source_ids", [])) or "—"
     latent_text = ", ".join(f"{v:.2f}" for v in latent[:8]) if latent else "—"

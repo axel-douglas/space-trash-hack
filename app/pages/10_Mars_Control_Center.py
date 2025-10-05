@@ -43,6 +43,7 @@ from app.modules.mars_control_center import (
     MarsControlCenterService,
     summarize_artifacts,
 )
+from app.modules.io import MissingDatasetError, format_missing_dataset_message, require_waste_csv
 from app.modules.mission_overview import _format_metric, render_mission_objective
 from app.modules.ui_blocks import (
     badge_group,
@@ -50,12 +51,29 @@ from app.modules.ui_blocks import (
     initialise_frontend,
     micro_divider,
     render_brand_header,
+    render_nasa_badge,
 )
 
 
 configure_page(page_title="Rex-AI • Mars Control Center", page_icon="🛰️")
 initialise_frontend()
 render_brand_header(tagline="Mars Control Center · Interplanetary Recycling")
+
+missing_badge_sources: list[str] = []
+missing_inventory_error: MissingDatasetError | None = None
+try:
+    require_waste_csv()
+except MissingDatasetError as error:
+    missing_badge_sources.append("waste_inventory")
+    missing_inventory_error = error
+
+render_nasa_badge(missing_datasets=missing_badge_sources or None)
+
+if missing_inventory_error is not None:
+    st.warning(
+        "Modo heurístico activado: "
+        + format_missing_dataset_message(missing_inventory_error)
+    )
 
 
 _MANUAL_DECISIONS_KEY = "mars_decision_actions"
@@ -1900,6 +1918,11 @@ with tabs[1]:
     st.subheader("Inventario vivo")
     try:
         inventory_df, metrics, category_payload = telemetry_service.inventory_snapshot()
+    except MissingDatasetError as error:
+        st.info(
+            "Inventario NASA no disponible para el radar logístico: "
+            + format_missing_dataset_message(error)
+        )
     except Exception as exc:
         st.error(f"No se pudo cargar el inventario en vivo: {exc}")
     else:

@@ -359,6 +359,7 @@ def render_overview_dashboard(
         configure_page,
         initialise_frontend,
         render_brand_header,
+        render_nasa_badge,
     )
 
     configure_page(page_title="Mission Overview", page_icon="🛰️")
@@ -367,8 +368,17 @@ def render_overview_dashboard(
     current_step = set_active_step("home")
     render_brand_header()
 
+    try:
+        inventory_df = _resolve_inventory_loader(inventory_loader)
+    except MissingDatasetError as error:
+        render_nasa_badge(missing_datasets=("waste_inventory",))
+        st.error(format_missing_dataset_message(error))
+        st.stop()
+        return
+
     render_breadcrumbs(current_step)
     render_stepper(current_step)
+    render_nasa_badge()
 
     st.title("Panorama general de la misión")
     st.markdown(
@@ -392,13 +402,6 @@ def render_overview_dashboard(
           usalos para priorizar inspecciones.
         """
     )
-
-    try:
-        inventory_df = _resolve_inventory_loader(inventory_loader)
-    except MissingDatasetError as error:
-        st.error(format_missing_dataset_message(error))
-        st.stop()
-        return
 
     mission_metrics = compute_mission_summary(inventory_df)
     render_mission_objective(mission_metrics)

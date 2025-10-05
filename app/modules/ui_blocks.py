@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from html import escape
 from pathlib import Path
 import math
-from typing import Any, Generator, Iterable, Literal, Mapping, Optional
+from typing import Any, Generator, Iterable, Literal, Mapping, Optional, Sequence
 
 import streamlit as st
 from streamlit.delta_generator import DeltaGenerator
@@ -55,6 +55,83 @@ _PAGE_THEME: dict[str, str] = {
 _THEME_HASH_KEY = "__rexai_theme_hash__"
 
 _BRAND_LOGO_FILENAME = "logo_rexai.svg"
+
+_NASA_DATASETS: tuple[dict[str, str]] = (
+    {
+        "slug": "waste_inventory",
+        "label": "LRR waste inventory",
+        "description": (
+            "Inventario no metabólico de Logistics-to-Living (masa, volumen, humedad)."
+        ),
+    },
+    {
+        "slug": "trash_to_gas",
+        "label": "Trash-to-Gas mission deltas",
+        "description": (
+            "Balances de energía, agua y propulsor para rutas TtG/TtSG de LRR."
+        ),
+    },
+    {
+        "slug": "logistics_to_living",
+        "label": "Logistics-to-Living parameters",
+        "description": (
+            "Constantes de empaques, bolsas y reutilización para dimensionar logística."
+        ),
+    },
+    {
+        "slug": "mgs1_regolith",
+        "label": "MGS-1 regolith suite",
+        "description": (
+            "Granulometría, espectros VNIR y curvas TG/EGA del simulante marciano."
+        ),
+    },
+)
+
+_NASA_DATASET_LOOKUP: dict[str, dict[str, str]] = {
+    entry["slug"]: entry for entry in _NASA_DATASETS
+}
+
+_NASA_DATASET_ALIASES: dict[str, str] = {
+    "inventory": "waste_inventory",
+    "waste": "waste_inventory",
+    "waste_inventory": "waste_inventory",
+    "nasa_waste": "waste_inventory",
+    "nasa_waste_inventory": "waste_inventory",
+    "trash": "trash_to_gas",
+    "trash_to_gas": "trash_to_gas",
+    "ttg": "trash_to_gas",
+    "logistics": "logistics_to_living",
+    "logistics_to_living": "logistics_to_living",
+    "l2l": "logistics_to_living",
+    "regolith": "mgs1_regolith",
+    "mgs1": "mgs1_regolith",
+    "mgs_1": "mgs1_regolith",
+    "mgs-1": "mgs1_regolith",
+    "mgs1_regolith": "mgs1_regolith",
+    "mgs1_suite": "mgs1_regolith",
+}
+
+
+def _normalize_dataset_key(value: str) -> str:
+    text = "".join(ch if ch.isalnum() else "_" for ch in str(value).lower())
+    while "__" in text:
+        text = text.replace("__", "_")
+    return text.strip("_")
+
+
+def _canonical_dataset_slug(value: str) -> str | None:
+    normalized = _normalize_dataset_key(value)
+    candidate = _NASA_DATASET_ALIASES.get(normalized, normalized)
+    if candidate in _NASA_DATASET_LOOKUP:
+        return candidate
+    return None
+
+
+def _dataset_label(slug: str) -> str:
+    entry = _NASA_DATASET_LOOKUP.get(slug)
+    if entry:
+        return entry.get("label", slug.replace("_", " ").title())
+    return slug.replace("_", " ").title()
 
 
 @lru_cache(maxsize=None)
@@ -338,6 +415,104 @@ def render_dataset_badge(
 
     target = container or st
     target.markdown(markup, unsafe_allow_html=True)
+
+
+def render_nasa_badge(
+    *,
+    missing_datasets: Sequence[str] | None = None,
+    container: DeltaGenerator | None = None,
+    caption: str | None = None,
+) -> None:
+    """Display a mission-wide badge enumerating canonical NASA datasets."""
+
+    load_theme(show_hud=False)
+
+    target = container or st
+
+    missing_keys: set[str] = set()
+    extra_missing_labels: set[str] = set()
+    if missing_datasets:
+        for entry in missing_datasets:
+            slug = _canonical_dataset_slug(entry)
+            if slug is None:
+                label = str(entry).strip()
+                if label:
+                    extra_missing_labels.add(label)
+                continue
+            missing_keys.add(slug)
+
+    uses_physical = not missing_keys and not extra_missing_labels
+    heading_text = f"NASA data used: {'✅' if uses_physical else '⚠️'}"
+
+    list_items: list[str] = []
+    for dataset in _NASA_DATASETS:
+        slug = dataset["slug"]
+        label = escape(dataset["label"])
+        description = escape(dataset["description"])
+        is_missing = slug in missing_keys
+        badge_icon = "⚠️" if is_missing else "✅"
+        status = (
+            " <span style=\"color:var(--mission-color-warn,#facc15);font-weight:600;\">Falta</span>"
+            if is_missing
+            else ""
+        )
+        list_items.append(
+            "<li style='margin:0.1rem 0;'>"
+            f"{badge_icon} <strong>{label}</strong> – {description}{status}"
+            "</li>"
+        )
+
+    if extra_missing_labels:
+        details = ", ".join(sorted(extra_missing_labels))
+        list_items.append(
+            "<li style='margin:0.1rem 0;'>"
+            "⚠️ <strong>Otros datos</strong> – "
+            f"{escape(details)}"
+            "</li>"
+        )
+
+    badge_style = (
+        "margin: var(--mission-space-sm,0.75rem) 0; "
+        "padding: var(--mission-space-md,1rem); "
+        "border-radius: var(--mission-radius-md,0.5rem); "
+        "background: var(--mission-color-panel,rgba(15,23,42,0.72)); "
+        "border: 1px solid var(--mission-color-border,rgba(148,163,184,0.35)); "
+        "color: var(--mission-color-text,#e2e8f0); "
+        "font-size: 0.9rem; "
+        "line-height: 1.4;"
+    )
+    list_style = "list-style:none; margin:0.25rem 0 0; padding-left:0;"
+    tooltip = (
+        "Consultá las pestañas ‘🛰️ Trazabilidad NASA’ en Generador y Resultados"
+        " para tablas cruzadas."
+    )
+    badge_markup = (
+        f"<div class='mission-nasa-badge' style='{badge_style}' title='{escape(tooltip)}'>"
+        f"<div style='font-weight:700; font-size:1rem; margin-bottom:0.25rem;'>{heading_text}</div>"
+        f"<ul style='{list_style}'>{''.join(list_items)}</ul>"
+        "</div>"
+    )
+
+    target.markdown(badge_markup, unsafe_allow_html=True)
+
+    if caption is not None:
+        caption_text = caption
+    elif uses_physical:
+        caption_text = (
+            "Respaldado por inventarios, logística y perfiles ISRU publicados por NASA."
+        )
+    else:
+        missing_labels = [
+            _dataset_label(slug) for slug in sorted(missing_keys)
+        ] + sorted(extra_missing_labels)
+        joined = ", ".join(missing_labels)
+        caption_text = (
+            "⚠️ Heurísticas en uso: faltan referencias físicas de "
+            f"{joined}."
+        )
+
+    if caption_text:
+        target.caption(caption_text)
 
 
 def section(title: str, subtitle: str = "") -> None:
