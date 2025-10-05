@@ -30,7 +30,7 @@ from app.modules.ml_models import get_model_registry
 from app.modules.navigation import render_breadcrumbs, set_active_step
 from app.modules.page_data import build_ranking_table
 from app.modules.process_planner import choose_process
-from app.modules.safety import check_safety, safety_badge
+from app.modules.safety import check_safety, safety_badge, build_safety_compliance
 from app.modules.schema import (
     ALUMINIUM_LABEL_COLUMNS,
     ALUMINIUM_LABEL_MAP,
@@ -285,7 +285,10 @@ def _collect_target_badges(target: dict[str, Any] | None) -> list[tuple[str, str
     return badges
 
 
-def render_safety_indicator(candidate: dict[str, Any]) -> dict[str, Any]:
+def render_safety_indicator(
+    candidate: dict[str, Any],
+    target_data: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """Renderiza la indicación de seguridad para un candidato y devuelve el badge."""
     materials_raw = candidate.get("materials") or []
     if isinstance(materials_raw, (list, tuple, set)):
@@ -300,9 +303,11 @@ def render_safety_indicator(candidate: dict[str, Any]) -> dict[str, Any]:
 
     flags = check_safety(materials, process_name, process_id)
     badge = safety_badge(flags)
+    compliance_payload = build_safety_compliance(candidate, target_data, flags)
     badge["pfas"] = bool(flags.pfas)
     badge["microplastics"] = bool(flags.microplastics)
     badge["incineration"] = bool(flags.incineration)
+    badge.update(compliance_payload)
 
     level = badge.get("level", "OK")
     detail = badge.get("detail", "")
@@ -371,6 +376,36 @@ def render_safety_indicator(candidate: dict[str, Any]) -> dict[str, Any]:
         if detail_note:
             microcopy = f"{microcopy} {detail_note}"
         st.caption(microcopy)
+
+    compliance_rows = badge.get("compliance", [])
+    resource_rows = badge.get("resource_compliance", [])
+
+    if compliance_rows or resource_rows:
+        with st.container():
+            if compliance_rows and resource_rows:
+                env_col, resource_col = st.columns(2)
+            else:
+                env_col = st.container()
+                resource_col = None
+
+            if compliance_rows:
+                with env_col:
+                    st.markdown("**🧾 Checklist de cumplimiento**")
+                    for row in compliance_rows:
+                        icon = row.get("icon", "•")
+                        label = row.get("label", "")
+                        message = row.get("message", "")
+                        st.markdown(f"- {icon} **{label}** · {message}")
+
+            if resource_rows:
+                target_col = resource_col if resource_col is not None else env_col
+                with target_col:
+                    st.markdown("**🔋 Recursos vs misión**")
+                    for row in resource_rows:
+                        icon = row.get("icon", "•")
+                        label = row.get("label", "")
+                        message = row.get("message", "")
+                        st.markdown(f"- {icon} **{label}** · {message}")
 
     return badge
 
@@ -886,7 +921,7 @@ def render_candidate_card(
                     st.markdown("**Penalizaciones**")
                     st.dataframe(pen_df, hide_index=True, use_container_width=True)
 
-        badge = render_safety_indicator(candidate)
+        badge = render_safety_indicator(candidate, target_data=target_data)
 
         if st.button(f"✅ Seleccionar Opción {idx}", key=f"pick_{idx}"):
             view_model.set_selected(candidate, badge)

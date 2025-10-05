@@ -1,6 +1,7 @@
 import math
 import sys
 from pathlib import Path
+from typing import Any, Mapping
 
 if not __package__:
     repo_root = Path(__file__).resolve().parents[2]
@@ -129,6 +130,40 @@ def _get_value(source, attr, default=0.0):
     if isinstance(source, dict):
         return source.get(attr, default)
     return default
+
+
+def _render_compliance_panels(badge: Mapping[str, Any] | None) -> None:
+    if not isinstance(badge, Mapping):
+        return
+
+    compliance_rows = badge.get("compliance") or []
+    resource_rows = badge.get("resource_compliance") or []
+
+    if not compliance_rows and not resource_rows:
+        return
+
+    with layout_block("layout-grid layout-grid--dual layout-grid--flow", parent=None) as grid:
+        if compliance_rows:
+            with layout_block("depth-stack layer-shadow", parent=grid) as env_panel:
+                env_panel.markdown("**🧾 Checklist de cumplimiento**")
+                for row in compliance_rows:
+                    icon = row.get("icon", "•")
+                    label = row.get("label", "")
+                    message = row.get("message", "")
+                    env_panel.markdown(f"- {icon} **{label}** · {message}")
+        if resource_rows:
+            with layout_block("depth-stack layer-shadow", parent=grid) as res_panel:
+                res_panel.markdown("**🔋 Recursos vs misión**")
+                for row in resource_rows:
+                    icon = row.get("icon", "•")
+                    label = row.get("label", "")
+                    message = row.get("message", "")
+                    res_panel.markdown(f"- {icon} **{label}** · {message}")
+
+    st.caption(
+        "Usá este checklist para documentar mitigaciones ambientales y validar que la receta cumple "
+        "las restricciones de recursos del objetivo."
+    )
 def _collect_external_profiles(candidate: dict, inventory: pd.DataFrame) -> dict[str, dict[str, object]]:
     if not isinstance(candidate, dict) or inventory.empty:
         return {}
@@ -261,6 +296,8 @@ else:
         "La receta supera al menos una restricción. Ajustá materiales, procesos o"
         " límites y regenerá candidatos."
     )
+
+_render_compliance_panels(safety)
 
 error_rows: list[dict[str, object]] = []
 for entry in constraint_entries:

@@ -31,7 +31,7 @@ from app.modules.page_data import (
     build_export_kpi_table,
     build_material_summary_table,
 )
-from app.modules.safety import check_safety, safety_badge
+from app.modules.safety import check_safety, safety_badge, build_safety_compliance
 from app.modules.ui_blocks import (
     action_button,
     configure_page,
@@ -187,6 +187,7 @@ if option_numbers:
                     "incineration": bool(getattr(flags, "incineration", False)),
                 }
             )
+            badge.update(build_safety_compliance(candidate, target, flags))
             st.session_state["selected"] = {"data": candidate, "safety": badge}
             selected_candidate = candidate
             selected_badge = badge
