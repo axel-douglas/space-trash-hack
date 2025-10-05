@@ -13,13 +13,14 @@ ensure_streamlit_entrypoint(__file__)
 
 __doc__ = """Simplified scenario playbooks with actionable summaries."""
 
+from dataclasses import asdict
 from typing import Iterable
 
 import pandas as pd
 import streamlit as st
 
 from app.modules.navigation import render_breadcrumbs, set_active_step
-from app.modules.scenarios import PLAYBOOKS
+from app.modules.scenarios import PLAYBOOKS, ExampleRecipe
 from app.modules.ui_blocks import (
     configure_page,
     initialise_frontend,
@@ -40,20 +41,6 @@ render_breadcrumbs(current_step)
 render_nasa_badge()
 
 FEATURED_PLAYBOOKS: tuple[str, ...] = ("Residence Renovations", "Daring Discoveries")
-GENERATOR_FILTER_PRESETS: dict[str, dict[str, bool]] = {
-    "Residence Renovations": {
-        "showroom_only_safe": True,
-        "showroom_limit_energy": True,
-        "showroom_limit_water": True,
-        "showroom_limit_crew": True,
-    },
-    "Daring Discoveries": {
-        "showroom_only_safe": False,
-        "showroom_limit_energy": True,
-        "showroom_limit_water": False,
-        "showroom_limit_crew": True,
-    },
-}
 
 
 def _ordered_scenarios(options: Iterable[str]) -> list[str]:
@@ -123,17 +110,49 @@ with summary_columns[1]:
         )
     )
 
-st.subheader("Filtros recomendados")
-filters_payload = GENERATOR_FILTER_PRESETS.get(playbook.name, {})
-if filters_payload:
-    st.json(filters_payload, expanded=False)
-else:
-    st.caption("Este playbook no define filtros automáticos para el generador.")
+recipe: ExampleRecipe = playbook.example_recipe
 
-if st.button("Abrir generador con estos filtros"):
-    st.session_state["_playbook_generator_filters"] = {"scenario": playbook.name, "filters": filters_payload}
-    st.session_state["mission_active_step"] = "generator"
-    st.switch_page("pages/3_Generator.py")
+with st.container():
+    st.markdown("### 🧪 Receta destacada")
+    recipe_columns = st.columns((3, 2))
+    with recipe_columns[0]:
+        st.markdown(f"**Producto objetivo:** {playbook.product_label}")
+        st.caption(playbook.product_end_use)
+        st.markdown(f"**Proceso:** `{recipe.process_id}`")
+        st.markdown(recipe.batch_notes)
+        st.markdown("**Mezcla sugerida**")
+        for component in recipe.mix:
+            if component.role:
+                st.markdown(
+                    f"- **{component.material}** — {component.quantity} _(Rol: {component.role})_"
+                )
+            else:
+                st.markdown(f"- **{component.material}** — {component.quantity}")
+
+    with recipe_columns[1]:
+        st.markdown("**Metadatos operativos**")
+        for label, value in playbook.metadata.items():
+            st.markdown(f"- {label}: **{value}**")
+
+        filters_payload = playbook.generator_filters or recipe.generator_filters or {}
+        if filters_payload:
+            st.markdown("**Filtros sugeridos**")
+            st.json(filters_payload, expanded=False)
+        else:
+            st.caption("Este playbook no define filtros automáticos para el generador.")
+
+        if st.button("Aplicar receta en generador"):
+            st.session_state["_playbook_generator_filters"] = {
+                "scenario": playbook.name,
+                "filters": filters_payload,
+                "recipe": {
+                    "process_id": recipe.process_id,
+                    "mix": [asdict(component) for component in recipe.mix],
+                    "product_label": playbook.product_label,
+                },
+            }
+            st.session_state["mission_active_step"] = "generator"
+            st.switch_page("pages/3_Generator.py")
 
 st.subheader("Recursos del candidato activo")
 st.caption("Mirá el consumo estimado de la opción elegida antes de lanzar el playbook.")
