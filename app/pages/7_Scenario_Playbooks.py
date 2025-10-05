@@ -25,6 +25,7 @@ from app.modules.ui_blocks import (
     initialise_frontend,
     layout_stack,
     render_brand_header,
+    render_nasa_badge,
 )
 
 configure_page(page_title="Scenario Playbooks", page_icon="📚")
@@ -35,6 +36,8 @@ current_step = set_active_step("playbooks")
 render_brand_header()
 
 render_breadcrumbs(current_step)
+
+render_nasa_badge()
 
 FEATURED_PLAYBOOKS: tuple[str, ...] = ("Residence Renovations", "Daring Discoveries")
 GENERATOR_FILTER_PRESETS: dict[str, dict[str, bool]] = {
