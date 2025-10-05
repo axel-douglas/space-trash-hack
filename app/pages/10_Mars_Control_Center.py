@@ -786,21 +786,24 @@ def _add_capsule_overlays(
     return len(xs)
 
 
-def _load_jezero_crater_image() -> tuple[Image.Image, Path | None] | None:
+@st.cache_data(show_spinner=False, ttl=3600)
+def _load_jezero_crater_image() -> tuple[bytes, Path | None] | None:
     local_texture = _mars_local_texture_path()
     if local_texture:
         try:
-            return Image.open(local_texture).convert("RGB"), local_texture
+            return local_texture.read_bytes(), local_texture
         except Exception:
             pass
 
     try:
         with urlopen(_REMOTE_JEZERO_IMAGE, timeout=10) as response:
             data = response.read()
-        image = Image.open(io.BytesIO(data)).convert("RGB")
-        return image, None
+        if data:
+            return data, None
     except Exception:
-        return None
+        pass
+
+    return None
 
 
 def _render_legacy_crater_overview() -> None:
@@ -813,7 +816,17 @@ def _render_legacy_crater_overview() -> None:
         )
         return
 
-    crater_image, texture_path = crater_payload
+    crater_bytes, texture_path = crater_payload
+    try:
+        crater_image = Image.open(io.BytesIO(crater_bytes)).convert("RGB")
+    except Exception:
+        st.info(
+            "Añadí una imagen equirectangular de Jezero en `datasets/mars/`"
+            " (por ejemplo, `jezero_reference.jpg`) o en `app/static/images/`"
+            " para habilitar el briefing visual del cráter."
+        )
+        return
+
     width, height = crater_image.size
 
     fig = go.Figure()
