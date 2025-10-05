@@ -1,62 +1,52 @@
 # Sprint 4 — Extensiones opcionales
 
-Este sprint activa los componentes opcionales previstos en el plan técnico
-sin almacenar binarios en la repo. Todos los artefactos se generan bajo
-`data/models/` y se consumen a través de scripts reproducibles.
+Resumen de funcionalidades avanzadas que pueden activarse cuando se dispone de
+más tiempo de cómputo o dependencias adicionales. Todas escriben artefactos en
+`data/models/` y funcionan como capas opcionales sobre el pipeline base.
 
-## Modelos XGBoost por target
+## 1. XGBoost por target
 
-* El pipeline de `app/modules/model_training.py` entrena un `XGBRegressor`
-  independiente por target cuando `xgboost` está instalado.
-* Los resultados se guardan en `data/models/rexai_xgboost.joblib` y su
-  resumen de métricas queda accesible desde `data/models/metadata.json`
-  (sección `artifacts.xgboost`).
-* Para compararlo con el RandomForest basta con ejecutar:
+- Requisito: `pip install xgboost`.
+- `app/modules/model_training.py` entrena un `XGBRegressor` por target y guarda el
+  resultado en `data/models/rexai_xgboost.joblib`.
+- Las métricas se integran en `data/models/metadata.json` (`artifacts.xgboost`).
+- Ejemplo de ejecución:
 
-  ```bash
-  python -m app.modules.model_training --samples 512 --seed 7
-  ```
+```bash
+python -m app.modules.model_training --samples 512 --seed 7
+```
 
-  El log mostrará MAE/RMSE por target y la metadata consolida ambos
-  resultados para dashboards o reportes.
+## 2. Autoencoder tabular
 
-## Autoencoder tabular opcional
+- Requisito: `pip install torch`.
+- Genera `data/models/rexai_autoencoder.pt` y registra la configuración en la
+  metadata (`artifacts.autoencoder`).
+- `LatentSpaceExplorer` expone utilidades:
+  - `detect_duplicates(df)` → detecta recetas casi idénticas en el espacio latente.
+  - `propose_candidates(seed, objective)` → genera variantes alrededor de una
+    receta semilla.
+- Las funciones devuelven resultados vacíos si el autoencoder no está disponible,
+  evitando errores en la UI.
 
-* El entrenamiento opcional crea `data/models/rexai_autoencoder.pt`
-  (no versionado). Su configuración queda registrada en la metadata
-  (`artifacts.autoencoder`), permitiendo reproducir dimensiones latentes.
-* `LatentSpaceExplorer` (nuevo módulo) expone:
-  * `detect_duplicates(df)`: identifica recetas casi idénticas en el espacio
-    latente.
-  * `propose_candidates(seed, objective)`: genera variantes alrededor de una
-    receta semilla aplicando ruido gaussiano controlado.
-* Las funciones degradan a resultados vacíos si el autoencoder no está
-  disponible, de modo que la UI y los scripts existentes no se rompan.
+## 3. Optimización en espacio latente
 
-## Optimización en espacio latente
+```bash
+python scripts/optimize_latent.py datasets/generated/candidates.parquet \
+    --objective "rigidez:1.0,crew_min:-0.3,energy_kwh:-0.1" \
+    --samples 128 --radius 0.4 --top 15
+```
 
-* `scripts/optimize_latent.py` toma un dataset de candidatos (Parquet/CSV/JSON)
-  y expande automáticamente recetas prometedoras según un objetivo lineal
-  configurable. Ejemplo:
+- Amplía recetas prometedoras aplicando ruido gaussiano controlado.
+- `--duplicates-threshold` ayuda a depurar candidatos similares antes de la
+  validación humana.
 
-  ```bash
-  python scripts/optimize_latent.py datasets/generated/candidates.parquet \
-      --objective "rigidez:1.0,crew_min:-0.3,energy_kwh:-0.1" \
-      --samples 128 --radius 0.4 --top 15
-  ```
+## 4. Packaging de artefactos
 
-* El script también puede detectar duplicados latentes (`--duplicates-threshold`)
-  para depurar listas antes de enviarlas a validación humana.
+- `python -m scripts.package_model_bundle --output dist/rexai_model_bundle_<tag>.zip`
+  empaqueta modelos y metadata en un ZIP reproducible.
+- Publicá el archivo generado como artefacto de release y configurá
+  `MODEL_BUNDLE_URL` / `MODEL_BUNDLE_SHA256` para descargas automáticas.
 
-## Packaging de artefactos
-
-* `scripts/package_model_bundle.py` sigue disponible para empaquetar modelos y
-  metadata en un ZIP reproducible sin versionar binarios dentro del repositorio.
-* El workflow esperado es: entrenar → `package_model_bundle.py` → subir a un
-  artefacto remoto e indicar la URL mediante `MODEL_BUNDLE_URL`.
-
-Con estas extensiones, el equipo puede ejecutar experimentos avanzados y
-mantener los binarios fuera de la repo, cumpliendo con los criterios del
-Sprint 4. Las pruebas unitarias nuevas (`tests/test_latent_optimizer.py`)
-verifican que las utilidades se comportan de forma determinista y evitan
-duplicados al generar candidatos.
+Estas extensiones permiten experimentar sin versionar binarios en el repositorio
+principal. Los tests (`tests/test_latent_optimizer.py`) garantizan que el flujo
+sea determinista y sin duplicados.

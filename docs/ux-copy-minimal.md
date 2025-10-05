@@ -1,35 +1,28 @@
 # Guía de copy minimalista
 
-## Principios de tono
-- Escribí en forma directa y concreta. Cada frase debe indicar la acción o el dato clave sin rodeos.
-- Evitá superlativos y exageraciones. Preferí cifras o hechos verificables.
-- Usá verbos de acción en títulos y botones ("Configurá", "Exportá", "Revisá").
-- Optá por títulos cortos (máx. 4 palabras). Si necesitás contexto adicional, agregalo en un subtítulo o caption.
-- No uses metáforas ni analogías espaciales; describí lo que ocurre en la interfaz.
-- Mantené la voz en segunda persona singular (vos) para ser consistente con el resto del producto.
+## Principios
 
-## Plantillas sugeridas
-- **Título de sección:** `Verbo + objeto directo` (ej.: `Analizá residuos`, `Generá lote`).
-- **Subtítulo o lead:** `Contexto breve + resultado` (ej.: `Analizamos el inventario NASA y señalamos masas críticas`).
-- **Botón principal:** `Verbo de acción en infinitivo o imperativo` (ej.: `Generar lote`, `Exportar reporte`).
-- **Mensajes de estado:** `Verbo + estado actual` (ej.: `Procesando lote`, `Resultados listos`).
-- **Avisos informativos:** `Acción recomendada + condición` (ej.: `Cargá el inventario antes de generar recetas`).
+- Usa verbos de acción y titulares concisos (máx. 4 palabras).
+- Explicá qué debe hacer la tripulación inmediatamente después de leer el
+  mensaje.
+- Evitá metáforas; preferí datos verificables o indicaciones concretas.
+- Mantené la voz en segunda persona (vos) para coherencia con el resto de la app.
 
-## Ejemplos antes / después
-### Home (`app/Home.py`)
-- La vista inicial consolida el panel principal directamente en Home para
-  mantener la consistencia del flujo sin depender de un paso intermedio.
-- **Antes:** "Rex-AI orquesta el reciclaje orbital y marciano".
-- **Después:** "Rex-AI coordina el reciclaje orbital y marciano" (sustituye la metáfora por un verbo directo).
+## Plantillas
 
-- **Antes:** "Radiografiamos el inventario NASA, destacamos masas críticas...".
-- **Después:** "Analizamos el inventario NASA, destacamos masas críticas..." (elimina la metáfora médica y mantiene la acción).
+- **Título de sección**: `Verbo + objeto directo` (ej. `Analizá residuos`).
+- **Lead / subtítulo**: `Contexto + resultado` (ej. `Balanceamos recursos y riesgo`).
+- **Botón principal**: `Verbo imperativo` (ej. `Generar lote`).
+- **Mensaje de estado**: `Verbo + estado` (ej. `Procesando lote`).
+- **Aviso**: `Acción recomendada + condición` (ej. `Cargá inventario para generar`).
 
-### Generador (`app/pages/3_Generator.py`)
-- **Antes:** "¿Qué hace el generador (en criollo)?".
-- **Después:** "¿Cómo funciona el generador?" (pregunta directa, sin modismos).
+## Ejemplos
 
-- **Antes:** "Pistas visuales sobre cómo evoluciona el frente Pareto...".
-- **Después:** "Visualizá cómo evoluciona el frente Pareto..." (usa un verbo de acción y elimina lenguaje figurado).
+| Antes | Después |
+| --- | --- |
+| “¿Qué hace el generador (en criollo)?” | “¿Cómo funciona el generador?” |
+| “Radiografiamos el inventario NASA…” | “Analizamos el inventario NASA…” |
+| “Filtros recomendados activados. Revisá el showroom para verlos en acción.” | “Filtros recomendados activados. Revisá el showroom para entender la priorización.” |
 
-Seguí estas pautas al redactar nuevos componentes o revisar copy existente para conservar una narrativa minimalista y consistente.
+Usá estas guías al redactar nuevos componentes o revisar copy existente para
+mantener una narrativa clara y consistente.

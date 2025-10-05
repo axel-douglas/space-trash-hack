@@ -87,7 +87,10 @@ feedback_summary_df = build_feedback_summary_table(expanded_feedback_df)
 
 with layout_stack():
     st.title("📝 Feedback & Impact")
-    st.caption("Registra corridas reales, consolida el feedback y cuantificá el impacto en la misión.")
+    st.caption(
+        "Documentá resultados reales, conectalos con el objetivo activo y usá los"
+        " registros para reentrenar Rex-AI sin perder trazabilidad."
+    )
 
 metric_cols = st.columns(4)
 metric_cols[0].metric("Corridas registradas", impact_summary.get("runs", 0))
@@ -97,18 +100,24 @@ metric_cols[3].metric("Crew total (min)", _format_metric(impact_summary.get("cre
 
 if not feedback_summary_df.empty:
     st.subheader("Impacto del feedback")
+    st.caption("Indicadores calculados a partir de feedback estructurado: medias, desvíos y alertas relevantes.")
     st.dataframe(feedback_summary_df, use_container_width=True, hide_index=True)
 else:
     st.caption("Aún no se registró feedback cuantitativo.")
 
 st.subheader("Corridas registradas")
+st.caption("Historial de lotes ejecutados con métricas reales y notas asociadas.")
 if expanded_impact_df.empty:
-    st.info("Todavía no hay registros de impacto. Usá el formulario para agregar la primera corrida.")
+    st.info(
+        "Todavía no hay registros de impacto. Cargá tu primera corrida con masa,"
+        " energía, agua y crew medidos para iniciar el historial."
+    )
 else:
     impact_preview = expanded_impact_df.sort_values("ts_iso", ascending=False).head(20)
     st.dataframe(impact_preview, use_container_width=True, hide_index=True)
 
 st.subheader("Feedback recientes")
+st.caption("Respuestas individuales de la tripulación con su percepción del proceso.")
 if expanded_feedback_df.empty:
     st.caption("Sin feedback registrado por el momento.")
 else:
@@ -119,6 +128,7 @@ st.markdown("---")
 
 with st.form("impact_form"):
     st.subheader("Registrar impacto de una corrida")
+    st.caption("Ingresá métricas medidas en campo para alimentar el análisis de impacto y readiness del modelo.")
     scenario = st.selectbox(
         "Escenario",
         [target.get("scenario", "-")] if isinstance(target, dict) else ["-"],
@@ -156,11 +166,12 @@ with st.form("impact_form"):
             extra={"notes": impact_notes},
         )
         append_impact(entry)
-        st.success("Impacto registrado.")
+        st.success("Impacto registrado. Los datos quedan listos para dashboards y reentrenamiento.")
         st.rerun()
 
 with st.form("feedback_form"):
     st.subheader("Registrar feedback operativo")
+    st.caption("Capturá percepciones cualitativas y cuantitativas de la tripulación tras ejecutar la receta.")
     astronaut = st.text_input("Operador o equipo", value="")
     overall = st.slider("Satisfacción general", 0, 10, 8)
     rigidity_ok = st.checkbox("Rigidez dentro de lo esperado", value=True)
@@ -186,5 +197,5 @@ with st.form("feedback_form"):
             },
         )
         append_feedback(entry)
-        st.success("Feedback registrado.")
+        st.success("Feedback registrado. Se actualizará el resumen y quedará disponible para el próximo reentrenamiento.")
         st.rerun()

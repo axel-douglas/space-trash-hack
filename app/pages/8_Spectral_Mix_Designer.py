@@ -24,7 +24,10 @@ initialise_frontend()
 render_brand_header()
 
 st.title("🌈 Mezclador espectral FTIR")
-st.caption("Subí una firma objetivo y Rex-AI propondrá una mezcla viable usando el stock disponible.")
+st.caption(
+    "Subí una firma objetivo y Rex-AI propondrá una mezcla viable aprovechando"
+    " el stock disponible y las curvas de referencia NASA/UCF."
+)
 
 try:
     bundle = ds.load_material_reference_bundle()
@@ -33,7 +36,7 @@ except Exception as error:  # pragma: no cover - fallback for missing datasets
     st.stop()
 
 if not bundle.spectral_curves:
-    st.info("El bundle de referencia no incluye curvas FTIR para mezclar todavía.")
+    st.info("El bundle de referencia todavía no incluye curvas FTIR para mezclar.")
     st.stop()
 
 spectral_keys = sorted(bundle.spectral_curves.keys())
@@ -109,9 +112,9 @@ with layout_block("layout-stack"):
         else:
             st.info("El CSV no contiene filas con datos numéricos.")
     elif uploaded_file is None:
-        st.info("Cargá un CSV para obtener la mezcla propuesta.")
+        st.info("Cargá un CSV con la firma objetivo para calcular la mezcla.")
     elif not selected_materials:
-        st.info("Seleccioná al menos un material base.")
+        st.info("Seleccioná al menos un material base antes de lanzar el solver.")
 
 if not result_payload:
     st.stop()
@@ -122,6 +125,7 @@ target_curve = result_payload.get("target_curve")
 error_metrics = result_payload.get("error", {})
 
 st.subheader("Comparativa espectral")
+st.caption("Superponemos la firma objetivo, la mezcla sugerida y la línea base para auditar el ajuste.")
 if isinstance(synthetic_curve, pd.DataFrame) and isinstance(target_curve, pd.DataFrame):
     target_df = target_curve.rename(columns={"intensity": "value"})
     target_df["serie"] = "Objetivo"
@@ -145,6 +149,7 @@ else:
 
 if not coefficients.empty:
     st.subheader("Receta recomendada")
+    st.caption("Fracciones normalizadas por material seleccionadas para reproducir la firma de destino.")
     stock_limits = {}
     if not stock_df.empty and stock_df["kg"].sum() > 0:
         total_stock = float(stock_df["kg"].sum())
@@ -161,6 +166,7 @@ if not coefficients.empty:
 
 if error_metrics:
     st.subheader("Errores de ajuste")
+    st.caption("Metadatos cuantitativos de la mezcla propuesta: RMSE, error relativo por banda y residuos.")
     metrics_df = pd.DataFrame(
         {
             "Métrica": ["MAE", "RMSE", "Error máximo"],

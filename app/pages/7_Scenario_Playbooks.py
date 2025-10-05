@@ -65,12 +65,18 @@ selected_candidate = state_sel.get("data") if isinstance(state_sel, dict) else N
 props = selected_candidate.get("props") if isinstance(selected_candidate, dict) else None
 
 if not target:
-    st.info("Definí un objetivo en **2 · Target Designer** para habilitar los playbooks.")
+    st.info(
+        "Necesitás un objetivo activo para recomendar procedimientos. Configuralo"
+        " en **2 · Target Designer** y volvé a esta pantalla."
+    )
     st.stop()
 
 with layout_stack():
     st.title("📚 Scenario Playbooks")
-    st.caption("Procedimientos listos para ejecutar según el escenario operativo seleccionado.")
+    st.caption(
+        "Accedé a guías paso a paso calibradas para cada escenario. Cada playbook"
+        " incluye filtros sugeridos, métricas y checklist editable."
+    )
 
 scenarios = list(PLAYBOOKS.keys())
 if not scenarios:
@@ -127,6 +133,7 @@ if st.button("Abrir generador con estos filtros"):
     st.switch_page("pages/3_Generator.py")
 
 st.subheader("Recursos del candidato activo")
+st.caption("Mirá el consumo estimado de la opción elegida antes de lanzar el playbook.")
 metric_columns = st.columns(4)
 metrics = [
     ("Masa final (kg)", getattr(props, "mass_final_kg", None)),
@@ -143,6 +150,7 @@ if not props:
     st.caption("Seleccioná un candidato en **3 · Generador** para ver métricas reales.")
 
 st.subheader("Pasos del playbook")
+st.caption("Cada paso combina tareas operativas y notas técnicas para guiar a la tripulación.")
 steps_df = pd.DataFrame(
     {
         "Paso": list(range(1, len(playbook.steps) + 1)),
@@ -153,6 +161,7 @@ steps_df = pd.DataFrame(
 st.dataframe(steps_df, use_container_width=True, hide_index=True)
 
 st.subheader("Checklist editable")
+st.caption("Personalizá la lista de control y compartila con el equipo en segundos.")
 default_lines = [
     "- Verificar disponibilidad de materiales",
     "- Preparar equipo de proceso",

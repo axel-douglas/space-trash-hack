@@ -66,7 +66,10 @@ target = st.session_state.get("target")
 selected_state = st.session_state.get("selected")
 
 if not candidates or not target:
-    st.warning("Generá candidatos en **3 · Generador** y definí un objetivo en **2 · Target Designer**.")
+    st.warning(
+        "Necesitás al menos una receta seleccionada y un objetivo definido. Volvé"
+        " a **2 · Target Designer** y **3 · Generador asistido** antes de exportar."
+    )
     st.stop()
 
 selected_candidate = selected_state["data"] if isinstance(selected_state, dict) else None
@@ -83,8 +86,8 @@ export_df = build_candidate_export_table(candidates, inventory_df)
 with layout_stack():
     st.title("📤 Pareto & Export")
     st.caption(
-        "Explorá la frontera de Pareto con límites reales y exportá el plan priorizado "
-        "para compartirlo con la tripulación."
+        "Filtrá por límites operativos, identificá las opciones que siguen en el"
+        " frente Pareto y descargá los paquetes listos para operaciones."
     )
 
 kpi_df = build_export_kpi_table(export_df)
@@ -104,6 +107,10 @@ if not kpi_df.empty:
 limits_container = st.container()
 with limits_container:
     st.subheader("Límites activos")
+    st.caption(
+        "Ajustá manualmente los topes de energía, agua y crew para reflejar la"
+        " planificación final antes de exportar."
+    )
     defaults = {
         "energy": _safe_float(target.get("max_energy_kwh"), fallback=_safe_float(export_df["Energía (kWh)"].max())),
         "water": _safe_float(target.get("max_water_l"), fallback=_safe_float(export_df["Agua (L)"].max())),
@@ -193,6 +200,10 @@ else:
     filtered_df["Seleccionado"] = False
 
 st.subheader("Opciones dentro de límites")
+st.caption(
+    "Filtramos automáticamente las recetas que cumplen los límites actuales."
+    " Las marcadas en celeste siguen perteneciendo al frente Pareto."
+)
 st.dataframe(
     filtered_df,
     use_container_width=True,
@@ -202,6 +213,7 @@ st.dataframe(
 materials_df = build_material_summary_table(candidates)
 if not materials_df.empty:
     st.subheader("Top residuos aportados")
+    st.caption("Qué materiales sostienen la receta prioritaria y cuánto contribuye cada uno.")
     st.dataframe(materials_df, use_container_width=True, hide_index=True)
 
 if selected_candidate and isinstance(selected_badge, dict):
@@ -211,9 +223,11 @@ if selected_candidate and isinstance(selected_badge, dict):
     st.markdown(
         f"**Opción {option_text}** — {selected_candidate.get('process_name', 'Proceso')}"
     )
-    st.caption(f"Seguridad: {selected_badge.get('level', '—')} · {selected_badge.get('detail', '')}")
+    st.caption(
+        f"Seguridad: {selected_badge.get('level', '—')} · {selected_badge.get('detail', '')}"
+    )
 else:
-    st.info("Seleccioná un plan para habilitar la exportación.")
+    st.info("Elegí un plan prioritario para activar las descargas y el resumen de seguridad.")
 
 st.markdown("---")
 
@@ -252,4 +266,4 @@ if selected_candidate:
             state="idle",
         )
 else:
-    st.caption("Los botones de exportación se activan al elegir un plan prioritario.")
+    st.caption("Los botones de exportación se habilitan cuando seleccionás un plan en la tabla de arriba.")

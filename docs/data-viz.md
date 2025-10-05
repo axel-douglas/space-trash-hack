@@ -1,97 +1,61 @@
 # Rex-AI Data Visualization Theme
 
-La experiencia visual de Rex-AI está inspirada en tableros automotrices de gama
-alta: superficies satinadas, tipografías técnicas y acentos eléctricos que
-refuerzan precisión y dinamismo. Este documento resume las guías de uso,
-paletas y configuraciones disponibles para Altair y Plotly.
+Guía para utilizar los temas registrados de Altair y Plotly en la consola
+Rex-AI. Describe cómo activar la paleta, qué tokens están disponibles y buenas
+prácticas para mantener consistencia visual.
 
 ## Activación
 
-* La app registra los temas automáticamente llamando a
-  `initialise_frontend()` (expuesta por `app.modules.ui_blocks`) inmediatamente
-  después de `st.set_page_config()`.
-* El modo por defecto es `dark`. Puede forzarse otra variante definiendo la
-  variable de entorno `REXAI_THEME_MODE=light` o `REXAI_THEME_MODE=dark`.
-* Ambos motores (Altair y Plotly) comparten tokens cromáticos a través del
-  módulo `app.modules.visual_theme`. Para acceder a ellos:  
-  ```python
-  from app.modules.visual_theme import get_palette
+```python
+from app.modules.ui_blocks import initialise_frontend
+from app.modules.visual_theme import apply_global_visual_theme
 
-  palette = get_palette()  # respeta el modo activo
-  st.write(palette.categorical)
-  ```
+initialise_frontend()
+apply_global_visual_theme()
+```
 
-## Tipografía y layout
+- El modo por defecto es oscuro; podés forzarlo con
+  `REXAI_THEME_MODE=light|dark`.
+- `get_palette()` expone los colores actuales para integraciones personalizadas.
 
-| Elemento               | Configuración                                            |
-|------------------------|----------------------------------------------------------|
-| Títulos / headings     | `Rajdhani`, semibold, espaciado 0.02em                    |
-| Cuerpos / labels       | `Inter`, 12–14px según el motor                           |
-| Fondos                 | Panel satinado (ver paleta) con grid en baja opacidad     |
-| Bordes y gridlines     | Gris azulado translúcido (`grid` en la paleta)            |
-| Hover / focus          | Fondos oscuros con borde en `accent`                      |
-| Selecciones destacadas | Gradiente eléctrico (ver sección siguiente)               |
+## Tokens principales
 
-## Paletas
+| Token | Uso |
+| --- | --- |
+| `background` | Fondo global del dashboard. |
+| `surface` | Paneles y tarjetas. |
+| `panel` | Contenedores secundarios / overlays. |
+| `text`, `muted` | Texto principal y secundario. |
+| `accent`, `accent_soft` | Curvas activas, marcas destacadas. |
+| `grid` | Líneas de referencia y ejes. |
+| `categorical` | Lista de colores para series múltiples. |
 
-### Modo claro
+Los valores cambian automáticamente entre modo claro y oscuro. Usá el helper
+para obtenerlos:
 
-| Token              | Valor                                            | Uso principal                                  |
-|--------------------|--------------------------------------------------|------------------------------------------------|
-| `background`       | `#F8FAFC`                                        | Fondo de aplicación / dashboards               |
-| `surface`          | `#FFFFFF`                                        | Paneles, tarjetas y áreas de gráfica           |
-| `panel`            | `#E2E8F0`                                        | Bordes suaves y barras de herramientas         |
-| `text`             | `#0F172A`                                        | Texto principal                                |
-| `muted`            | `#475569`                                        | Etiquetas secundarias                          |
-| `accent`           | `#1D4ED8`                                        | Líneas, marcadores activos                     |
-| `accent_soft`      | `#60A5FA`                                        | Rellenos suaves                                |
-| `grid`             | `rgba(30,64,175,0.14)`                            | Gridlines y ejes                               |
-| `categorical`      | `#0F76FF`, `#1DD3F8`, `#F59E0B`, `#14B8A6`, `#7C3AED`, `#F97316` | Series múltiples | 
+```python
+from app.modules.visual_theme import get_palette
+palette = get_palette()
+alt.themes.set_theme("rexai_dark")
+```
 
-### Modo oscuro
+## Gradiente eléctrico
 
-| Token              | Valor                                            | Uso principal                                  |
-|--------------------|--------------------------------------------------|------------------------------------------------|
-| `background`       | `#070B12`                                        | Fondo global                                   |
-| `surface`          | `#0E141F`                                        | Paneles y tarjetas                             |
-| `panel`            | `#192132`                                        | Delineados sutiles                             |
-| `text`             | `#F8FAFC`                                        | Texto principal                                |
-| `muted`            | `#94A3B8`                                        | Texto secundario                               |
-| `accent`           | `#38BDF8`                                        | Curvas y puntos activos                        |
-| `accent_soft`      | `#7DD3FC`                                        | Rellenos suaves                                |
-| `grid`             | `rgba(148,163,184,0.22)`                          | Gridlines y ejes                               |
-| `categorical`      | `#7DD3FC`, `#34D399`, `#FBBF24`, `#F472B6`, `#A855F7`, `#F97316` | Series múltiples | 
-
-### Gradiente eléctrico (highlight)
-
-El resalte para selecciones y transiciones se basa en un gradiente de energía
-eléctrica aplicado en ambos motores como escala secuencial:
-
-* `#7CF4FF`
-* `#2AA8FF`
-* `#4C4CFF`
-
-Altair lo usa para `range["diverging"]`, `range["heatmap"]` y `range["ramp"]`,
-mientras que Plotly lo asigna a `coloraxis` y a los `colorscale` por defecto en
-`scatter`, `bar` y `heatmap`. Aplicarlo manualmente es tan simple como usar el
-rango `"ramp"` o el template `"rexai_dark"/"rexai_light"` ya registrado.
+El gradiente `palette.electric_gradient` (`#7CF4FF → #2AA8FF → #4C4CFF`) se usa
+para highlights, heatmaps y selección de filas. En Plotly está disponible como
+`colorscale="rexai_electric"`.
 
 ## Buenas prácticas
 
-1. **Evitar hardcodear colores**: el tema ya define escalas por defecto para
-   Altair y Plotly. Solo sobrescribir cuando haya semántica crítica.
-2. **Contraste**: sobre fondos personalizados, respetar las combinaciones
-   `text` + `muted` para mantener accesibilidad WCAG AA.
-3. **Highlight de selección**: para resaltar filas/barra activa, usar los
-   colores del gradiente (`palette.electric_gradient`) en orden o aplicarlos a
-   `marker.line.color` en Plotly.
-4. **Impresión / exportación**: para fondos blancos usar `REXAI_THEME_MODE=light`
-   en la línea de comandos antes de ejecutar `streamlit run`.
+1. Evitá hardcodear colores; apoyate en el template `rexai_dark`/`rexai_light`.
+2. Reutilizá `palette.categorical` para asegurar contraste adecuado.
+3. Para exportar a PDF o slides con fondo claro activá `REXAI_THEME_MODE=light`
+ante de ejecutar `streamlit run`.
+4. Documentá cualquier escala adicional en este archivo para mantener el catálogo
+   al día.
 
-## Referencias rápidas
+## Referencias
 
-* Altair: tema registrado como `rexai_dark` y `rexai_light`.
-* Plotly: template registrado como `rexai_dark` y `rexai_light`; el template
-  activo queda en `pio.templates.default`.
-* CSS global: se inyecta automáticamente mediante `apply_global_visual_theme`,
-  reutilizando `app/static/styles/base.css`.
+- Altair registra los temas como `rexai_dark` y `rexai_light`.
+- Plotly establece `pio.templates.default = "rexai_dark"` (o light según modo).
+- El CSS global se inyecta mediante `apply_global_visual_theme()`.

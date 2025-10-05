@@ -19,50 +19,60 @@ class MissionStep:
 
 
 MISSION_STEPS: tuple[MissionStep, ...] = (
-    MissionStep("home", "Home", "Home", "Panel principal de la misión"),
-    MissionStep("target", "Definir objetivo", "2_Target_Designer", "Configura las metas de la misión"),
-    MissionStep("generator", "Generador asistido", "3_Generator", "Explora candidatos sugeridos por IA"),
+    MissionStep("home", "Home", "Home", "Panorama general: inventario, salud del modelo y alertas críticas."),
+    MissionStep(
+        "target",
+        "Definir objetivo",
+        "2_Target_Designer",
+        "Configura metas de producto y límites operativos antes de generar recetas.",
+    ),
+    MissionStep(
+        "generator",
+        "Generador asistido",
+        "3_Generator",
+        "Orquesta candidatos creados con IA y reglas de seguridad para la misión en curso.",
+    ),
     MissionStep(
         "results",
         "Resultados y trade-offs",
         "4_Results_and_Tradeoffs",
-        "Evalúa resultados y métricas clave",
+        "Desglosa cada receta: rendimiento, incertidumbre y cumplimiento de restricciones.",
     ),
     MissionStep(
         "compare",
         "Compare & Explain",
         "5_Compare_and_Explain",
-        "Compara alternativas y explica decisiones",
+        "Contrasta alternativas, interpreta las métricas y documenta la decisión.",
     ),
     MissionStep(
         "export",
         "Pareto & Export",
         "6_Pareto_and_Export",
-        "Prepara entregables y exporta datos",
+        "Examina el frente Pareto y descarga entregables listos para operaciones.",
     ),
     MissionStep(
         "playbooks",
         "Scenario Playbooks",
         "7_Scenario_Playbooks",
-        "Crea playbooks con filtros predefinidos",
+        "Aplica procedimientos preconfigurados y atajos de filtrado por escenario.",
     ),
     MissionStep(
         "feedback",
         "Feedback & Impact",
         "8_Feedback_and_Impact",
-        "Recoge feedback y mide impacto",
+        "Registra resultados reales, cuantifica impactos y prepara reentrenamientos.",
     ),
     MissionStep(
         "capacity",
         "Capacity Simulator",
         "9_Capacity_Simulator",
-        "Simula capacidad y recursos disponibles",
+        "Proyecta producción diaria, cuellos de botella y consumo de recursos.",
     ),
     MissionStep(
         "mission_planner",
         "Mission Planner",
         "11_Mission_Planner",
-        "Planifica lotes, rutas y políticas para la próxima misión",
+        "Arma lotes, rutas logísticas y políticas de sustitución para la siguiente misión.",
     ),
 )
 

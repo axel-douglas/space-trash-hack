@@ -205,7 +205,10 @@ render_breadcrumbs(current_step)
 cands  = st.session_state.get("candidates", [])
 target = st.session_state.get("target", None)
 if not cands or not target:
-    st.warning("Generá opciones en **3) Generador** primero.")
+    st.warning(
+        "Aún no hay candidatos para comparar. Volvé a **3 · Generador asistido** y"
+        " creá al menos una receta."
+    )
     st.stop()
 
 try:
@@ -217,12 +220,13 @@ except MissingDatasetError as error:
 st.title("🧪 Comparar y decidir")
 st.markdown(
     """
-**Objetivo de la etapa:** comparar los candidatos generados para validar si cumplen límites operativos y seleccionar a los finalistas.
+**Qué hacemos acá:** contrastamos todas las opciones sugeridas por Rex-AI para
+entender qué tan bien equilibran desempeño técnico y consumo de recursos.
 
-**Cómo encaja en el flujo:**
-1. **Seleccioná candidatos** en la etapa anterior (Generador).
-2. **Analizá métricas clave** acá para entender recursos, desempeño y restricciones.
-3. **Decidí la receta** que pasa a prototipado o iterá si necesitás nuevos candidatos.
+**Cómo avanzar:**
+1. **Traé los candidatos** generados en el paso anterior.
+2. **Revisá la tabla comparativa** para chequear límites operativos y datos de referencia NASA.
+3. **Seleccioná la mejor receta** o volvé al generador si necesitás iterar.
 """
 )
 
@@ -266,7 +270,8 @@ for idx, candidate in enumerate(cands, start=1):
 # ======== tabla comparativa base ========
 st.subheader("📊 Tabla comparativa de candidatos")
 st.caption(
-    "Visualizá el score junto a recursos y propiedades clave para verificar si cada opción respeta los límites de la misión."
+    "La tabla reúne score, proceso, mezcla y recursos consumidos. Usala como"
+    " checklist rápido antes de pasar al duelo detallado."
 )
 st.dataframe(df_base.set_index("Opción"), use_container_width=True)
 
@@ -305,21 +310,22 @@ if reference_rows:
 kpi_cols = st.columns(4)
 with kpi_cols[0]:
     st.metric("Opciones generadas", len(cands))
-    st.caption("Más opciones permiten contrastar mejor, pero revisá que todas cumplan los límites.")
+    st.caption("Cuantas más alternativas tengas, mejor podés justificar la selección final.")
 with kpi_cols[1]:
     st.metric("Mejor Score", f"{df_base['Score'].max():.2f}")
-    st.caption("Un score alto indica equilibrio entre criterios; compará con las restricciones.")
+    st.caption("Valores altos implican buen balance entre rigidez, estanqueidad y penalizaciones.")
 with kpi_cols[2]:
     st.metric("Consumo mínimo de agua", f"{df_base['Agua (L)'].min():.2f} L")
-    st.caption("Valores bajos son favorables porque liberan recursos hídricos.")
+    st.caption("Conservar agua simplifica logística y permite más ciclos de limpieza o cultivo.")
 with kpi_cols[3]:
     st.metric("Energía mínima", f"{df_base['Energía (kWh)'].min():.2f} kWh")
-    st.caption("Menor energía consumida es positiva para misiones con baterías acotadas.")
+    st.caption("Menor demanda eléctrica es clave para operar con paneles y baterías limitadas.")
 
 # ======== Panel comparativo interactivo ========
 st.markdown("## 🧭 Comparación lado a lado")
 st.caption(
-    "Paso a paso: 1) Arrastrá para ordenar según prioridad. 2) El panel muestra los dos primeros. 3) Revisá el mapa de colores para identificar fortalezas y riesgos."
+    "Ordená manualmente la prioridad y compará las dos mejores opciones lado a"
+    " lado para detectar ventajas y riesgos en segundos."
 )
 
 candidate_labels = [

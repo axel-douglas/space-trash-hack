@@ -386,13 +386,12 @@ def _render_metric(label: str, score: float, help_text: str | None = None) -> No
             st.caption(help_text)
 
 
-st.title("Centro de control marciano")
+st.title("🛰️ Centro de control marciano")
 st.markdown(
     """
-    Orquesta la operación completa de la misión: vuelos de logística, inventario
-    orbital, decisiones asistidas por IA y planificación de procesos. Cada
-    sección consume los servicios de telemetría recién desplegados para mantener
-    la vista táctica de los equipos de operaciones.
+    Consolida vuelos, inventario, decisiones automáticas y planificación diaria
+    en una sola consola. Cada pestaña se alimenta de telemetría en tiempo real
+    para que operaciones priorice acciones críticas y documente resultados.
     """
 )
 

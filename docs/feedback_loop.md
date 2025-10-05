@@ -1,72 +1,64 @@
 # Sprint 3 — Feedback y aprendizaje activo
 
-Este documento describe el flujo operativo para cerrar el lazo entre la app,
-los ensayos físicos/simulador y el reentrenamiento incremental del modelo.
+Descripción del flujo para capturar feedback operativo, incorporarlo al dataset
+gold y reentrenar Rex-AI de forma incremental. Incluye cómo priorizar nuevas
+mediciones con estrategias de active learning.
 
-> **Nota**: el flujo detallado para registrar experimentos permanece como
-> propuesta externa mientras el equipo confirma su implementación. Consultar
-> [`docs/proposals/experiments_feedback_flow.md`](proposals/experiments_feedback_flow.md)
-> para la versión pendiente y mantener este documento como referencia activa
-> para el feedback disponible.
+## 1. Registro de feedback operativo
 
-## 1. Registro de feedback
-
-1. Los operadores exportan resultados de cada receta validada al archivo
-   `feedback/recipes.parquet` (no versionado, ver `feedback/README.md`) utilizando
-   el esquema documentado en `datasets/feedback_schema.yaml`.
-2. Cada fila debe incluir `recipe_id`, `process_id`, valores medidos,
-   intervalos de confianza (`conf_lo_*`, `conf_hi_*`), `label_source` y
-   `label_weight` acorde a la confiabilidad de la medición.
-3. Se recomienda completar `notes`, `measurement_ts` y `operator_id` para
-   asegurar trazabilidad.
+1. **Capturá datos en la app**: cada formulario de **Feedback & Impact** genera
+   `data/logs/feedback_*.parquet` y `data/logs/impact_*.parquet` con métricas y
+   notas estructuradas.
+2. **Complementá con ensayos físicos** cuando corresponda. Usá el esquema
+   documentado en `datasets/feedback_schema.yaml` para exportar registros a
+   `feedback/recipes.parquet` (no versionado).
+3. **Campos mínimos recomendados**: `recipe_id`, `process_id`, mediciones reales,
+   intervalos `conf_lo_*`/`conf_hi_*`, `label_source`, `label_weight`,
+   `measurement_ts`, `operator_id` y `notes`.
 
 ## 2. Ingesta al dataset gold
 
 ```bash
-python scripts/ingest_feedback.py --feedback feedback/recipes.parquet --gold-dir data/gold
+python scripts/ingest_feedback.py \
+  --feedback feedback/recipes.parquet \
+  --gold-dir data/gold
 ```
 
-El comando:
-
-* Valida que el feedback contenga todas las columnas definidas para el modelo.
-* Fusiona la información con `data/gold/features.parquet` y
-  `data/gold/labels.parquet`, preservando la última medición por
-  `(recipe_id, process_id)`.
-* Añade una marca `ingested_at` para auditar cuándo se incorporó cada fila.
-* Crea el directorio de destino (`datasets/gold/` por defecto) si todavía no
-  existe.
-
-Para verificar el impacto sin escribir resultados usar `--dry-run`.
+El script valida columnas, fusiona nuevas mediciones con
+`data/gold/features.parquet` y `data/gold/labels.parquet`, agrega `ingested_at`
+para auditoría y crea directorios de destino si no existen. Usá `--dry-run` para
+ver el diff antes de escribir.
 
 ## 3. Reentrenamiento incremental
 
 ```bash
-python -m app.modules.retrain_from_feedback --logs feedback/recipes.parquet --gold data/gold
+python -m app.modules.retrain_from_feedback \
+  --logs "data/logs/feedback_*.parquet" \
+  --gold data/gold
 ```
 
-El módulo reusa el pipeline principal (`train_and_save`) y acepta los mismos
-parámetros de sampling. El output en JSON incluye métricas, hashes de modelos y
-resumen de pesos por `label_source`.
+El módulo reusa el pipeline principal (`train_and_save`) y genera un resumen
+JSON con métricas, hashes de artefactos y pesos aplicados por `label_source`.
 
 ### Automatización sugerida
 
-* **Cron/manual**: programar una corrida nocturna en la estación de trabajo
-  (ej. `0 2 * * * python -m app.modules.retrain_from_feedback --logs 'feedback/*.parquet'`).
-* **Alertas**: si la corrida detecta nuevos `feedback_*.parquet`, enviar
-  notificación al canal de operaciones.
-* **Versionado**: archivar los Parquet procesados en `data/logs/` con marca de
-  tiempo para poder reproducir entrenamientos anteriores.
+- Programá una corrida nocturna (`cron`, GitHub Actions o similar) que ejecute el
+  comando anterior cuando se detecten nuevos Parquet.
+- Enviá notificaciones a operaciones si el reentrenamiento incorpora feedback
+  fresco o si `ModelRegistry.ready` cambia de estado.
+- Archivá los archivos procesados en `data/logs/processed/` para reproducir
+  entrenamientos anteriores.
 
-## 4. Active learning
+## 4. Aprendizaje activo
 
-El módulo `app/modules/active_learning.py` ordena candidatos según dos
-estrategias:
+`app/modules/active_learning.py` prioriza qué recetas conviene evaluar:
 
-* `uncertainty`: prioriza recetas con intervalos de confianza amplios.
-* `expected_improvement`: combina el score previsto con la incertidumbre y el
-  mejor resultado observado.
+| Estrategia | Descripción |
+| --- | --- |
+| `uncertainty` | Ordena candidatos con intervalos de confianza más amplios para reducir incertidumbre. |
+| `expected_improvement` | Combina score previsto, incertidumbre y mejor resultado histórico para maximizar ganancia esperada. |
 
-Integrar las sugerencias en la UI o en un cuaderno de planificación permite
-concentrar ensayos en recetas que maximizan aprendizaje por etiqueta añadida.
-Cuando el flujo de experimentos se active, las corridas documentadas en la
-propuesta externa podrán alimentar este mismo circuito de realimentación.
+Podés integrar estas sugerencias en la UI (pestaña de generador) o en un cuaderno
+de planificación para decidir qué recetas ensayar a continuación. La propuesta
+de experimentos extendidos permanece documentada en
+[`docs/proposals/experiments_feedback_flow.md`](proposals/experiments_feedback_flow.md).

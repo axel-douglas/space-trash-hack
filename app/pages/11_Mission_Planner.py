@@ -44,7 +44,8 @@ inventory_by_id = inventory.set_index("id") if has_id_column else pd.DataFrame()
 with layout_stack():
     st.title("🛰️ Mission Planner")
     st.caption(
-        "Seleccioná lotes de materiales, ajustá objetivos operativos y generá rutas logísticas optimizadas."
+        "Seleccioná materiales, fijá objetivos operativos y obtené rutas logísticas"
+        " optimizadas con señales de política y sustitución."
     )
 
     selector_cols = st.columns((2, 2, 1.4, 1.4))
@@ -96,7 +97,10 @@ with layout_stack():
             selected = selected.head(len(selected_ids))
     if selected.empty and not inventory.empty:
         selected = inventory.head(3).copy()
-        st.info("No se seleccionaron materiales, se utilizarán los primeros del inventario de referencia.")
+        st.info(
+            "No se seleccionaron materiales. Usaremos las primeras entradas del"
+            " inventario de referencia como punto de partida."
+        )
 
     lot_size = st.slider(
         "Tamaño de lote (nº materiales)",
@@ -163,17 +167,19 @@ sankey = mission_planner.build_sankey(assignments)
 with layout_stack():
     st.subheader("Asignación de procesos sugeridos")
     if assignments_df.empty:
-        st.warning("No se encontraron procesos compatibles con las restricciones seleccionadas.")
+        st.warning("No se encontraron procesos compatibles. Ajustá límites o materiales y probá de nuevo.")
     else:
         st.dataframe(assignments_df, use_container_width=True, hide_index=True)
 
     st.subheader("Logística prevista")
+    st.caption("Visualizá cómo viajan los materiales desde el inventario hacia los procesos priorizados.")
     if sankey is None:
         st.caption("Añadí materiales para visualizar la ruta logística consolidada.")
     else:
         st.plotly_chart(sankey, use_container_width=True)
 
     st.subheader("Optimización del lote")
+    st.caption("Compará combinaciones según energía consumida y rigidez alcanzada para decidir el lote final.")
     if pareto_df.empty:
         st.caption("Ajustá el tamaño del lote u objetivos para explorar combinaciones óptimas.")
     else:
@@ -189,7 +195,7 @@ with layout_stack():
 
     st.subheader("Alertas de política y sustitución")
     if not alerts:
-        st.caption("Sin alertas relevantes para los materiales seleccionados.")
+        st.caption("Sin alertas relevantes para los materiales seleccionados en esta iteración.")
     else:
         for alert in alerts:
             st.warning(alert)
