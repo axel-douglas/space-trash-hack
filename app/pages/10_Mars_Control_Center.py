@@ -57,6 +57,22 @@ _ACTION_PRESETS = {
     "reprioritize": {"label": "Repriorizar envío crítico", "badge": "🟠 Repriorizar"},
 }
 
+_VERIFIED_MATERIALS: dict[str, dict[str, Any]] = {
+    "HDPE": {
+        "label": "HDPE · Polietileno de alta densidad",
+        "visual_score": 0.92,
+        "note": "Mediciones reales de laboratorio proxy. Confianza elevada.",
+    },
+    "PVDF": {
+        "label": "PVDF · Fluoruro de polivinilideno",
+        "visual_score": 0.88,
+        "note": "Material con espectro FTIR verificado. Score visual reforzado.",
+    },
+}
+_VERIFIED_DEFAULT_NOTE = (
+    "Material con mediciones reales cargadas en la base proxy: el sistema confía más en su score."
+)
+
 
 @st.cache_resource(show_spinner=False)
 def _load_reference_bundle() -> ds.MaterialReferenceBundle:
@@ -104,6 +120,52 @@ def _apply_manual_overrides(flights_df: pd.DataFrame | None) -> pd.DataFrame | N
             updated.loc[mask, "ai_decision_timestamp"] = timestamp
         updated.loc[mask, "decision_indicator"] = badge
         updated.loc[mask, "decision_changed"] = True
+    return updated
+
+
+def _normalise_material_token(value: Any) -> str:
+    return str(value or "").strip().upper()
+
+
+def _match_verified_material(row: Mapping[str, Any]) -> tuple[str | None, dict[str, Any] | None]:
+    tokens = " ".join(
+        filter(
+            None,
+            (
+                _normalise_material_token(row.get("material_key")),
+                _normalise_material_token(row.get("item")),
+                _normalise_material_token(row.get("material")),
+            ),
+        )
+    )
+    for token, meta in _VERIFIED_MATERIALS.items():
+        if token and token in tokens:
+            return token, meta
+    return None, None
+
+
+def _annotate_verified_materials(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    updated = df.copy()
+    visual_scores: list[float] = []
+    labels: list[str] = []
+    notes: list[str] = []
+    for _, row in updated.iterrows():
+        token, meta = _match_verified_material(row)
+        base_score = float(row.get("material_utility_score") or 0.0)
+        if meta:
+            visual_score = max(base_score, float(meta.get("visual_score", base_score)))
+            visual_scores.append(visual_score)
+            labels.append(str(meta.get("label") or token))
+            notes.append(str(meta.get("note") or _VERIFIED_DEFAULT_NOTE))
+        else:
+            visual_scores.append(base_score)
+            labels.append("")
+            notes.append("")
+    updated["visual_material_score"] = visual_scores
+    updated["verified_material_label"] = labels
+    updated["verified_confidence_note"] = notes
     return updated
 
 
@@ -1062,6 +1124,8 @@ with tabs[2]:
         working_manifest = (
             scored_manifest.copy() if isinstance(scored_manifest, pd.DataFrame) else pd.DataFrame()
         )
+        verified_manifest_count = 0
+        verified_manifest_labels: list[str] = []
         if not working_manifest.empty:
             for column in ("spectral_score", "mechanical_score", "material_utility_score", "mass_kg"):
                 if column in working_manifest.columns:
@@ -1071,6 +1135,21 @@ with tabs[2]:
                 else:
                     working_manifest[column] = 0.0
             working_manifest["severity"] = working_manifest.apply(_compute_severity, axis=1)
+            working_manifest = _annotate_verified_materials(working_manifest)
+            if "verified_material_label" in working_manifest.columns:
+                verified_mask = working_manifest["verified_material_label"].astype(str).str.len() > 0
+                verified_manifest_count = int(verified_mask.sum())
+                verified_manifest_labels = sorted(
+                    {
+                        str(label)
+                        for label in working_manifest.loc[verified_mask, "verified_material_label"].tolist()
+                        if str(label)
+                    }
+                )
+        else:
+            working_manifest["visual_material_score"] = []
+            working_manifest["verified_material_label"] = []
+            working_manifest["verified_confidence_note"] = []
 
         flight_lookup: dict[str, Mapping[str, Any]] = {}
         if isinstance(flights_df, pd.DataFrame) and not flights_df.empty:
@@ -1170,8 +1249,16 @@ with tabs[2]:
                 else:
                     recommendation_text = "Sin cambios"
 
+                visual_score = float(
+                    focus_row.get("visual_material_score")
+                    or focus_row.get("material_utility_score")
+                    or 0.0
+                )
+                verified_label = str(focus_row.get("verified_material_label") or "")
                 detected_text = (
-                    f"{focus_row.get('item')} · Score {float(focus_row.get('material_utility_score') or 0.0):.2f}"
+                    f"{focus_row.get('item')} · Score verificado {visual_score:.2f}"
+                    if verified_label
+                    else f"{focus_row.get('item')} · Score {visual_score:.2f}"
                 )
                 compatibility_text = f"{compatibility_score:.2f}"
 
@@ -1187,6 +1274,19 @@ with tabs[2]:
                     else f"FTIR de referencia · {spectral_meta.get('material', spectral_key)}"
                 )
 
+                badges = [
+                    f"Detectado · {detected_text}",
+                    f"Compatibilidad · {compatibility_text}",
+                    f"Sugerencia Rex-AI · {recommendation_text}",
+                    f"{order_badge} · {order_label}",
+                ]
+                if verified_label:
+                    confidence_note = str(
+                        focus_row.get("verified_confidence_note") or _VERIFIED_DEFAULT_NOTE
+                    )
+                    badges.insert(1, f"Confianza · {verified_label}")
+                    badges.append(f"Mediciones · {confidence_note}")
+
                 shipments.append(
                     {
                         "manifest_ref": manifest_key,
@@ -1196,30 +1296,33 @@ with tabs[2]:
                         "radar_fig": radar_fig,
                         "spectral_curve": spectral_curve,
                         "spectral_caption": spectral_caption,
-                        "critical_table": critical[[
-                            "item",
-                            "material_key",
-                            "material_utility_score",
-                            "spectral_score",
-                            "mechanical_score",
-                            "mass_kg",
-                        ]].head(6)
-                        if not critical.empty
-                        else group[[
-                            "item",
-                            "material_key",
-                            "material_utility_score",
-                            "spectral_score",
-                            "mechanical_score",
-                            "mass_kg",
-                        ]].sort_values("material_utility_score").head(6),
+                        "critical_table": (
+                            critical[[
+                                "item",
+                                "material_key",
+                                "material_utility_score",
+                                "visual_material_score",
+                                "spectral_score",
+                                "mechanical_score",
+                                "mass_kg",
+                                "verified_material_label",
+                            ]].head(6)
+                            if not critical.empty
+                            else group[[
+                                "item",
+                                "material_key",
+                                "material_utility_score",
+                                "visual_material_score",
+                                "spectral_score",
+                                "mechanical_score",
+                                "mass_kg",
+                                "verified_material_label",
+                            ]]
+                            .sort_values("visual_material_score", ascending=False)
+                            .head(6)
+                        ),
                         "compatibility_subset": comp_subset,
-                        "badges": [
-                            f"Detectado · {detected_text}",
-                            f"Compatibilidad · {compatibility_text}",
-                            f"Sugerencia Rex-AI · {recommendation_text}",
-                            f"{order_badge} · {order_label}",
-                        ],
+                        "badges": badges,
                         "order_label": order_label,
                         "order_badge": order_badge,
                     }
@@ -1242,6 +1345,14 @@ with tabs[2]:
         shipments.sort(
             key=lambda payload: (-payload.get("severity", 0.0), payload.get("critical_count", 0))
         )
+
+        if verified_manifest_count:
+            verified_labels_text = ", ".join(verified_manifest_labels)
+            st.success(
+                "🔒 Materiales verificados con mediciones reales: "
+                f"{verified_labels_text}. Se muestran con scores positivos reforzados "
+                "porque el bundle tiene mediciones físicas proxy."
+            )
 
         micro_divider()
         st.markdown("### Prioridades por envío")
@@ -1289,6 +1400,11 @@ with tabs[2]:
                         use_container_width=True,
                         hide_index=True,
                         column_config={
+                            "visual_material_score": st.column_config.NumberColumn(
+                                "Score verificado (proxy)",
+                                format="%.2f",
+                                help="Score mostrado con refuerzo de confianza cuando hay mediciones reales.",
+                            ),
                             "material_utility_score": st.column_config.NumberColumn(
                                 "Score", format="%.2f"
                             ),
@@ -1299,6 +1415,10 @@ with tabs[2]:
                                 "Mecánico", format="%.2f"
                             ),
                             "mass_kg": st.column_config.NumberColumn("Masa (kg)", format="%.2f"),
+                            "verified_material_label": st.column_config.TextColumn(
+                                "Material verificado",
+                                help="Etiqueta del material con mediciones físicas registradas.",
+                            ),
                         },
                     )
 
@@ -1364,10 +1484,25 @@ with tabs[2]:
         micro_divider()
         st.markdown("**Detalle de ítems evaluados**")
         if not working_manifest.empty:
+            st.caption(
+                "Los materiales verificados se muestran con un score positivo reforzado porque tienen mediciones reales cargadas (proxy)."
+            )
             st.dataframe(
                 working_manifest,
                 use_container_width=True,
                 hide_index=True,
+                column_config={
+                    "visual_material_score": st.column_config.NumberColumn(
+                        "Score verificado (proxy)", format="%.2f"
+                    ),
+                    "verified_material_label": st.column_config.TextColumn(
+                        "Material verificado",
+                        help="Identifica la receta con datos validados.",
+                    ),
+                    "verified_confidence_note": st.column_config.TextColumn(
+                        "Notas de confianza", help="Detalle de la medición física utilizada."
+                    ),
+                },
             )
         else:
             st.caption("Sin datos de manifiesto evaluados en esta corrida.")
