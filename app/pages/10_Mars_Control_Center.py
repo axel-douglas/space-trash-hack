@@ -6,6 +6,8 @@ import io
 import json
 from pathlib import Path
 import html
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from app.bootstrap import ensure_streamlit_entrypoint
 
@@ -56,6 +58,15 @@ _ACTION_PRESETS = {
     "reject": {"label": "Rechazar acción propuesta", "badge": "🔴 Rechazado"},
     "reprioritize": {"label": "Repriorizar envío crítico", "badge": "🟠 Repriorizar"},
 }
+
+
+_MARS_TILE_TEMPLATE = (
+    "https://planetarymaps.usgs.gov/tiles/"
+    "Mars_Viking_MDIM21_ClrMosaic_global_232m/1.0.0/default/default028mm/{z}/{y}/{x}.png"
+)
+_MARS_TILE_PROBE = _MARS_TILE_TEMPLATE.format(z=5, x=17, y=9)
+_MARS_TEXTURE_PATH = Path(__file__).resolve().parent.parent / "static" / "images" / "mars_global_8k.jpg"
+_MARS_GLOBAL_BOUNDS = [-180.0, -90.0, 180.0, 90.0]
 
 
 @st.cache_resource(show_spinner=False)
@@ -129,6 +140,103 @@ def _register_manual_action(
     if isinstance(flights_df, pd.DataFrame):
         updated = _apply_manual_overrides(flights_df)
         _store_flight_snapshot(updated)
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def _mars_tile_service_available() -> bool:
+    try:
+        probe_request = Request(_MARS_TILE_PROBE, method="HEAD")
+        with urlopen(probe_request, timeout=4) as response:
+            if 200 <= getattr(response, "status", 0) < 400:
+                return True
+    except TypeError:
+        # Python <3.11 compat: fallback to manual method override.
+        try:
+            probe_request = Request(_MARS_TILE_PROBE)
+            probe_request.get_method = lambda: "HEAD"  # type: ignore[attr-defined]
+            with urlopen(probe_request, timeout=4) as response:
+                if 200 <= getattr(response, "status", 0) < 400:
+                    return True
+        except Exception:
+            pass
+    except (HTTPError, URLError, TimeoutError, ValueError):
+        pass
+
+    try:
+        # Some WMTS endpoints reject HEAD; fetch a byte range instead.
+        probe_request = Request(_MARS_TILE_PROBE)
+        probe_request.add_header("Range", "bytes=0-0")
+        with urlopen(probe_request, timeout=4) as response:
+            return 200 <= getattr(response, "status", 0) < 400
+    except (HTTPError, URLError, TimeoutError, ValueError):
+        return False
+
+
+def _mars_local_texture_path() -> Path | None:
+    try:
+        if _MARS_TEXTURE_PATH.exists():
+            return _MARS_TEXTURE_PATH
+    except OSError:
+        return None
+    return None
+
+
+def _mars_background_layers() -> list[pdk.Layer]:
+    background_layers: list[pdk.Layer] = []
+
+    if _mars_tile_service_available():
+        background_layers.append(
+            pdk.Layer(
+                "TileLayer",
+                data=_MARS_TILE_TEMPLATE,
+                id="mars-wmts",
+                min_zoom=0,
+                max_zoom=12,
+                tile_size=256,
+                pickable=False,
+                coordinate_system=pdk.constants.COORDINATE_SYSTEM.LNGLAT,
+            )
+        )
+        return background_layers
+
+    local_texture = _mars_local_texture_path()
+    if local_texture:
+        background_layers.append(
+            pdk.Layer(
+                "BitmapLayer",
+                data=None,
+                id="mars-static-texture",
+                image=str(local_texture),
+                bounds=_MARS_GLOBAL_BOUNDS,
+                pickable=False,
+                coordinate_system=pdk.constants.COORDINATE_SYSTEM.LNGLAT,
+            )
+        )
+        return background_layers
+
+    background_layers.append(
+        pdk.Layer(
+            "PolygonLayer",
+            data=[
+                {
+                    "coordinates": [
+                        [-180.0, -90.0],
+                        [-180.0, 90.0],
+                        [180.0, 90.0],
+                        [180.0, -90.0],
+                    ]
+                }
+            ],
+            id="mars-solid-background",
+            get_polygon="coordinates",
+            stroked=False,
+            filled=True,
+            get_fill_color=[105, 69, 33],
+            pickable=False,
+            coordinate_system=pdk.constants.COORDINATE_SYSTEM.LNGLAT,
+        )
+    )
+    return background_layers
 
 
 def _demo_event_severity(severity: str | None) -> str:
@@ -494,7 +602,7 @@ with tabs[0]:
         zone_data = map_payload["zones"]
         geometry = map_payload["geometry"]
 
-        layers: list[pdk.Layer] = []
+        layers: list[pdk.Layer] = list(_mars_background_layers())
         if geometry and isinstance(geometry, Mapping) and geometry.get("features"):
             layers.append(
                 pdk.Layer(
@@ -562,7 +670,13 @@ with tabs[0]:
         )
 
         st.pydeck_chart(
-            pdk.Deck(layers=layers, initial_view_state=view_state, tooltip=tooltip),
+            pdk.Deck(
+                layers=layers,
+                initial_view_state=view_state,
+                tooltip=tooltip,
+                map_style=None,
+                map_provider=None,
+            ),
             use_container_width=True,
         )
         st.caption("Mapa operacional de Jezero: cápsulas, zonas clave y perímetro de seguridad.")
