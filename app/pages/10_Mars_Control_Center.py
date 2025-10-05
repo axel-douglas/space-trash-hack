@@ -68,6 +68,8 @@ _ACTION_PRESETS = {
     "reprioritize": {"label": "Repriorizar envío crítico", "badge": "🟠 Repriorizar"},
 }
 
+_CUSTOMS_REASON_OPTIONS = ["PFAS", "Microplásticos", "Compatibilidad"]
+
 
 _MARS_TEXTURE_PATH = (
     Path(__file__).resolve().parent.parent / "static" / "images" / "mars_global_8k.jpg"
@@ -171,6 +173,12 @@ def _apply_manual_overrides(flights_df: pd.DataFrame | None) -> pd.DataFrame | N
             updated.loc[mask, "ai_decision_timestamp"] = timestamp
         updated.loc[mask, "decision_indicator"] = badge
         updated.loc[mask, "decision_changed"] = True
+        reason_key = payload.get("reason_key")
+        reason_detail = payload.get("reason_detail")
+        if reason_key:
+            updated.loc[mask, "customs_reason"] = reason_key
+        if reason_detail:
+            updated.loc[mask, "customs_reason_detail"] = reason_detail
     return updated
 
 
@@ -180,13 +188,20 @@ def _register_manual_action(
     *,
     label: str | None = None,
     badge: str | None = None,
+    reason_key: str | None = None,
+    reason_detail: str | None = None,
 ) -> None:
     presets = _ACTION_PRESETS.get(action_key, {})
+    reason_detail_clean = None
+    if isinstance(reason_detail, str):
+        reason_detail_clean = reason_detail.strip() or None
     payload = {
         "action": action_key,
         "label": label or presets.get("label") or action_key.title(),
         "badge": badge or presets.get("badge", "⚙️ Manual"),
         "timestamp": datetime.utcnow().isoformat(),
+        "reason_key": reason_key if reason_key in _CUSTOMS_REASON_OPTIONS else None,
+        "reason_detail": reason_detail_clean,
     }
     overrides = st.session_state.setdefault(_MANUAL_DECISIONS_KEY, {})
     overrides[str(manifest_ref)] = payload
@@ -2332,6 +2347,21 @@ with tabs[2]:
                     else f"FTIR de referencia · {spectral_meta.get('material', spectral_key)}"
                 )
 
+                badges = [
+                    f"Detectado · {detected_text}",
+                    f"Compatibilidad · {compatibility_text}",
+                    f"Sugerencia Rex-AI · {recommendation_text}",
+                    f"{order_badge} · {order_label}",
+                ]
+                customs_reason = manual_payload.get("reason_key")
+                customs_detail = manual_payload.get("reason_detail")
+                if customs_reason:
+                    reason_badge = f"Aduana · {customs_reason}"
+                    if customs_detail:
+                        detail_text = str(customs_detail).strip().replace("\n", " ")
+                        reason_badge = f"{reason_badge} · {detail_text}"
+                    badges.append(reason_badge)
+
                 shipments.append(
                     {
                         "manifest_ref": manifest_key,
@@ -2359,14 +2389,11 @@ with tabs[2]:
                             "mass_kg",
                         ]].sort_values("material_utility_score").head(6),
                         "compatibility_subset": comp_subset,
-                        "badges": [
-                            f"Detectado · {detected_text}",
-                            f"Compatibilidad · {compatibility_text}",
-                            f"Sugerencia Rex-AI · {recommendation_text}",
-                            f"{order_badge} · {order_label}",
-                        ],
+                        "badges": badges,
                         "order_label": order_label,
                         "order_badge": order_badge,
+                        "customs_reason": customs_reason,
+                        "customs_reason_detail": customs_detail,
                     }
                 )
 
@@ -2379,6 +2406,8 @@ with tabs[2]:
                         "worst_item": focus_row.get("item"),
                         "mean_score": compatibility_score,
                         "manual_action": manual_payload.get("action"),
+                        "customs_reason": customs_reason,
+                        "customs_reason_detail": customs_detail,
                         "order_label": order_label,
                         "severity": severity,
                     }
@@ -2389,7 +2418,7 @@ with tabs[2]:
         )
 
         micro_divider()
-        st.markdown("### Prioridades por envío")
+        st.markdown("### Material Customs")
         if shipments:
             for shipment in shipments:
                 flight_info = shipment["flight"]
@@ -2460,21 +2489,82 @@ with tabs[2]:
                     else:
                         chart_cols[1].caption("Sin trazas de compatibilidad adicionales.")
 
+                    st.info(
+                        "Toda decisión manual de aprobación o rechazo debe documentar un motivo aduanero."
+                    )
+                    customs_reason_key = f"customs_reason_select_{shipment['manifest_ref']}"
+                    customs_notes_key = f"customs_notes_{shipment['manifest_ref']}"
+                    if (
+                        customs_reason_key not in st.session_state
+                        and shipment.get("customs_reason") in _CUSTOMS_REASON_OPTIONS
+                    ):
+                        st.session_state[customs_reason_key] = shipment.get("customs_reason")
+                    if (
+                        customs_notes_key not in st.session_state
+                        and shipment.get("customs_reason_detail")
+                    ):
+                        st.session_state[customs_notes_key] = str(
+                            shipment.get("customs_reason_detail")
+                        )
+
+                    customs_select_options = ["Seleccionar motivo"] + _CUSTOMS_REASON_OPTIONS
+                    selected_option = st.selectbox(
+                        "Motivo de aduana",
+                        customs_select_options,
+                        key=customs_reason_key,
+                    )
+                    notes_value = st.text_area(
+                        "Notas opcionales",
+                        key=customs_notes_key,
+                        placeholder="Detalle adicional para la declaración aduanera",
+                    )
+                    selected_reason = (
+                        selected_option
+                        if selected_option in _CUSTOMS_REASON_OPTIONS
+                        else None
+                    )
+                    notes_clean = notes_value.strip() if isinstance(notes_value, str) else ""
+
                     action_cols = st.columns(3)
                     if action_cols[0].button(
                         "Aceptar", key=f"accept_{shipment['manifest_ref']}"
                     ):
-                        _register_manual_action(shipment["manifest_ref"], "accept")
-                        st.success("Orden manual registrada.")
+                        if not selected_reason:
+                            st.error(
+                                "Seleccioná un motivo aduanero antes de aprobar el envío."
+                            )
+                        else:
+                            _register_manual_action(
+                                shipment["manifest_ref"],
+                                "accept",
+                                reason_key=selected_reason,
+                                reason_detail=notes_clean,
+                            )
+                            st.success("Orden manual registrada.")
                     if action_cols[1].button(
                         "Rechazar", key=f"reject_{shipment['manifest_ref']}"
                     ):
-                        _register_manual_action(shipment["manifest_ref"], "reject")
-                        st.warning("La orden fue rechazada manualmente.")
+                        if not selected_reason:
+                            st.error(
+                                "Seleccioná un motivo aduanero antes de rechazar el envío."
+                            )
+                        else:
+                            _register_manual_action(
+                                shipment["manifest_ref"],
+                                "reject",
+                                reason_key=selected_reason,
+                                reason_detail=notes_clean,
+                            )
+                            st.warning("La orden fue rechazada manualmente.")
                     if action_cols[2].button(
                         "Repriorizar", key=f"reprioritize_{shipment['manifest_ref']}"
                     ):
-                        _register_manual_action(shipment["manifest_ref"], "reprioritize")
+                        _register_manual_action(
+                            shipment["manifest_ref"],
+                            "reprioritize",
+                            reason_key=selected_reason,
+                            reason_detail=notes_clean,
+                        )
                         st.info("El envío fue marcado para repriorización.")
         else:
             st.success(
