@@ -339,6 +339,22 @@ def load_material_reference_bundle() -> MaterialReferenceBundle:
         "material_thermal_conductivity_w_mk",
         "material_glass_transition_c",
         "material_melting_temperature_c",
+        "material_service_temperature_short_c",
+        "material_service_temperature_long_c",
+        "material_service_temperature_min_c",
+        "material_coefficient_thermal_expansion_per_k_min",
+        "material_coefficient_thermal_expansion_per_k_max",
+        "material_ball_indentation_hardness_mpa",
+        "material_shore_d_hardness",
+        "material_rockwell_m_hardness",
+        "material_surface_resistivity_ohm",
+        "material_volume_resistivity_ohm_cm",
+        "material_dielectric_strength_kv_mm",
+        "material_relative_permittivity_low_freq",
+        "material_relative_permittivity_high_freq",
+        "material_dielectric_loss_tan_delta_low_freq",
+        "material_dielectric_loss_tan_delta_high_freq",
+        "material_comparative_tracking_index_cti",
     )
 
     default = MaterialReferenceBundle(
@@ -390,6 +406,18 @@ def load_material_reference_bundle() -> MaterialReferenceBundle:
         slug = slugify(normalized)
         if slug and slug not in alias_map:
             alias_map[slug] = canonical
+
+    def _coefficient(value: Any, scale: float) -> float | None:
+        numeric = _safe_float(value)
+        if numeric is None:
+            return None
+        return float(numeric) * scale
+
+    def _aggregate_range(values: Iterable[float | None]) -> tuple[float | None, float | None]:
+        numeric_values = [float(v) for v in values if v is not None and math.isfinite(v)]
+        if not numeric_values:
+            return None, None
+        return min(numeric_values), max(numeric_values)
 
     def _add_record(
         name: str,
@@ -809,6 +837,10 @@ def load_material_reference_bundle() -> MaterialReferenceBundle:
         hdpe_df = pd.read_csv(hdpe_path)
         for _, row in hdpe_df.iterrows():
             density = _safe_float(row.get("density_g_cm3"))
+            service_short = _safe_float(row.get("service_temp_short_C"))
+            service_long = _safe_float(row.get("service_temp_long_C"))
+            cte_min = _coefficient(row.get("CTE_1e-5_perK_min"), 1e-5)
+            cte_max = _coefficient(row.get("CTE_1e-5_perK_max"), 1e-5)
             modulus = _safe_float(row.get("E_modulus_tension_GPa"))
             strength = _safe_float(row.get("tensile_strength_yield_MPa"))
             elongation = _safe_float(row.get("elongation_yield_pct"))
@@ -825,6 +857,20 @@ def load_material_reference_bundle() -> MaterialReferenceBundle:
                 "material_thermal_conductivity_w_mk": conductivity,
                 "material_glass_transition_c": _safe_float(row.get("Tg_C")),
                 "material_melting_temperature_c": _safe_float(row.get("Tm_C")),
+                "material_service_temperature_short_c": service_short,
+                "material_service_temperature_long_c": service_long,
+                "material_coefficient_thermal_expansion_per_k_min": cte_min,
+                "material_coefficient_thermal_expansion_per_k_max": cte_max,
+                "material_ball_indentation_hardness_mpa": _safe_float(
+                    row.get("ball_indentation_hardness_MPa")
+                ),
+                "material_shore_d_hardness": _safe_float(row.get("shore_D")),
+                "material_surface_resistivity_ohm": _safe_float(
+                    row.get("surface_resistivity_ohm")
+                ),
+                "material_dielectric_strength_kv_mm": _safe_float(
+                    row.get("dielectric_strength_kV_mm")
+                ),
             }
             aliases = [
                 str(row.get("material", "")),
@@ -863,6 +909,9 @@ def load_material_reference_bundle() -> MaterialReferenceBundle:
                 oxygen_index = oxygen_min
             elif oxygen_max:
                 oxygen_index = oxygen_max
+            dissipation = _safe_float(row.get("dissipation_factor_60Hz_x1e_3"))
+            if dissipation is not None:
+                dissipation = dissipation * 1e-3
             payload = {
                 "material_density_kg_m3": density * 1000.0 if density is not None else None,
                 "material_modulus_gpa": modulus,
@@ -872,6 +921,13 @@ def load_material_reference_bundle() -> MaterialReferenceBundle:
                 "material_thermal_conductivity_w_mk": (
                     (_safe_float(row.get("thermal_conductivity_mW_mK_150C")) or 0.0) / 1000.0
                 ),
+                "material_dielectric_strength_kv_mm": _safe_float(
+                    row.get("dielectric_strength_AC_kV_per_mm")
+                ),
+                "material_relative_permittivity_low_freq": _safe_float(
+                    row.get("dielectric_constant_60Hz")
+                ),
+                "material_dielectric_loss_tan_delta_low_freq": dissipation,
             }
             meta = {
                 "source": str(row.get("source", "")),
@@ -888,6 +944,19 @@ def load_material_reference_bundle() -> MaterialReferenceBundle:
         nylon_df = pd.read_csv(nylon_path)
         for _, row in nylon_df.iterrows():
             density = _safe_float(row.get("density_g_cm3"))
+            cte_values = [
+                _coefficient(row.get("cte_23_60_e6_per_k"), 1e-6),
+                _coefficient(row.get("cte_23_100_e6_per_k"), 1e-6),
+            ]
+            cte_min, cte_max = _aggregate_range(cte_values)
+            service_short = _safe_float(row.get("service_temp_short_c"))
+            service_candidates = [
+                _safe_float(row.get("service_temp_long_c")),
+                _safe_float(row.get("service_temp_5000h_c")),
+                _safe_float(row.get("service_temp_20000h_c")),
+            ]
+            service_candidates = [value for value in service_candidates if value is not None]
+            service_long = max(service_candidates) if service_candidates else None
             payload = {
                 "material_density_kg_m3": density * 1000.0 if density is not None else None,
                 "material_modulus_gpa": _safe_float(row.get("tensile_modulus_gpa")),
@@ -899,6 +968,41 @@ def load_material_reference_bundle() -> MaterialReferenceBundle:
                     row.get("thermal_conductivity_w_mk")
                 ),
                 "material_melting_temperature_c": _safe_float(row.get("melting_temperature_c")),
+                "material_service_temperature_short_c": service_short,
+                "material_service_temperature_long_c": service_long,
+                "material_service_temperature_min_c": _safe_float(
+                    row.get("min_service_temp_c")
+                ),
+                "material_coefficient_thermal_expansion_per_k_min": cte_min,
+                "material_coefficient_thermal_expansion_per_k_max": cte_max,
+                "material_ball_indentation_hardness_mpa": _safe_float(
+                    row.get("ball_indentation_hardness_n_mm2")
+                ),
+                "material_rockwell_m_hardness": _safe_float(row.get("rockwell_hardness_M")),
+                "material_surface_resistivity_ohm": _safe_float(
+                    row.get("surface_resistivity_ohm")
+                ),
+                "material_volume_resistivity_ohm_cm": _safe_float(
+                    row.get("volume_resistivity_ohm_cm")
+                ),
+                "material_dielectric_strength_kv_mm": _safe_float(
+                    row.get("dielectric_strength_kv_mm")
+                ),
+                "material_relative_permittivity_low_freq": _safe_float(
+                    row.get("relative_permittivity_100hz")
+                ),
+                "material_relative_permittivity_high_freq": _safe_float(
+                    row.get("relative_permittivity_1mhz")
+                ),
+                "material_dielectric_loss_tan_delta_low_freq": _safe_float(
+                    row.get("dielectric_loss_tan_delta_100hz")
+                ),
+                "material_dielectric_loss_tan_delta_high_freq": _safe_float(
+                    row.get("dielectric_loss_tan_delta_1mhz")
+                ),
+                "material_comparative_tracking_index_cti": _safe_float(
+                    row.get("comparative_tracking_index_cti")
+                ),
             }
             meta = {
                 "condition": str(row.get("condition", "")),
