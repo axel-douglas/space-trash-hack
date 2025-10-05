@@ -30,8 +30,8 @@ class Playbook:
     product_label: str
     product_end_use: str
     example_recipe: ExampleRecipe
-    metadata: Dict[str, str] = field(default_factory=dict)
     steps: List[Step]
+    metadata: Dict[str, str] = field(default_factory=dict)
     generator_filters: Optional[Dict[str, bool]] = None
 
 
