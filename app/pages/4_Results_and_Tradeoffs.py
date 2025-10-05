@@ -57,6 +57,16 @@ from app.modules.utils import (
     uses_physical_dataset,
 )
 
+
+@st.cache_data(show_spinner=False)
+def _load_regolith_context():
+    return {
+        "granulometry": load_regolith_granulometry(),
+        "spectra": load_regolith_spectral_curves(),
+        "thermal": load_regolith_thermal_profiles(),
+    }
+
+
 configure_page(page_title="Rex-AI • Resultados", page_icon="📊")
 initialise_frontend()
 
@@ -262,14 +272,6 @@ def _format_reference_value(key: str, value: float) -> str:
         return f"{value:.1f}"
     return f"{value:.0f}"
 
-
-@st.cache_data(show_spinner=False)
-def _load_regolith_context():
-    return {
-        "granulometry": load_regolith_granulometry(),
-        "spectra": load_regolith_spectral_curves(),
-        "thermal": load_regolith_thermal_profiles(),
-    }
 
 header_chips = [
     {"label": f"Score {score:.3f}", "tone": "accent"},
