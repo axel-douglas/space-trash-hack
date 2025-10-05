@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import base64
 import math
 import hashlib
 import io
@@ -15,13 +16,14 @@ from app.bootstrap import ensure_streamlit_entrypoint
 
 ensure_streamlit_entrypoint(__file__)
 
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping, Sequence
 
 import pandas as pd
 import plotly.graph_objects as go
 import pydeck as pdk
 from PIL import Image
 import streamlit as st
+import streamlit.components.v1 as components
 
 from app.modules import data_sources as ds
 from app.modules import mars_control
@@ -80,6 +82,43 @@ _MARS_TILE_TEMPLATE = (
 _MARS_TILE_PROBE = _MARS_TILE_TEMPLATE.format(z=5, x=17, y=9)
 _MARS_TEXTURE_PATH = Path(__file__).resolve().parent.parent / "static" / "images" / "mars_global_8k.jpg"
 _MARS_GLOBAL_BOUNDS = [-180.0, -90.0, 180.0, 90.0]
+
+_CRATER_ASSET_DIR = Path(__file__).resolve().parents[2] / "datasets" / "crater"
+_CRATER_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".tif", ".tiff")
+_CRATER_MODEL_FILENAME = "jezero_crater_mars.glb"
+_CRATER_DEFAULT_BOUNDS = (77.05, 18.15, 77.95, 18.85)
+_CRATER_IMAGE_METADATA = {
+    "Jezero_Crater_in_3D.jpg": {
+        "label": "Relieve orbital coloreado",
+        "description": "Modelo digital del terreno con exageración vertical generado por DLR/FU Berlin.",
+        "credit": "ESA/DLR/FU Berlin · Mars Express HRSC",
+    },
+    "Katie_1_-_DLR_Jezero_hi_v2.jpg": {
+        "label": "Mosaico científico Mars 2020",
+        "description": "Montaje contextual de Jezero elaborado para el aterrizaje de Perseverance.",
+        "credit": "NASA/JPL-Caltech · DLR",
+    },
+    "j03_045994_1986_j03_046060_1986_20m_slope_20m-full.jpg": {
+        "label": "Pendientes y relieve (HiRISE)",
+        "description": "Mapa de pendientes derivado de pares estéreo HiRISE a 20 m/px.",
+        "credit": "NASA/JPL-Caltech/University of Arizona",
+    },
+    "j03_045994_1986_xn_18n282w_6m_ortho-full.jpg": {
+        "label": "Ortoimagen HiRISE 6 m/px",
+        "description": "Ortoimagen de precisión para planificar rutas sobre el delta occidental.",
+        "credit": "NASA/JPL-Caltech/University of Arizona",
+    },
+    "m20_jezerocrater_ctxdem_mosaic_20m.jpg": {
+        "label": "CTX DEM Mosaic 20 m",
+        "description": "Modelo digital de elevación compilado para la misión Mars 2020.",
+        "credit": "NASA/JPL-Caltech/MSSS/ASU",
+    },
+    "m2020_jezerocrater_ctxdem_mosaic-slide.png": {
+        "label": "Resumen topográfico Mars 2020",
+        "description": "Presentación operativa con realce de zonas prioritarias del cráter.",
+        "credit": "NASA/JPL-Caltech/MSSS/USGS",
+    },
+}
 
 
 @st.cache_resource(show_spinner=False)
@@ -281,6 +320,479 @@ def _mars_background_layers() -> list[pdk.Layer]:
     return background_layers
 
 
+@st.cache_data(show_spinner=False)
+def _crater_image_catalog() -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    try:
+        if not _CRATER_ASSET_DIR.is_dir():
+            return entries
+    except OSError:
+        return entries
+
+    for path in sorted(_CRATER_ASSET_DIR.iterdir()):
+        if path.suffix.lower() not in _CRATER_IMAGE_EXTENSIONS:
+            continue
+        metadata = _CRATER_IMAGE_METADATA.get(path.name, {})
+        label = metadata.get("label") or path.stem.replace("_", " ")
+        entries.append(
+            {
+                "id": path.name,
+                "path": str(path),
+                "label": label,
+                "description": metadata.get("description"),
+                "credit": metadata.get("credit"),
+            }
+        )
+    return entries
+
+
+@st.cache_data(show_spinner=False)
+def _crater_image_bytes(path_str: str) -> bytes | None:
+    try:
+        return Path(path_str).read_bytes()
+    except OSError:
+        return None
+
+
+@st.cache_data(show_spinner=False)
+def _crater_model_source() -> str | None:
+    model_path = _CRATER_ASSET_DIR / _CRATER_MODEL_FILENAME
+    try:
+        if not model_path.is_file():
+            return None
+        data = model_path.read_bytes()
+    except OSError:
+        return None
+    encoded = base64.b64encode(data).decode("ascii")
+    return f"data:model/gltf-binary;base64,{encoded}"
+
+
+def _flatten_geo_coordinates(payload: Any) -> Iterable[tuple[float, float]]:
+    if isinstance(payload, Sequence) and not isinstance(payload, (str, bytes)):
+        if len(payload) >= 2 and all(isinstance(value, (int, float)) for value in payload[:2]):
+            yield float(payload[0]), float(payload[1])
+        else:
+            for item in payload:
+                yield from _flatten_geo_coordinates(item)
+
+
+def _geometry_coordinate_iter(geometry: Mapping[str, Any] | None) -> Iterable[tuple[float, float]]:
+    if not isinstance(geometry, Mapping):
+        return []
+    features = geometry.get("features", [])
+    if not isinstance(features, Sequence):
+        return []
+    for feature in features:
+        if not isinstance(feature, Mapping):
+            continue
+        geom = feature.get("geometry")
+        if not isinstance(geom, Mapping):
+            continue
+        coordinates = geom.get("coordinates")
+        if coordinates is None:
+            continue
+        yield from _flatten_geo_coordinates(coordinates)
+
+
+def _resolve_crater_bounds(
+    geometry: Mapping[str, Any] | None,
+    capsules: pd.DataFrame | None,
+    zones: pd.DataFrame | None,
+) -> tuple[float, float, float, float]:
+    lon_min, lat_min, lon_max, lat_max = _CRATER_DEFAULT_BOUNDS
+    longitudes: list[float] = []
+    latitudes: list[float] = []
+
+    for lon, lat in _geometry_coordinate_iter(geometry):
+        longitudes.append(lon)
+        latitudes.append(lat)
+
+    if isinstance(capsules, pd.DataFrame) and not capsules.empty:
+        longitudes.extend(
+            pd.to_numeric(capsules.get("longitude"), errors="coerce").dropna().astype(float).tolist()
+        )
+        latitudes.extend(
+            pd.to_numeric(capsules.get("latitude"), errors="coerce").dropna().astype(float).tolist()
+        )
+
+    if isinstance(zones, pd.DataFrame) and not zones.empty:
+        longitudes.extend(
+            pd.to_numeric(zones.get("longitude"), errors="coerce").dropna().astype(float).tolist()
+        )
+        latitudes.extend(
+            pd.to_numeric(zones.get("latitude"), errors="coerce").dropna().astype(float).tolist()
+        )
+
+    if longitudes and latitudes:
+        lon_min = min(longitudes)
+        lon_max = max(longitudes)
+        lat_min = min(latitudes)
+        lat_max = max(latitudes)
+
+        if lon_min == lon_max:
+            lon_min -= 0.01
+            lon_max += 0.01
+        if lat_min == lat_max:
+            lat_min -= 0.01
+            lat_max += 0.01
+
+        lon_margin = max((lon_max - lon_min) * 0.08, 0.01)
+        lat_margin = max((lat_max - lat_min) * 0.08, 0.01)
+        lon_min -= lon_margin
+        lon_max += lon_margin
+        lat_min -= lat_margin
+        lat_max += lat_margin
+
+    return lon_min, lat_min, lon_max, lat_max
+
+
+def _project_latlon_to_image(
+    longitude: float,
+    latitude: float,
+    width: int,
+    height: int,
+    bounds: tuple[float, float, float, float],
+) -> tuple[float, float]:
+    lon_min, lat_min, lon_max, lat_max = bounds
+    if lon_max == lon_min:
+        lon_max = lon_min + 1e-6
+    if lat_max == lat_min:
+        lat_max = lat_min + 1e-6
+
+    lon_ratio = (longitude - lon_min) / (lon_max - lon_min)
+    lat_ratio = (latitude - lat_min) / (lat_max - lat_min)
+    lon_ratio = max(0.0, min(1.0, lon_ratio))
+    lat_ratio = max(0.0, min(1.0, lat_ratio))
+
+    return lon_ratio * width, lat_ratio * height
+
+
+def _rgba_color(rgb: Sequence[float | int], *, alpha: float = 1.0) -> str:
+    channel_values = [int(max(0, min(255, round(float(value))))) for value in rgb[:3]]
+    normalized_alpha = max(0.0, min(1.0, float(alpha)))
+    if normalized_alpha >= 1.0:
+        return f"rgb({channel_values[0]},{channel_values[1]},{channel_values[2]})"
+    return (
+        f"rgba({channel_values[0]},{channel_values[1]},{channel_values[2]},{normalized_alpha:.3f})"
+    )
+
+
+def _iter_polygon_rings(geometry: Mapping[str, Any]) -> Iterable[Sequence[Sequence[float]]]:
+    gtype = str(geometry.get("type", "")).lower()
+    coordinates = geometry.get("coordinates", [])
+    if gtype == "polygon":
+        for ring in coordinates:
+            if isinstance(ring, Sequence):
+                yield ring
+    elif gtype == "multipolygon":
+        for polygon in coordinates:
+            if not isinstance(polygon, Sequence):
+                continue
+            for ring in polygon:
+                if isinstance(ring, Sequence):
+                    yield ring
+
+
+def _iter_line_paths(geometry: Mapping[str, Any]) -> Iterable[Sequence[Sequence[float]]]:
+    gtype = str(geometry.get("type", "")).lower()
+    coordinates = geometry.get("coordinates", [])
+    if gtype == "linestring" and isinstance(coordinates, Sequence):
+        yield coordinates
+    elif gtype == "multilinestring":
+        for segment in coordinates:
+            if isinstance(segment, Sequence):
+                yield segment
+
+
+def _add_geometry_overlays(
+    fig: go.Figure,
+    geometry: Mapping[str, Any] | None,
+    *,
+    width: int,
+    height: int,
+    bounds: tuple[float, float, float, float],
+) -> int:
+    if not isinstance(geometry, Mapping):
+        return 0
+    features = geometry.get("features", [])
+    if not isinstance(features, Sequence):
+        return 0
+
+    polygon_count = 0
+    for feature in features:
+        if not isinstance(feature, Mapping):
+            continue
+        geom = feature.get("geometry")
+        if not isinstance(geom, Mapping):
+            continue
+        gtype = str(geom.get("type", "")).lower()
+        if gtype not in {"polygon", "multipolygon", "linestring", "multilinestring"}:
+            continue
+        properties = feature.get("properties") if isinstance(feature.get("properties"), Mapping) else {}
+        name = str(properties.get("name", "Perímetro Jezero"))
+        base_color = properties.get("color")
+        color = base_color if isinstance(base_color, str) else "#38bdf8"
+
+        if gtype in {"polygon", "multipolygon"}:
+            for ring in _iter_polygon_rings(geom):
+                xs: list[float] = []
+                ys: list[float] = []
+                for point in ring:
+                    if not isinstance(point, Sequence) or len(point) < 2:
+                        continue
+                    lon, lat = float(point[0]), float(point[1])
+                    projected = _project_latlon_to_image(lon, lat, width, height, bounds)
+                    xs.append(projected[0])
+                    ys.append(projected[1])
+                if len(xs) < 2:
+                    continue
+                fig.add_trace(
+                    go.Scatter(
+                        x=xs,
+                        y=ys,
+                        mode="lines",
+                        line=dict(color=color, width=3),
+                        hoverinfo="skip",
+                        name=name,
+                        legendgroup="geometry",
+                        showlegend=polygon_count == 0,
+                    )
+                )
+                polygon_count += 1
+        else:
+            for segment in _iter_line_paths(geom):
+                xs = []
+                ys = []
+                for point in segment:
+                    if not isinstance(point, Sequence) or len(point) < 2:
+                        continue
+                    lon, lat = float(point[0]), float(point[1])
+                    projected = _project_latlon_to_image(lon, lat, width, height, bounds)
+                    xs.append(projected[0])
+                    ys.append(projected[1])
+                if len(xs) < 2:
+                    continue
+                fig.add_trace(
+                    go.Scatter(
+                        x=xs,
+                        y=ys,
+                        mode="lines",
+                        line=dict(color=color, width=2, dash="dot"),
+                        hoverinfo="skip",
+                        name=name,
+                        legendgroup="geometry",
+                        showlegend=polygon_count == 0,
+                    )
+                )
+                polygon_count += 1
+    return polygon_count
+
+
+def _build_zone_circle_points(
+    longitude: float,
+    latitude: float,
+    radius_m: float,
+    *,
+    width: int,
+    height: int,
+    bounds: tuple[float, float, float, float],
+) -> tuple[list[float], list[float]]:
+    if radius_m <= 0:
+        return [], []
+    steps = 48
+    lat_radius = radius_m / 111_320.0
+    cos_lat = math.cos(math.radians(latitude))
+    if abs(cos_lat) < 1e-6:
+        cos_lat = 1e-6
+    lon_radius = radius_m / (111_320.0 * cos_lat)
+
+    xs: list[float] = []
+    ys: list[float] = []
+    for angle in range(0, 360 + int(360 / steps), int(360 / steps)):
+        theta = math.radians(angle)
+        point_lon = longitude + (lon_radius * math.cos(theta))
+        point_lat = latitude + (lat_radius * math.sin(theta))
+        projected = _project_latlon_to_image(point_lon, point_lat, width, height, bounds)
+        xs.append(projected[0])
+        ys.append(projected[1])
+    return xs, ys
+
+
+def _add_zone_overlays(
+    fig: go.Figure,
+    zones: pd.DataFrame | None,
+    *,
+    width: int,
+    height: int,
+    bounds: tuple[float, float, float, float],
+) -> int:
+    if not isinstance(zones, pd.DataFrame) or zones.empty:
+        return 0
+
+    center_x: list[float] = []
+    center_y: list[float] = []
+    hover_payload: list[str] = []
+    marker_colors: list[str] = []
+    zone_labels: list[str] = []
+    zone_count = 0
+
+    for zone in zones.itertuples():
+        latitude = float(getattr(zone, "latitude", 0.0))
+        longitude = float(getattr(zone, "longitude", 0.0))
+        radius_m = float(getattr(zone, "radius_m", 0.0))
+        color_rgb = (
+            getattr(zone, "color_r", 180),
+            getattr(zone, "color_g", 198),
+            getattr(zone, "color_b", 231),
+        )
+        xs, ys = _build_zone_circle_points(
+            longitude,
+            latitude,
+            radius_m,
+            width=width,
+            height=height,
+            bounds=bounds,
+        )
+        if xs and ys:
+            fig.add_trace(
+                go.Scatter(
+                    x=xs,
+                    y=ys,
+                    mode="lines",
+                    line=dict(color=_rgba_color(color_rgb, alpha=0.8), width=2),
+                    fill="toself",
+                    fillcolor=_rgba_color(color_rgb, alpha=0.18),
+                    hoverinfo="text",
+                    hovertext=getattr(zone, "tooltip", getattr(zone, "name", "Zona")),
+                    name=str(getattr(zone, "name", "Zona operativa")),
+                    legendgroup="zones",
+                    showlegend=False,
+                )
+            )
+        projected = _project_latlon_to_image(longitude, latitude, width, height, bounds)
+        center_x.append(projected[0])
+        center_y.append(projected[1])
+        hover_payload.append(getattr(zone, "tooltip", getattr(zone, "name", "Zona")))
+        marker_colors.append(_rgba_color(color_rgb, alpha=0.95))
+        zone_labels.append(str(getattr(zone, "name", "Zona")))
+        zone_count += 1
+
+    if center_x:
+        fig.add_trace(
+            go.Scatter(
+                x=center_x,
+                y=center_y,
+                mode="markers",
+                marker=dict(
+                    size=[18] * len(center_x),
+                    symbol="diamond", 
+                    color=marker_colors,
+                    line=dict(width=1.6, color="rgba(15,23,42,0.65)"),
+                ),
+                hoverinfo="text",
+                hovertext=hover_payload,
+                text=zone_labels,
+                textposition="top center",
+                name="Zonas logísticas",
+                legendgroup="zones",
+                showlegend=True,
+            )
+        )
+
+    return zone_count
+
+
+def _add_capsule_overlays(
+    fig: go.Figure,
+    capsules: pd.DataFrame | None,
+    *,
+    width: int,
+    height: int,
+    bounds: tuple[float, float, float, float],
+) -> int:
+    if not isinstance(capsules, pd.DataFrame) or capsules.empty:
+        return 0
+
+    xs: list[float] = []
+    ys: list[float] = []
+    marker_sizes: list[float] = []
+    marker_colors: list[str] = []
+    border_colors: list[str] = []
+    hover_texts: list[str] = []
+
+    for capsule in capsules.itertuples():
+        latitude = float(getattr(capsule, "latitude", 0.0))
+        longitude = float(getattr(capsule, "longitude", 0.0))
+        projected = _project_latlon_to_image(longitude, latitude, width, height, bounds)
+        xs.append(projected[0])
+        ys.append(projected[1])
+
+        category_color = (
+            getattr(capsule, "category_color_r", 56),
+            getattr(capsule, "category_color_g", 149),
+            getattr(capsule, "category_color_b", 255),
+        )
+        status_color = (
+            getattr(capsule, "status_color_r", 15),
+            getattr(capsule, "status_color_g", 23),
+            getattr(capsule, "status_color_b", 42),
+        )
+        marker_radius = float(getattr(capsule, "marker_radius_m", 900.0))
+        marker_sizes.append(max(12.0, min(marker_radius / 250.0, 34.0)))
+        marker_colors.append(_rgba_color(category_color, alpha=0.92))
+        border_colors.append(_rgba_color(status_color, alpha=1.0))
+
+        vehicle = getattr(capsule, "vehicle", getattr(capsule, "flight_id", "Cápsula"))
+        status = getattr(capsule, "status_badge", getattr(capsule, "status", ""))
+        eta_value = getattr(capsule, "eta_minutes", None)
+        if eta_value is None or pd.isna(eta_value):
+            eta_display = "—"
+        else:
+            try:
+                eta_display = f"{int(float(eta_value))}"
+            except (TypeError, ValueError):
+                eta_display = str(eta_value)
+        materials_value = getattr(capsule, "materials_display", None)
+        density = getattr(capsule, "density", None)
+        compatibility = getattr(capsule, "compatibility", None)
+
+        hover_lines = [f"<b>{html.escape(str(vehicle))}</b>"]
+        if status:
+            hover_lines.append(html.escape(str(status)))
+        hover_lines.append(f"ETA: {eta_display} min")
+        if materials_value is not None and not pd.isna(materials_value):
+            hover_lines.append(f"Materiales: {html.escape(str(materials_value))}")
+        if density is not None and not pd.isna(density):
+            hover_lines.append(f"Densidad: {float(density):.2f} g/cm³")
+        if compatibility is not None and not pd.isna(compatibility):
+            hover_lines.append(f"Compatibilidad: {float(compatibility):.2f}")
+        hover_texts.append("<br/>".join(hover_lines))
+
+    if not xs:
+        return 0
+
+    fig.add_trace(
+        go.Scatter(
+            x=xs,
+            y=ys,
+            mode="markers",
+            marker=dict(
+                size=marker_sizes,
+                color=marker_colors,
+                line=dict(width=2.4, color=border_colors),
+                symbol="circle",
+            ),
+            hoverinfo="text",
+            hovertext=hover_texts,
+            name="Cápsulas activas",
+            legendgroup="capsules",
+            showlegend=True,
+        )
+    )
+
+    return len(xs)
+
+
 def _load_jezero_crater_image() -> tuple[Image.Image, Path | None] | None:
     local_texture = _mars_local_texture_path()
     if local_texture:
@@ -298,7 +810,7 @@ def _load_jezero_crater_image() -> tuple[Image.Image, Path | None] | None:
         return None
 
 
-def _render_crater_overview() -> None:
+def _render_legacy_crater_overview() -> None:
     crater_payload = _load_jezero_crater_image()
     if crater_payload is None:
         st.info(
@@ -433,6 +945,237 @@ def _render_crater_overview() -> None:
     if texture_path is not None:
         credit_parts.append(f"Fuente local: `{texture_path.name}`")
     st.caption(" · ".join(credit_parts))
+
+
+def _render_crater_image_tab(
+    assets: Sequence[dict[str, Any]],
+    capsules: pd.DataFrame | None,
+    zones: pd.DataFrame | None,
+    geometry: Mapping[str, Any] | None,
+) -> tuple[int, int, int]:
+    if not assets:
+        return 0, 0, 0
+
+    option_map = {entry["label"]: entry for entry in assets}
+    labels = list(option_map.keys())
+    selected_label = st.selectbox(
+        "Base cartográfica científica",
+        labels,
+        index=0,
+        key="jezero_image_asset",
+    )
+    selected_asset = option_map[selected_label]
+    image_bytes = _crater_image_bytes(selected_asset["path"])
+    if not image_bytes:
+        st.warning(
+            f"No se pudo cargar `{selected_asset['id']}` desde `datasets/crater`."
+        )
+        return 0, 0, 0
+
+    crater_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    crater_image.load()
+    width, height = crater_image.size
+
+    overlay_options = {
+        "Perímetro Jezero": "geometry",
+        "Zonas logísticas": "zones",
+        "Cápsulas activas": "capsules",
+    }
+    selected_layers = st.multiselect(
+        "Capas de misión",
+        list(overlay_options.keys()),
+        default=list(overlay_options.keys()),
+        key="jezero_overlay_layers",
+    )
+
+    capsules_df = capsules if isinstance(capsules, pd.DataFrame) else pd.DataFrame()
+    zones_df = zones if isinstance(zones, pd.DataFrame) else pd.DataFrame()
+    geometry_payload = geometry if isinstance(geometry, Mapping) else None
+    bounds = _resolve_crater_bounds(geometry_payload, capsules_df, zones_df)
+
+    fig = go.Figure()
+    fig.add_layout_image(
+        dict(
+            source=crater_image,
+            x=0,
+            y=height,
+            sizex=width,
+            sizey=height,
+            xref="x",
+            yref="y",
+            sizing="stretch",
+            layer="below",
+        )
+    )
+
+    polygon_count = 0
+    zone_count = 0
+    capsule_count = 0
+
+    if "Perímetro Jezero" in selected_layers:
+        polygon_count = _add_geometry_overlays(
+            fig,
+            geometry_payload,
+            width=width,
+            height=height,
+            bounds=bounds,
+        )
+
+    if "Zonas logísticas" in selected_layers:
+        zone_count = _add_zone_overlays(
+            fig,
+            zones_df,
+            width=width,
+            height=height,
+            bounds=bounds,
+        )
+
+    if "Cápsulas activas" in selected_layers:
+        capsule_count = _add_capsule_overlays(
+            fig,
+            capsules_df,
+            width=width,
+            height=height,
+            bounds=bounds,
+        )
+
+    fig.update_xaxes(visible=False, range=[0, width])
+    fig.update_yaxes(visible=False, range=[0, height])
+    fig.update_layout(
+        margin=dict(l=0, r=0, t=36, b=0),
+        height=520,
+        plot_bgcolor="#020617",
+        paper_bgcolor="rgba(2,6,23,0.92)",
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            x=0,
+            bgcolor="rgba(2,6,23,0.78)",
+            borderwidth=0,
+        ),
+        font=dict(color="#e2e8f0"),
+        title=dict(
+            text="Atlas operativo de Jezero",
+            x=0.01,
+            y=0.98,
+            font=dict(size=18),
+        ),
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    description = selected_asset.get("description")
+    if description:
+        st.markdown(f"_{description}_")
+
+    credit_parts: list[str] = []
+    credit = selected_asset.get("credit")
+    if credit:
+        credit_parts.append(str(credit))
+    credit_parts.append(f"Fuente: `datasets/crater/{selected_asset['id']}`")
+    credit_parts.append(f"Resolución: {width:,} × {height:,} px")
+    st.caption(" · ".join(credit_parts))
+
+    metric_cols = st.columns(3)
+    metric_cols[0].metric("Cápsulas rastreadas", f"{capsule_count}")
+    metric_cols[1].metric("Zonas monitorizadas", f"{zone_count}")
+    metric_cols[2].metric("Polígonos activos", f"{polygon_count}")
+
+    if capsule_count == 0 and zone_count == 0 and polygon_count == 0:
+        st.info(
+            "Sin capas dinámicas todavía. Cargá telemetría o un manifiesto para"
+            " poblar el mapa operativo."
+        )
+
+    return capsule_count, zone_count, polygon_count
+
+
+def _render_crater_model_tab(
+    model_source: str,
+    capsules: pd.DataFrame | None,
+    zones: pd.DataFrame | None,
+) -> None:
+    components.html(  # type: ignore[no-untyped-call]
+        """
+        <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+        <model-viewer
+            src="{model_src}"
+            camera-controls
+            auto-rotate
+            rotation-per-second="18deg"
+            exposure="1.15"
+            shadow-intensity="0.6"
+            style="width:100%;height:520px;border-radius:18px;background:radial-gradient(circle at 50% 20%, rgba(148,163,184,0.24), rgba(15,23,42,0.95));"
+        ></model-viewer>
+        """.format(model_src=model_source),
+        height=540,
+    )
+
+    st.caption(
+        "Interactuá con el relieve: arrastrá para orbitar, acercate con la"
+        " rueda del mouse o trackpad y mantené Mayús para hacer un paneo lateral."
+    )
+
+    capsule_badges: list[str] = []
+    if isinstance(capsules, pd.DataFrame) and not capsules.empty:
+        for capsule in capsules.head(4).itertuples():
+            eta_value = getattr(capsule, "eta_minutes", None)
+            if eta_value is None or pd.isna(eta_value):
+                eta_display = "—"
+            else:
+                try:
+                    eta_display = f"{int(float(eta_value))}"
+                except (TypeError, ValueError):
+                    eta_display = str(eta_value)
+            vehicle_label = getattr(capsule, "vehicle", getattr(capsule, "flight_id", "Cápsula"))
+            capsule_badges.append(f"🛰️ {vehicle_label} · ETA {eta_display} min")
+
+    zone_badges: list[str] = []
+    if isinstance(zones, pd.DataFrame) and not zones.empty:
+        for zone in zones.head(3).itertuples():
+            zone_badges.append(
+                f"🏷️ {getattr(zone, 'name', 'Zona')} · {getattr(zone, 'category', '').replace('_', ' ').title()}"
+            )
+
+    if capsule_badges or zone_badges:
+        badge_group(capsule_badges + zone_badges)
+
+    st.caption(
+        "Modelo GLB: `datasets/crater/jezero_crater_mars.glb` · NASA/JPL-Caltech/MSSS/ASU"
+    )
+
+
+def _render_crater_overview(
+    capsules: pd.DataFrame | None,
+    zones: pd.DataFrame | None,
+    geometry: Mapping[str, Any] | None,
+) -> None:
+    crater_assets = _crater_image_catalog()
+    model_source = _crater_model_source()
+
+    available_tabs: list[str] = []
+    if crater_assets:
+        available_tabs.append("🗺️ Atlas fotogramétrico")
+    if model_source:
+        available_tabs.append("🗻 Modelo 3D & relieve")
+
+    if not available_tabs:
+        _render_legacy_crater_overview()
+        return
+
+    st.markdown("#### Jezero Crater · hub interactivo")
+    tabs = st.tabs(available_tabs)
+
+    tab_index = 0
+    if crater_assets:
+        with tabs[tab_index]:
+            _render_crater_image_tab(crater_assets, capsules, zones, geometry)
+        tab_index += 1
+
+    if model_source:
+        with tabs[tab_index]:
+            _render_crater_model_tab(model_source, capsules, zones)
 
 def _demo_event_severity(severity: str | None) -> str:
     normalized = str(severity or "info").lower()
@@ -793,11 +1536,12 @@ with tabs[0]:
             )
 
         map_payload = telemetry_service.build_map_payload(flights_df)
-        st.markdown("#### Jezero Crater · orientación visual")
-        _render_crater_overview()
         capsule_data = map_payload["capsules"]
         zone_data = map_payload["zones"]
         geometry = map_payload["geometry"]
+
+        st.markdown("#### Jezero Crater · orientación visual")
+        _render_crater_overview(capsule_data, zone_data, geometry)
 
         layers: list[pdk.Layer] = list(_mars_background_layers())
         if geometry and isinstance(geometry, Mapping) and geometry.get("features"):
