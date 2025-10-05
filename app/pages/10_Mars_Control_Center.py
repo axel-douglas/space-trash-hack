@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+import math
 import hashlib
 import io
 import json
 from pathlib import Path
 import html
+from urllib.request import urlopen
 
 from app.bootstrap import ensure_streamlit_entrypoint
 
@@ -16,6 +18,7 @@ from typing import Any, Mapping
 import pandas as pd
 import plotly.graph_objects as go
 import pydeck as pdk
+from PIL import Image
 import streamlit as st
 
 from app.modules import data_sources as ds
@@ -56,6 +59,18 @@ _ACTION_PRESETS = {
     "reject": {"label": "Rechazar acción propuesta", "badge": "🔴 Rechazado"},
     "reprioritize": {"label": "Repriorizar envío crítico", "badge": "🟠 Repriorizar"},
 }
+
+
+_MARS_TEXTURE_PATH = (
+    Path(__file__).resolve().parent.parent / "static" / "images" / "mars_global_8k.jpg"
+)
+_MARS_IMAGE_SEARCH_DIRS = [
+    Path(__file__).resolve().parents[2] / "datasets" / "mars",
+    Path(__file__).resolve().parent.parent / "static" / "images",
+]
+_MARS_IMAGE_PATTERNS = ("*.jpg", "*.jpeg", "*.png", "*.tif", "*.tiff")
+_MARS_GLOBAL_BOUNDS = [-180.0, -90.0, 180.0, 90.0]
+_REMOTE_JEZERO_IMAGE = "https://photojournal.jpl.nasa.gov/jpeg/PIA24688.jpg"
 
 
 @st.cache_resource(show_spinner=False)
@@ -129,6 +144,233 @@ def _register_manual_action(
     if isinstance(flights_df, pd.DataFrame):
         updated = _apply_manual_overrides(flights_df)
         _store_flight_snapshot(updated)
+
+
+def _mars_local_texture_path() -> Path | None:
+    candidates: list[Path] = []
+    try:
+        candidates.append(_MARS_TEXTURE_PATH)
+    except Exception:
+        pass
+
+    for directory in _MARS_IMAGE_SEARCH_DIRS:
+        try:
+            if not directory.exists() or not directory.is_dir():
+                continue
+        except OSError:
+            continue
+        for pattern in _MARS_IMAGE_PATTERNS:
+            for candidate in sorted(directory.glob(pattern)):
+                candidates.append(candidate)
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            if candidate.exists() and candidate.is_file():
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
+def _mars_background_layers() -> list[pdk.Layer]:
+    background_layers: list[pdk.Layer] = []
+
+    local_texture = _mars_local_texture_path()
+    if local_texture:
+        background_layers.append(
+            pdk.Layer(
+                "BitmapLayer",
+                data=None,
+                id="mars-static-texture",
+                image=str(local_texture),
+                bounds=_MARS_GLOBAL_BOUNDS,
+                pickable=False,
+            )
+        )
+        return background_layers
+
+    background_layers.append(
+        pdk.Layer(
+            "PolygonLayer",
+            data=[
+                {
+                    "coordinates": [
+                        [-180.0, -90.0],
+                        [-180.0, 90.0],
+                        [180.0, 90.0],
+                        [180.0, -90.0],
+                    ]
+                }
+            ],
+            id="mars-solid-background",
+            get_polygon="coordinates",
+            stroked=False,
+            filled=True,
+            get_fill_color=[105, 69, 33],
+            pickable=False,
+        )
+    )
+    return background_layers
+
+
+def _load_jezero_crater_image() -> tuple[Image.Image, Path | None] | None:
+    local_texture = _mars_local_texture_path()
+    if local_texture:
+        try:
+            return Image.open(local_texture).convert("RGB"), local_texture
+        except Exception:
+            pass
+
+    try:
+        with urlopen(_REMOTE_JEZERO_IMAGE, timeout=10) as response:
+            data = response.read()
+        image = Image.open(io.BytesIO(data)).convert("RGB")
+        return image, None
+    except Exception:
+        return None
+
+
+def _render_crater_overview() -> None:
+    crater_payload = _load_jezero_crater_image()
+    if crater_payload is None:
+        st.info(
+            "Añadí una imagen equirectangular de Jezero en `datasets/mars/` (por ejemplo,"
+            " `jezero_reference.jpg`) o en `app/static/images/` para habilitar el briefing"
+            " visual del cráter."
+        )
+        return
+
+    crater_image, texture_path = crater_payload
+    width, height = crater_image.size
+
+    fig = go.Figure()
+    fig.add_layout_image(
+        dict(
+            source=crater_image,
+            x=0,
+            y=height,
+            sizex=width,
+            sizey=height,
+            xref="x",
+            yref="y",
+            sizing="stretch",
+            layer="below",
+        )
+    )
+
+    highlight_paths = [
+        {
+            "label": "Deltas occidentales",
+            "path": [(0.14, 0.8), (0.3, 0.65), (0.46, 0.57)],
+            "color": "#fb923c",
+            "description": "Canales fluviales que alimentaron el delta fosilizado.",
+        },
+        {
+            "label": "Ridges elevadas",
+            "path": [(0.58, 0.4), (0.72, 0.44), (0.86, 0.48)],
+            "color": "#f472b6",
+            "description": "Crestas con fracturas que podrían concentrar agua subsuperficial.",
+        },
+    ]
+
+    for overlay in highlight_paths:
+        x_coords = [point[0] * width for point in overlay["path"]]
+        y_coords = [height - (point[1] * height) for point in overlay["path"]]
+        fig.add_trace(
+            go.Scatter(
+                x=x_coords,
+                y=y_coords,
+                mode="lines",
+                line=dict(color=overlay["color"], width=5),
+                hoverinfo="text",
+                hovertext=overlay["description"],
+                name=overlay["label"],
+            )
+        )
+
+    rim_points_x: list[float] = []
+    rim_points_y: list[float] = []
+    rim_center = (0.5, 0.5)
+    rim_radius = 0.48
+    for angle in range(0, 361, 6):
+        theta = math.radians(angle)
+        rim_x = (rim_center[0] + rim_radius * math.cos(theta)) * width
+        rim_y = height - ((rim_center[1] + rim_radius * math.sin(theta)) * height)
+        rim_points_x.append(rim_x)
+        rim_points_y.append(rim_y)
+    fig.add_trace(
+        go.Scatter(
+            x=rim_points_x,
+            y=rim_points_y,
+            mode="lines",
+            line=dict(color="#94a3b8", width=2, dash="dash"),
+            hoverinfo="skip",
+            name="Borde del cráter",
+        )
+    )
+
+    highlight_points = [
+        {
+            "label": "Aterrizaje Perseverance",
+            "coords": (0.52, 0.47),
+            "color": "#38bdf8",
+            "description": "Zona de descenso 2021 – referencia para logística robotizada.",
+            "textposition": "top right",
+        },
+        {
+            "label": "Corredor logístico",
+            "coords": (0.65, 0.58),
+            "color": "#facc15",
+            "description": "Pasillo de aterrizaje propuesto para cápsulas de reabastecimiento.",
+            "textposition": "bottom left",
+        },
+    ]
+
+    for point in highlight_points:
+        x_val = point["coords"][0] * width
+        y_val = height - (point["coords"][1] * height)
+        fig.add_trace(
+            go.Scatter(
+                x=[x_val],
+                y=[y_val],
+                mode="markers+text",
+                marker=dict(size=12, color=point["color"], symbol="circle"),
+                text=[point["label"]],
+                textposition=point.get("textposition", "top left"),
+                hovertext=point["description"],
+                hoverinfo="text",
+                name=point["label"],
+            )
+        )
+
+    fig.update_xaxes(visible=False, range=[0, width])
+    fig.update_yaxes(visible=False, range=[0, height])
+    fig.update_layout(
+        showlegend=False,
+        margin=dict(l=0, r=0, t=40, b=0),
+        height=420,
+        title=dict(
+            text="Jezero Crater · briefing visual",
+            x=0.01,
+            y=0.98,
+            font=dict(size=18),
+        ),
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    credit_parts = [
+        "Créditos: NASA/JPL-Caltech · PIA24688",
+    ]
+    if texture_path is not None:
+        credit_parts.append(f"Fuente local: `{texture_path.name}`")
+    st.caption(" · ".join(credit_parts))
 
 
 def _demo_event_severity(severity: str | None) -> str:
@@ -490,11 +732,13 @@ with tabs[0]:
             )
 
         map_payload = telemetry_service.build_map_payload(flights_df)
+        st.markdown("#### Jezero Crater · orientación visual")
+        _render_crater_overview()
         capsule_data = map_payload["capsules"]
         zone_data = map_payload["zones"]
         geometry = map_payload["geometry"]
 
-        layers: list[pdk.Layer] = []
+        layers: list[pdk.Layer] = list(_mars_background_layers())
         if geometry and isinstance(geometry, Mapping) and geometry.get("features"):
             layers.append(
                 pdk.Layer(
@@ -562,7 +806,13 @@ with tabs[0]:
         )
 
         st.pydeck_chart(
-            pdk.Deck(layers=layers, initial_view_state=view_state, tooltip=tooltip),
+            pdk.Deck(
+                layers=layers,
+                initial_view_state=view_state,
+                tooltip=tooltip,
+                map_style=None,
+                map_provider=None,
+            ),
             use_container_width=True,
         )
         st.caption("Mapa operacional de Jezero: cápsulas, zonas clave y perímetro de seguridad.")
