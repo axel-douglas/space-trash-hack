@@ -21,6 +21,7 @@ import pytest
 from app.modules import data_sources, execution, label_mapper, logging_utils, policy_engine
 from app.modules.generator import GeneratorService
 from app.modules.generator import service as generator
+from app.modules.generator.assembly import CandidateAssembler
 from app.modules.optimizer import candidate_metrics
 from app.modules.property_planner import PropertyPlanner
 from app.modules.process_planner import choose_process
@@ -1597,6 +1598,68 @@ def test_heuristic_props_prefers_material_reference():
     bundle = data_sources.load_material_reference_bundle()
     for column in bundle.property_columns:
         assert column in features
+
+
+def test_heuristic_props_uses_mixed_reference(monkeypatch: pytest.MonkeyPatch) -> None:
+    bundle = data_sources.load_material_reference_bundle()
+    assembler = CandidateAssembler(material_reference=bundle)
+    assembler._alias_map = dict(assembler._alias_map)
+    assembler._mixing_rules = dict(assembler._mixing_rules)
+
+    mix_key = "custom_parallel_laminate"
+    mix_slug = data_sources.slugify(data_sources.normalize_item("Custom Parallel Laminate"))
+    assembler._alias_map[mix_slug] = mix_key
+    assembler._mixing_rules[mix_key] = {
+        "rule": "parallel",
+        "components": {
+            "hdpe_natural": {"canonical_key": "hdpe_natural"},
+            "nylon_6_6": {"canonical_key": "nylon_6_6"},
+        },
+        "variants": [
+            {"composition": {"hdpe_natural": 0.6, "nylon_6_6": 0.4}},
+        ],
+    }
+
+    monkeypatch.setattr(generator, "_ASSEMBLER", assembler, raising=False)
+
+    picks = pd.DataFrame(
+        [
+            {
+                "material": "Custom Parallel Laminate",
+                "kg": 5.0,
+                "moisture_pct": 2.0,
+                "difficulty_factor": 1.5,
+            }
+        ]
+    )
+
+    process = pd.Series(
+        {
+            "process_id": "PX",
+            "energy_kwh_per_kg": 0.35,
+            "water_l_per_kg": 0.15,
+            "crew_min_per_batch": 18.0,
+        }
+    )
+
+    weights = np.ones(len(picks), dtype=float)
+    props = generator.heuristic_props(picks, process, weights, 0.0)
+
+    assert props.source == "zenodo_reference"
+
+    aggregated = assembler.aggregate_material_properties(picks, weights)
+    modulus = aggregated["material_modulus_gpa"]
+    strength = aggregated["material_tensile_strength_mpa"]
+    density = aggregated["material_density_kg_m3"]
+
+    modulus_norm = np.clip(modulus / 12.0, 0.0, 1.0)
+    strength_norm = np.clip(strength / 200.0, 0.0, 1.0)
+    density_norm = np.clip((density - 200.0) / 2000.0, 0.0, 1.0)
+
+    expected_rigidity = float(
+        np.clip(0.2 + 0.65 * modulus_norm + 0.15 * strength_norm + 0.1 * density_norm, 0.05, 1.0)
+    )
+    assert props.rigidity == pytest.approx(expected_rigidity, rel=1e-6)
 
 
 def test_prepare_waste_frame_token_match_applies_composition():
