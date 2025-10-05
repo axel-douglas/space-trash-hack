@@ -77,6 +77,18 @@ Para scripts y tests CLI utilizá `ensure_project_root(__file__)` como helper.
 
 #### Textura marciana opcional
 
+El **Mars Control Center** busca primero una textura equirectangular local para
+renderizar Jezero tanto en el mapa (capa `BitmapLayer`) como en el briefing
+visual del cráter. Depositá la imagen en `datasets/mars/` (por ejemplo,
+`datasets/mars/jezero_reference.jpg`) o en `app/static/images/mars_global_8k.jpg`
+(ignorada por Git). Si no hay archivo local, la app intentará descargar
+`PIA24688.jpg` desde el Photojournal de la NASA; en entornos sin red se mostrará
+un relleno sólido.
+
+- La textura debe cubrir todo el globo en proyección equirectangular (relación
+  2:1, longitudes -180° a 180°, latitudes -90° a 90°).
+- Se aceptan formatos `.jpg`, `.jpeg`, `.png`, `.tif`/`.tiff`.
+- Copiá la imagen antes de lanzar `streamlit run` si el despliegue es offline.
 La vista 3D del **Mars Control Center** usa un fondo de mosaicos WMTS
 (`planetarymaps.usgs.gov`) para renderizar Jezero en colores marcianos. En
 entornos sin acceso a ese servicio podés colocar una textura equirectangular
