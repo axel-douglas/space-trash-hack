@@ -228,11 +228,47 @@ class CandidateAssembler:
             total = float(len(picks))
         normalized = weights_combined / total
 
-        aggregates: Dict[str, float] = {}
+        property_arrays: Dict[str, np.ndarray] = {}
         for column in self._property_columns:
-            if column not in picks.columns:
+            if column in picks.columns:
+                values = pd.to_numeric(picks[column], errors="coerce").to_numpy(dtype=float)
+            else:
+                values = np.full(len(picks), float("nan"), dtype=float)
+            property_arrays[column] = values
+
+        mixing_cache: Dict[str, Dict[str, float]] = {}
+        for position, (_, row) in enumerate(picks.iterrows()):
+            key = self._resolve_material_key(row)
+            if not key:
                 continue
-            values = pd.to_numeric(picks[column], errors="coerce").to_numpy(dtype=float)
+
+            reference = self._properties.get(key)
+            if reference:
+                for column, values in property_arrays.items():
+                    value = reference.get(column)
+                    if value is None:
+                        continue
+                    numeric = self._to_float(value)
+                    if numeric is None:
+                        continue
+                    values[position] = numeric
+
+            rule = self._mixing_rules.get(key)
+            if not rule:
+                continue
+            composite = mixing_cache.get(key)
+            if composite is None:
+                composite = self._compute_mixed_property_values(rule)
+                mixing_cache[key] = composite
+            if not composite:
+                continue
+            for column, values in property_arrays.items():
+                if column not in composite:
+                    continue
+                values[position] = composite[column]
+
+        aggregates: Dict[str, float] = {}
+        for column, values in property_arrays.items():
             mask = np.isfinite(values)
             if not mask.any():
                 continue
@@ -241,6 +277,147 @@ class CandidateAssembler:
                 continue
             aggregates[column] = float(np.dot(values[mask], normalized[mask]) / denom)
         return aggregates
+
+    def _compute_mixed_property_values(self, rule: Mapping[str, Any]) -> Dict[str, float]:
+        fractions = self._derive_component_fractions(rule)
+        if not fractions:
+            return {}
+
+        components_meta = rule.get("components") or {}
+        rule_type = str(rule.get("rule") or "parallel").lower()
+        mixed: Dict[str, float] = {}
+        for column in self._property_columns:
+            weighted: list[tuple[float, float]] = []
+            total_fraction = 0.0
+            for component_key, fraction in fractions.items():
+                if not fraction or fraction <= 0:
+                    continue
+                value = self._lookup_component_property(
+                    component_key,
+                    column,
+                    components_meta,
+                )
+                if value is None:
+                    continue
+                weighted.append((float(fraction), value))
+                total_fraction += float(fraction)
+
+            if not weighted or total_fraction <= 0:
+                continue
+
+            normalized = [(frac / total_fraction, val) for frac, val in weighted]
+            if rule_type == "series":
+                denom = 0.0
+                for frac, val in normalized:
+                    if val == 0:
+                        continue
+                    denom += frac / val
+                if denom > 0:
+                    mixed[column] = float(1.0 / denom)
+            else:
+                mixed[column] = float(sum(frac * val for frac, val in normalized))
+
+        return mixed
+
+    def _derive_component_fractions(self, rule: Mapping[str, Any]) -> Dict[str, float]:
+        variants = rule.get("variants") or []
+        accum: Dict[str, float] = {}
+        variant_count = 0
+        for variant in variants:
+            composition = variant.get("composition") or {}
+            normalized: Dict[str, float] = {}
+            total = 0.0
+            for component_key, raw_fraction in composition.items():
+                numeric = self._to_float(raw_fraction)
+                if numeric is None or numeric <= 0:
+                    continue
+                normalized[str(component_key)] = numeric
+                total += numeric
+            if total <= 0 or not normalized:
+                continue
+            variant_count += 1
+            for component_key, numeric in normalized.items():
+                accum[component_key] = accum.get(component_key, 0.0) + numeric / total
+
+        if variant_count == 0:
+            components = list((rule.get("components") or {}).keys())
+            if not components:
+                return {}
+            equal = 1.0 / float(len(components))
+            return {str(key): equal for key in components}
+
+        scale = 1.0 / float(variant_count)
+        for component_key in list(accum):
+            accum[component_key] *= scale
+
+        total_fraction = sum(accum.values())
+        if total_fraction <= 0:
+            return {}
+        for component_key in list(accum):
+            accum[component_key] /= total_fraction
+        return accum
+
+    def _lookup_component_property(
+        self,
+        component_key: str,
+        column: str,
+        components_meta: Mapping[str, Any],
+    ) -> float | None:
+        meta = components_meta.get(component_key) if isinstance(components_meta, Mapping) else {}
+
+        candidates: list[str] = []
+        seen: set[str] = set()
+
+        def _add_candidate(value: Any) -> None:
+            if not value:
+                return
+            if not isinstance(value, str):
+                value = str(value)
+            if not value or value in seen:
+                return
+            seen.add(value)
+            candidates.append(value)
+
+        _add_candidate(component_key)
+        _add_candidate(ds.slugify(component_key))
+        if isinstance(meta, Mapping):
+            _add_candidate(meta.get("canonical_key"))
+            canonical_slug = meta.get("canonical_slug")
+            _add_candidate(canonical_slug)
+            if canonical_slug:
+                _add_candidate(self._alias_map.get(canonical_slug))
+        slug = ds.slugify(component_key)
+        if slug:
+            _add_candidate(self._alias_map.get(slug))
+        if isinstance(meta, Mapping):
+            canonical_key = meta.get("canonical_key")
+            if canonical_key:
+                _add_candidate(self._alias_map.get(ds.slugify(canonical_key)))
+        for candidate in list(candidates):
+            slug_candidate = ds.slugify(candidate)
+            if slug_candidate:
+                _add_candidate(self._alias_map.get(slug_candidate))
+
+        for candidate in candidates:
+            props = self._properties.get(candidate)
+            if not props:
+                continue
+            value = props.get(column)
+            numeric = self._to_float(value)
+            if numeric is None:
+                continue
+            return numeric
+        return None
+
+    @staticmethod
+    def _to_float(value: Any) -> float | None:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not np.isfinite(numeric):
+            return None
+        return float(numeric)
 
     def estimate_density_from_row(self, row: pd.Series) -> float | None:
         """Estimate a material density with packaging-aware fallbacks."""

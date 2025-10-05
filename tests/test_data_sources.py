@@ -193,6 +193,62 @@ def test_candidate_assembler_aggregates_extended_metrics() -> None:
     assert aggregated["material_coefficient_thermal_expansion_per_k_min"] == pytest.approx(1.3e-4, rel=1e-6)
 
 
+def test_candidate_assembler_applies_mixing_rules_for_components() -> None:
+    bundle = load_material_reference_bundle()
+    assembler = CandidateAssembler(material_reference=bundle)
+
+    assembler._alias_map = dict(assembler._alias_map)
+    assembler._mixing_rules = dict(assembler._mixing_rules)
+
+    components = {
+        "hdpe_natural": {"canonical_key": "hdpe_natural"},
+        "nylon_6_6": {"canonical_key": "nylon_6_6"},
+    }
+    composition = {"hdpe_natural": 0.6, "nylon_6_6": 0.4}
+
+    parallel_key = "custom_parallel_laminate"
+    series_key = "custom_series_laminate"
+    parallel_slug = data_sources.slugify(data_sources.normalize_item("Custom Parallel Laminate"))
+    series_slug = data_sources.slugify(data_sources.normalize_item("Custom Series Laminate"))
+    assembler._alias_map[parallel_slug] = parallel_key
+    assembler._alias_map[series_slug] = series_key
+
+    assembler._mixing_rules[parallel_key] = {
+        "rule": "parallel",
+        "components": components,
+        "variants": [{"composition": composition}],
+    }
+    assembler._mixing_rules[series_key] = {
+        "rule": "series",
+        "components": components,
+        "variants": [{"composition": composition}],
+    }
+
+    parallel_pick = pd.DataFrame(
+        [{"_material_reference_key": parallel_key, "kg": 1.0}]
+    )
+    aggregates_parallel = assembler.aggregate_material_properties(parallel_pick, [1.0])
+
+    hdpe = bundle.properties["hdpe_natural"]
+    nylon = bundle.properties["nylon_6_6"]
+    expected_density = 0.6 * hdpe["material_density_kg_m3"] + 0.4 * nylon["material_density_kg_m3"]
+    assert aggregates_parallel["material_density_kg_m3"] == pytest.approx(
+        expected_density, rel=1e-6
+    )
+
+    series_pick = pd.DataFrame(
+        [{"_material_reference_key": series_key, "kg": 1.0}]
+    )
+    aggregates_series = assembler.aggregate_material_properties(series_pick, [1.0])
+    expected_conductivity = 1.0 / (
+        (0.6 / hdpe["material_thermal_conductivity_w_mk"])
+        + (0.4 / nylon["material_thermal_conductivity_w_mk"])
+    )
+    assert aggregates_series["material_thermal_conductivity_w_mk"] == pytest.approx(
+        expected_conductivity, rel=1e-6
+    )
+
+
 def test_particle_size_loader_produces_expected_metrics() -> None:
     frame, metrics = load_regolith_particle_size.cache_clear() or load_regolith_particle_size()
 

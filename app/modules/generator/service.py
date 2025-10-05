@@ -2509,15 +2509,8 @@ def heuristic_props(
     moisture = float(np.dot(base_weights, _vector("moisture_pct", 0.0, 1.0 / 100.0)))
     difficulty = float(np.dot(base_weights, _vector("difficulty_factor", 1.0, 1.0 / 3.0)))
 
-    reference_columns = [
-        column
-        for column in getattr(_ASSEMBLER.material_reference, "property_columns", ())
-        if column in picks.columns
-    ]
-    has_reference = any(picks[column].notna().any() for column in reference_columns)
-
-    if has_reference:
-        aggregated = _ASSEMBLER.aggregate_material_properties(picks, weights)
+    aggregated = _ASSEMBLER.aggregate_material_properties(picks, weights)
+    if aggregated:
         density_ref = aggregated.get("material_density_kg_m3")
         modulus = aggregated.get("material_modulus_gpa")
         strength = aggregated.get("material_tensile_strength_mpa")
