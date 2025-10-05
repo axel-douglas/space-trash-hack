@@ -89,6 +89,18 @@ un relleno sólido.
   2:1, longitudes -180° a 180°, latitudes -90° a 90°).
 - Se aceptan formatos `.jpg`, `.jpeg`, `.png`, `.tif`/`.tiff`.
 - Copiá la imagen antes de lanzar `streamlit run` si el despliegue es offline.
+La vista 3D del **Mars Control Center** usa un fondo de mosaicos WMTS
+(`planetarymaps.usgs.gov`) para renderizar Jezero en colores marcianos. En
+entornos sin acceso a ese servicio podés colocar una textura equirectangular
+propia en `app/static/images/mars_global_8k.jpg` (el archivo está ignorado por
+Git). Si la imagen no está presente, el mapa cae a un color de relleno para
+mantener el contraste de las capas operativas.
+
+- Se recomienda una textura 8K en proyección equirectangular (2:1) con márgenes
+  completos (-180° a 180° de longitud, -90° a 90° de latitud).
+- En despliegues offline, copiá el archivo antes de ejecutar `streamlit run`.
+- Si el servicio WMTS requiere allow-listing de dominios externos, incluí
+  `https://planetarymaps.usgs.gov/` en tu configuración de red.
 
 ---
 

@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 import html
 from urllib.request import urlopen
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from app.bootstrap import ensure_streamlit_entrypoint
 
@@ -71,6 +73,13 @@ _MARS_IMAGE_SEARCH_DIRS = [
 _MARS_IMAGE_PATTERNS = ("*.jpg", "*.jpeg", "*.png", "*.tif", "*.tiff")
 _MARS_GLOBAL_BOUNDS = [-180.0, -90.0, 180.0, 90.0]
 _REMOTE_JEZERO_IMAGE = "https://photojournal.jpl.nasa.gov/jpeg/PIA24688.jpg"
+_MARS_TILE_TEMPLATE = (
+    "https://planetarymaps.usgs.gov/tiles/"
+    "Mars_Viking_MDIM21_ClrMosaic_global_232m/1.0.0/default/default028mm/{z}/{y}/{x}.png"
+)
+_MARS_TILE_PROBE = _MARS_TILE_TEMPLATE.format(z=5, x=17, y=9)
+_MARS_TEXTURE_PATH = Path(__file__).resolve().parent.parent / "static" / "images" / "mars_global_8k.jpg"
+_MARS_GLOBAL_BOUNDS = [-180.0, -90.0, 180.0, 90.0]
 
 
 @st.cache_resource(show_spinner=False)
@@ -175,11 +184,62 @@ def _mars_local_texture_path() -> Path | None:
                 return candidate
         except OSError:
             continue
+@st.cache_data(show_spinner=False, ttl=3600)
+def _mars_tile_service_available() -> bool:
+    try:
+        probe_request = Request(_MARS_TILE_PROBE, method="HEAD")
+        with urlopen(probe_request, timeout=4) as response:
+            if 200 <= getattr(response, "status", 0) < 400:
+                return True
+    except TypeError:
+        # Python <3.11 compat: fallback to manual method override.
+        try:
+            probe_request = Request(_MARS_TILE_PROBE)
+            probe_request.get_method = lambda: "HEAD"  # type: ignore[attr-defined]
+            with urlopen(probe_request, timeout=4) as response:
+                if 200 <= getattr(response, "status", 0) < 400:
+                    return True
+        except Exception:
+            pass
+    except (HTTPError, URLError, TimeoutError, ValueError):
+        pass
+
+    try:
+        # Some WMTS endpoints reject HEAD; fetch a byte range instead.
+        probe_request = Request(_MARS_TILE_PROBE)
+        probe_request.add_header("Range", "bytes=0-0")
+        with urlopen(probe_request, timeout=4) as response:
+            return 200 <= getattr(response, "status", 0) < 400
+    except (HTTPError, URLError, TimeoutError, ValueError):
+        return False
+
+
+def _mars_local_texture_path() -> Path | None:
+    try:
+        if _MARS_TEXTURE_PATH.exists():
+            return _MARS_TEXTURE_PATH
+    except OSError:
+        return None
     return None
 
 
 def _mars_background_layers() -> list[pdk.Layer]:
     background_layers: list[pdk.Layer] = []
+
+    if _mars_tile_service_available():
+        background_layers.append(
+            pdk.Layer(
+                "TileLayer",
+                data=_MARS_TILE_TEMPLATE,
+                id="mars-wmts",
+                min_zoom=0,
+                max_zoom=12,
+                tile_size=256,
+                pickable=False,
+                coordinate_system=pdk.constants.COORDINATE_SYSTEM.LNGLAT,
+            )
+        )
+        return background_layers
 
     local_texture = _mars_local_texture_path()
     if local_texture:
@@ -191,6 +251,7 @@ def _mars_background_layers() -> list[pdk.Layer]:
                 image=str(local_texture),
                 bounds=_MARS_GLOBAL_BOUNDS,
                 pickable=False,
+                coordinate_system=pdk.constants.COORDINATE_SYSTEM.LNGLAT,
             )
         )
         return background_layers
@@ -214,6 +275,7 @@ def _mars_background_layers() -> list[pdk.Layer]:
             filled=True,
             get_fill_color=[105, 69, 33],
             pickable=False,
+            coordinate_system=pdk.constants.COORDINATE_SYSTEM.LNGLAT,
         )
     )
     return background_layers
@@ -371,7 +433,6 @@ def _render_crater_overview() -> None:
     if texture_path is not None:
         credit_parts.append(f"Fuente local: `{texture_path.name}`")
     st.caption(" · ".join(credit_parts))
-
 
 def _demo_event_severity(severity: str | None) -> str:
     normalized = str(severity or "info").lower()
