@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from datetime import datetime
 import base64
 import math
@@ -8,11 +7,16 @@ import io
 import json
 from pathlib import Path
 import html
-from urllib.request import urlopen
+import sys
+from datetime import datetime
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from app.bootstrap import ensure_streamlit_entrypoint
+try:
+    from app.bootstrap import ensure_streamlit_entrypoint
+except ModuleNotFoundError:  # pragma: no cover - fallback for direct execution
+    sys.path.append(str(Path(__file__).resolve().parents[2]))
+    from app.bootstrap import ensure_streamlit_entrypoint
 
 ensure_streamlit_entrypoint(__file__)
 
@@ -275,7 +279,6 @@ def _mars_background_layers() -> list[pdk.Layer]:
                 max_zoom=12,
                 tile_size=256,
                 pickable=False,
-                coordinate_system=pdk.constants.COORDINATE_SYSTEM.LNGLAT,
             )
         )
         return background_layers
@@ -290,7 +293,6 @@ def _mars_background_layers() -> list[pdk.Layer]:
                 image=str(local_texture),
                 bounds=_MARS_GLOBAL_BOUNDS,
                 pickable=False,
-                coordinate_system=pdk.constants.COORDINATE_SYSTEM.LNGLAT,
             )
         )
         return background_layers
@@ -314,7 +316,6 @@ def _mars_background_layers() -> list[pdk.Layer]:
             filled=True,
             get_fill_color=[105, 69, 33],
             pickable=False,
-            coordinate_system=pdk.constants.COORDINATE_SYSTEM.LNGLAT,
         )
     )
     return background_layers
