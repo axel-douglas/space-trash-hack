@@ -348,6 +348,59 @@ def _crater_image_bytes(path_str: str) -> bytes | None:
 
 
 @st.cache_data(show_spinner=False)
+def _load_crater_preview(
+    path_str: str,
+    max_px: int = 4096,
+) -> tuple[bytes, tuple[int, int], tuple[int, int]]:
+    """Load a crater raster and return a resized preview as PNG bytes.
+
+    The helper keeps aspect ratio while ensuring that neither dimension exceeds
+    ``max_px``. It returns the preview bytes along with both the preview and the
+    original dimensions so callers can keep overlays aligned and show metadata.
+    """
+
+    path = Path(path_str)
+    if not path.is_file():
+        return b"", (0, 0), (0, 0)
+
+    try:
+        with Image.open(path) as image:
+            rgb_image = image.convert("RGB")
+            original_size = rgb_image.size
+            max_dimension = max(original_size) if original_size else 0
+            preview_image = rgb_image
+
+            if max_dimension > max_px and max_dimension > 0:
+                scale = max_px / float(max_dimension)
+                new_size = (
+                    max(1, int(round(original_size[0] * scale))),
+                    max(1, int(round(original_size[1] * scale))),
+                )
+                resampling = getattr(Image, "Resampling", Image).LANCZOS
+                preview_image = rgb_image.resize(new_size, resample=resampling)
+            else:
+                new_size = preview_image.size
+
+            buffer = io.BytesIO()
+            preview_image.save(buffer, format="PNG")
+    except OSError:
+        return b"", (0, 0), (0, 0)
+
+    return buffer.getvalue(), new_size, original_size
+
+
+def _guess_image_mime(path_str: str) -> str:
+    mapping = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".tif": "image/tiff",
+        ".tiff": "image/tiff",
+    }
+    return mapping.get(Path(path_str).suffix.lower(), "application/octet-stream")
+
+
+@st.cache_data(show_spinner=False)
 def _crater_model_source() -> str | None:
     model_path = _CRATER_ASSET_DIR / _CRATER_MODEL_FILENAME
     try:
@@ -971,16 +1024,30 @@ def _render_crater_image_tab(
         key="jezero_image_asset",
     )
     selected_asset = option_map[selected_label]
-    image_bytes = _crater_image_bytes(selected_asset["path"])
-    if not image_bytes:
+    preview_bytes, preview_size, original_size = _load_crater_preview(
+        selected_asset["path"]
+    )
+    if not preview_bytes:
         st.warning(
             f"No se pudo cargar `{selected_asset['id']}` desde `datasets/crater`."
         )
         return 0, 0, 0
 
-    crater_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    crater_image.load()
+    try:
+        crater_image = Image.open(io.BytesIO(preview_bytes)).convert("RGB")
+        crater_image.load()
+    except OSError:
+        st.warning(
+            f"No se pudo procesar `{selected_asset['id']}` para visualización."
+        )
+        return 0, 0, 0
+
     width, height = crater_image.size
+    if not preview_size or preview_size == (0, 0):
+        preview_size = (width, height)
+
+    if not original_size or original_size == (0, 0):
+        original_size = preview_size
 
     overlay_options = {
         "Perímetro Jezero": "geometry",
@@ -1080,8 +1147,25 @@ def _render_crater_image_tab(
     if credit:
         credit_parts.append(str(credit))
     credit_parts.append(f"Fuente: `datasets/crater/{selected_asset['id']}`")
-    credit_parts.append(f"Resolución: {width:,} × {height:,} px")
+    orig_width, orig_height = original_size
+    if preview_size != original_size:
+        credit_parts.append(
+            f"Resolución original: {orig_width:,} × {orig_height:,} px"
+        )
+        credit_parts.append(f"Vista previa: {width:,} × {height:,} px")
+    else:
+        credit_parts.append(f"Resolución: {width:,} × {height:,} px")
     st.caption(" · ".join(credit_parts))
+
+    image_bytes = _crater_image_bytes(selected_asset["path"])
+    if image_bytes:
+        st.download_button(
+            "Descargar imagen original",
+            data=image_bytes,
+            file_name=selected_asset["id"],
+            mime=_guess_image_mime(selected_asset["path"]),
+            use_container_width=True,
+        )
 
     metric_cols = st.columns(3)
     metric_cols[0].metric("Cápsulas rastreadas", f"{capsule_count}")
