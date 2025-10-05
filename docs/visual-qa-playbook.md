@@ -1,22 +1,24 @@
 # Playbook de QA Visual
 
-Este playbook documenta la validación visual de las vistas **3 · Generador** y **4 · Resultados** tras la actualización del grid maestro, wrappers semánticos y animaciones.
+Checklist para validar las vistas **3 · Generador** y **4 · Resultados** después
+de cambios en grillas, wrappers y componentes.
 
-| Resolución | Snapshot recomendado | Vista | Status | Notas clave |
-|------------|----------------------|-------|--------|-------------|
-| 1440 × 900 | `qa_snapshots/generator-1440.png` | Generador | ✅ Validado | Layout dual estable, panel IA y controles con `layout-grid--dual`; estilo base provisto por `styles/base.css`. |
-| 1280 × 832 | `qa_snapshots/generator-1280.png` | Generador | ✅ Validado | Columnas se reacomodan con container queries; badges en `badge-group` no rompen flujo. |
-| 1024 × 768 | `qa_snapshots/generator-1024.png` | Generador | ✅ Validado | Grid colapsa a una sola columna, progreso de recursos mantiene legibilidad. |
-| 1440 × 900 | `qa_snapshots/resultados-1440.png` | Resultados | ✅ Validado | Hero aplica gradiente estático del tema base; métricas iniciales renderizadas en `layout-grid--dual`. |
-| 1280 × 832 | `qa_snapshots/resultados-1280.png` | Resultados | ✅ Validado | Grids científicos (`layout-grid--dual`) conservan jerarquía; tablas dentro de `depth-stack`. |
-| 1024 × 768 | `qa_snapshots/resultados-1024.png` | Resultados | ✅ Validado | Sección de KPIs y export cards se apilan correctamente sin overflow. |
+| Resolución | Snapshot | Vista | Estado | Observaciones |
+| --- | --- | --- | --- | --- |
+| 1440 × 900 | `qa_snapshots/generator-1440.png` | Generador | ✅ | Layout dual estable, panel IA y controles mantienen `layout-grid--dual`. |
+| 1280 × 832 | `qa_snapshots/generator-1280.png` | Generador | ✅ | Columnas se adaptan con container queries; badges alineados en `badge-group`. |
+| 1024 × 768 | `qa_snapshots/generator-1024.png` | Generador | ✅ | Grid colapsa a una columna, progreso de recursos sigue legible. |
+| 1440 × 900 | `qa_snapshots/resultados-1440.png` | Resultados | ✅ | Hero aplica gradiente base; métricas iniciales en `layout-grid--dual`. |
+| 1280 × 832 | `qa_snapshots/resultados-1280.png` | Resultados | ✅ | Grids científicos conservan jerarquía; tablas en `depth-stack`. |
+| 1024 × 768 | `qa_snapshots/resultados-1024.png` | Resultados | ✅ | KPIs y cartas de exportación se apilan sin overflow. |
 
-## Checklist general
+## Checklist
 
-- [x] El grid maestro responde a las media queries de `app/static/styles/base.css` (breakpoints ultrawide → portrait).
-- [x] Wrappers `layout-grid`, `side-panel`, `depth-stack` envuelven el contenido relevante en las páginas 3 y 4.
-- [x] Se mantienen sombras suaves (`layer-shadow`) sin efectos HUD ni animaciones.
-- [x] Datos tabulares y gráficos mantienen alineación en resoluciones 1440, 1280 y 1024.
-- [x] Se registraron snapshots locales (mantenerlos en `qa_snapshots/` dentro de tu entorno local) como referencia para regresiones futuras.
+- [x] El grid maestro responde a los breakpoints definidos en `app/static/styles/base.css`.
+- [x] Wrappers `layout-grid`, `side-panel`, `depth-stack` encapsulan el contenido principal.
+- [x] Sombras suaves activas (`layer-shadow`) sin HUDs adicionales.
+- [x] Datos tabulares y visualizaciones mantienen alineación en 1440, 1280 y 1024 px.
+- [x] Snapshots locales guardados en `docs/qa_snapshots/` (no versionado) para regresiones.
 
-> **Nota:** Para regenerar los snapshots ejecutar `streamlit run app/Home.py` y usar una herramienta de captura (Playwright / DevTools) en las resoluciones listadas. Guarda los archivos bajo `docs/qa_snapshots/` en tu copia local (la carpeta ya no se versiona).
+> Para regenerar snapshots: ejecutá `streamlit run app/Home.py` y capturá las
+> vistas con Playwright o DevTools usando las resoluciones listadas.

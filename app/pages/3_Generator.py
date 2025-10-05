@@ -822,7 +822,9 @@ def render_candidate_card(
         if st.button(f"✅ Seleccionar Opción {idx}", key=f"pick_{idx}"):
             view_model.set_selected(candidate, badge)
             st.success(
-                "Opción seleccionada. Abrí **4) Resultados**, **5) Comparar & Explicar** o **6) Pareto & Export**."
+                "Opción seleccionada. Avanzá a **4 · Resultados**, **5 · Compare & Explain** "
+                "o **6 · Pareto & Export** para revisar métricas, justificar la decisión y "
+                "descargar entregables."
             )
 
 playbook_filters_applied = False
@@ -832,7 +834,7 @@ if _playbook_prefilters is not None and isinstance(target, dict):
     )
 
 # ----------------------------- Encabezado -----------------------------
-st.header("Generador IA")
+st.header("🧪 Generador asistido por IA")
 header_badges = _collect_target_badges(target)
 if header_badges:
     badge_columns = st.columns(len(header_badges))
@@ -840,29 +842,39 @@ if header_badges:
         with column:
             pill(label, kind=kind)
 st.caption(
-    "Cargá tu objetivo y generá lotes optimizados comparando recursos y riesgos"
-    " con una vista transparente de métricas y penalizaciones."
+    "Construí propuestas que cumplan el objetivo definido, comparando consumo"
+    " de recursos, riesgo operativo y señales de laboratorio en una sola vista."
 )
 
 st.info(
     "**Flujo recomendado**\n"
-    "1. Configurar objetivo → definí el escenario y los límites críticos.\n"
-    "2. Ajustar filtros → refiná residuos, procesos y penalizaciones según tu estrategia.\n"
-    "3. Generar → ejecutá la IA para evaluar propuestas y priorizar las más sólidas.\n"
-    "4. Revisar resultados → compará riesgos, recursos y sellado antes de decidir."
+    "1. Configurá el objetivo → elegí el escenario y los límites técnicos clave.\n"
+    "2. Ajustá filtros → concentrá la búsqueda en residuos, procesos y penalizaciones"
+    " relevantes.\n"
+    "3. Generá candidatos → ejecutá la IA y revisá cómo cada receta equilibra"
+    " rigidez, estanqueidad y recursos.\n"
+    "4. Analizá resultados → usá las páginas siguientes para validar riesgos,"
+    " explicar la decisión y preparar entregables."
 )
 
 if playbook_filters_applied:
     if _playbook_prefill_label:
         st.success(
-            f"Filtros recomendados para **{_playbook_prefill_label}** activados. Revisá el showroom para verlos en acción."
+            f"Filtros recomendados para **{_playbook_prefill_label}** activados."
+            " Explorá el showroom para ver cómo afectan al ranking."
         )
     else:
-        st.success("Filtros recomendados activados. Revisá el showroom para verlos en acción.")
+        st.success(
+            "Filtros recomendados activados. Revisá el showroom para entender la"
+            " priorización propuesta."
+        )
 
 # ----------------------------- Pre-condición: target -----------------------------
 if not target:
-    st.warning("Configura primero el objetivo en **2 · Target Designer** para habilitar el generador.")
+    st.warning(
+        "Definí primero las metas de rigidez, estanqueidad y recursos en **2 · Target"
+        " Designer** para habilitar el generador."
+    )
     st.stop()
 
 # ----------------------------- Datos base -----------------------------

@@ -1,53 +1,57 @@
 # Onboarding operativo Rex-AI
 
-El home y la demo guiada se reconstruyeron para priorizar claridad operativa en
-los laboratorios. Los componentes viven en `app.modules.ui_blocks` y los flows
-usan microcopys breves pensados para tripulaciones mixtas (ingeniería + crew
-ops). Esta guía resume qué preparar antes de un recorrido y cómo adaptar la
-experiencia.
+Esta guía acompaña a facilitadores y tripulaciones mixtas (ingeniería + crew
+ops) que recorren la demo de Rex-AI. El objetivo es explicar qué preparar antes
+de la sesión, cómo guiar cada paso y qué hacer si necesitás ajustar la
+experiencia sobre la marcha.
 
-## 1. Brief operativo
-- **Componente**: combinación de `layout_stack`, `chipline` y `minimal_button`.
-- **Narrativa**: enfocá el mensaje en la misión del turno (ej. "Validar receta
-  EVA sin PFAS"). Evitá metáforas y usa verbos de acción.
-- **Assets**: las imágenes o GIFs deben ir en `app/static/media`. Mantener peso
-  < 3 MB para garantizar carga rápida en Streamlit Cloud.
+## 1. Antes de la sesión
 
-## 2. Checklist escalonado
-- **Layout**: `layout_stack` + `layout_block("layout-grid--dual")`.
-- **Contenido**: tres pasos máximos. El primero siempre "Inventario", el
-  segundo "Target" y el tercero "Generador" o "Feedback" según la demo.
-- **Estado**: usá `pill` (`ok`, `warn`, `risk`) para señalar el estado de cada
-  paso sin necesidad de texto largo.
+1. **Prepará los datasets de ejemplo** en `data/` (`waste_inventory_sample.csv`
+   y `processes_sample.csv`) para evitar esperas al cargar el generador.
+2. **Chequeá el inventario** ejecutando `pytest tests/pages` o el módulo
+   `app.modules.data_pipeline`. Verificá que existan las columnas `kg`,
+   `_source_volume_l` y `moisture_pct` para habilitar métricas automáticas.
+3. **Define el storytelling**: elegí un escenario (p. ej. Residence Renovations)
+   y decidí qué mensaje enfatizarás (seguridad, consumo de recursos, logística).
+4. **Actualizá assets** livianos (imágenes o GIFs < 3 MB) dentro de
+   `app/static/media` si necesitás un brief visual personalizado.
 
-## 3. Guía automatizada
-- **Activación**: `minimal_button` con `key="guided_demo"` que setea
-  `st.session_state["demo_active"]`.
-- **Progresión**: usa `st_autorefresh` o callbacks livianos para avanzar cada
-  6-8 segundos y mantené las transiciones limpias.
-- **Copy de pasos**: declaralo en un JSON (`data/onboarding_steps.json`) con
-  `title`, `body` y `icon`. Así podemos traducir rápido o ajustar mensajes.
+## 2. Estructura del recorrido
 
-## 4. Laboratorio Target
-- **Componente clave**: sliders configurados con
-  `compute_target_limits(presets)`. Garantiza que el CSV de inventario tenga las
-  columnas `_source_volume_l` y `kg` para calcular baselines NASA.
-- **Tip**: guardá presets de prueba en `data/targets_presets.json` con valores
-  que cuenten una historia (ej. "Contenedores herméticos" con poca agua y alta
-  estanqueidad).
+| Paso | Objetivo | Componentes clave |
+| --- | --- | --- |
+| **Brief inicial** | Alinear a la tripulación con la misión del turno. | `layout_stack`, `chipline`, `minimal_button` |
+| **Checklist escalonado** | Recordar los pasos críticos (Inventario → Target → Generador/Feedback). | `layout_block("layout-grid--dual")`, `pill` |
+| **Guía automatizada** | Mostrar la demo sin intervención manual. | `minimal_button` (`key="guided_demo"`), callbacks livianos |
+| **Laboratorio Target** | Ajustar rigidez, estanqueidad y límites operativos. | `compute_target_limits`, sliders |
+| **Generador / Export** | Visualizar riesgo, recursos y entregar un artefacto tangible. | `layout_stack`, `action_button` |
 
-## 5. Recomendaciones de demostración
-1. **Preparar datos**: deja cargados `waste_inventory_sample.csv` y
-   `processes_sample.csv` para evitar esperas.
-2. **Storytelling**: comienza con la pill de seguridad para alinear prioridades
-   y luego mostrá el generador.
-3. **Hand-off**: al terminar, exportá un CSV desde el generador para entregar un
-   artefacto tangible.
+### Tips narrativos
 
-## 6. Troubleshooting rápido
-- Si un chip no se pinta con el tono esperado, revisá que `tone` tenga uno de
-  los valores soportados (`positive`, `warning`, `danger`, `info`, `accent`).
-- Si los sliders muestran límites raros, corré `pytest tests/pages` para validar
-  que `compute_target_limits` siga leyendo el inventario.
-- Para ajustar densidades o sombras, edita `app/static/styles/base.css` y
-  sincronizá la documentación en `docs/ui-components.md`.
+- Usá verbos directos (“Validar receta EVA sin PFAS”) y evitá metáforas.
+- Mostrá primero la pill de seguridad para fijar prioridades y luego la vista de
+  candidatos.
+- Al cerrar, exportá un CSV/JSON para entregar evidencia tangible de la sesión.
+
+## 3. Personalización rápida
+
+- **Mensajes guiados**: definilos en `data/onboarding_steps.json` con `title`,
+  `body` e `icon`. Esto permite traducir o ajustar copy sin tocar código.
+- **Presets de Target**: guardá escenarios de práctica en
+  `data/targets_presets.json` (por ejemplo, “Contenedores herméticos” con poca
+  agua y alta estanqueidad).
+- **Tema visual**: cualquier ajuste a sombras o densidades se hace en
+  `app/static/styles/base.css`; reflejá el cambio en `docs/ui-components.md`.
+
+## 4. Troubleshooting inmediato
+
+| Síntoma | Revisión recomendada |
+| --- | --- |
+| Chips sin color esperado | Confirmá que `tone` sea `positive`, `warning`, `danger`, `info` o `accent`. |
+| Sliders con límites extraños | Ejecutá `pytest tests/pages` para validar `compute_target_limits`. |
+| Guía automatizada no avanza | Revisá que `st.session_state["demo_active"]` se actualice y que los callbacks usen tiempos de 6–8 s. |
+| Mixers sin datos | Verificá que los CSV de inventario/curvas tengan columnas numéricas y ejecutá nuevamente la carga. |
+
+Con estas prácticas el onboarding mantiene un tono claro para perfiles técnicos
+y no técnicos, minimizando sorpresas durante demostraciones en laboratorio.

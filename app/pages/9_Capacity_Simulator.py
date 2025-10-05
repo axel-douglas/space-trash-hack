@@ -41,7 +41,10 @@ props = selected_candidate.get("props") if isinstance(selected_candidate, dict) 
 
 with layout_stack():
     st.title("🧮 Capacity Simulator")
-    st.caption("Evalúa la producción diaria frente a límites de recursos y downtime estimado.")
+    st.caption(
+        "Modelá cómo se comporta la línea de producción a lo largo de varios soles"
+        " considerando turnos, eficiencia y restricciones de recursos."
+    )
 
 col_left, col_right = st.columns(2)
 with col_left:
@@ -135,7 +138,11 @@ if simulate_clicked:
     metric_summary[3].metric("Crew total (min)", f"{total_row['Crew (min)']:.0f}")
 
     st.subheader("Producción por sol")
+    st.caption("Resultados ajustados por downtime y límites diarios. La fila final resume el total acumulado.")
     result_table = pd.concat([per_day_df, pd.DataFrame([total_row])], ignore_index=True)
     st.dataframe(result_table, use_container_width=True, hide_index=True)
 else:
-    st.caption("Configurá los parámetros y presioná **Simular** para ver la proyección por sol.")
+    st.caption(
+        "Configurá los parámetros y presioná **Simular** para proyectar masa,"
+        " energía, agua y crew consumidos por jornada marciana."
+    )

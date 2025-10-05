@@ -1,31 +1,27 @@
 # Biblioteca de componentes UI
 
-La capa visual de Rex-AI se consolidó en `app.modules.ui_blocks`. El objetivo es
-ofrecer bloques accesibles, fáciles de combinar y con un perfil visual
-consistente para las demostraciones de laboratorio. El módulo inyecta un tema
-ligero inspirado en paneles NASA y expone utilidades para construir layouts,
-controles y estados informativos sin depender del antiguo paquete `luxe`.
+`app/modules/ui_blocks.py` centraliza el layout y los microcomponentes de Rex-AI.
+La meta es armar pantallas consistentes sin escribir HTML crudo y mantener un
+tono directo para la tripulación.
 
-> **Nota de copy**: mantené un tono directo y técnico. Los títulos deben ser
-> cortos y los mensajes orientados a acciones concretas de la tripulación.
-
-## Inicializar tema base
+## Inicializar tema y layout
 
 ```python
-from app.modules.ui_blocks import load_theme, layout_stack
+from app.modules.ui_blocks import configure_page, initialise_frontend, layout_stack
 
-load_theme()  # inyecta CSS base NASA e iconografía compartida
+configure_page(page_title="Rex-AI", page_icon="🛰️")
+initialise_frontend()
 
 with layout_stack() as stack:
     stack.subheader("Panel de control Rex-AI")
     stack.write("Agrupá métricas clave dentro del contexto del laboratorio.")
 ```
 
-- `layout_stack` y `layout_block` permiten orquestar columnas y agrupaciones
-  sin escribir HTML manual.
-- El tema global mantiene contraste AA sin depender de toggles en pantalla.
+- `configure_page` aplica título, favicon y opciones de Streamlit.
+- `initialise_frontend` inyecta la hoja de estilos base y el tema compartido.
+- `layout_stack`/`layout_block` construyen grillas responsivas sin escribir CSS.
 
-## Layouts operativos
+## Patrones operativos
 
 ```python
 from app.modules.ui_blocks import layout_stack, layout_block, micro_divider
@@ -33,42 +29,31 @@ from app.modules.ui_blocks import layout_stack, layout_block, micro_divider
 with layout_stack() as stack:
     stack.markdown("### Checklist del turno")
     with layout_block("layout-grid layout-grid--dual", parent=stack):
-        col1, col2 = st.columns(2)
-        col1.success("Inventario NASA validado")
-        col2.info("Crew brief listo")
+        col_left, col_right = st.columns(2)
+        col_left.success("Inventario NASA validado")
+        col_right.info("Crew brief listo")
     micro_divider(parent=stack)
     stack.caption("Actualizá el estado antes de iniciar la corrida IA.")
 ```
 
-Los helpers utilizan clases definidas en `app/static/styles/base.css`. Evitá
-escribir HTML crudo salvo que necesites un layout puntual; siempre que sea
-posible extendé estas utilidades.
-
-## Chips y pills para estados de laboratorio
+## Pills y chips
 
 ```python
-from app.modules.ui_blocks import chipline, pill
+from app.modules.ui_blocks import pill, chipline
 
-pill("🛡️ Seguridad · OK", kind="ok")
-
-chipline(
-    [
-        {"label": "PFAS controlados", "icon": "🧪", "tone": "positive"},
-        {"label": "Microplásticos mitigados", "icon": "🧴", "tone": "positive"},
-        {"label": "Crew listo", "icon": "👩‍🚀"},
-    ]
-)
+pill("🛡️ Seguridad OK", kind="ok")
+chipline([
+    {"label": "PFAS controlados", "icon": "🧪", "tone": "positive"},
+    {"label": "Microplásticos mitigados", "icon": "🧴", "tone": "positive"},
+    {"label": "Crew listo", "icon": "👩‍🚀"},
+])
 ```
 
-- `pill` admite `kind="ok" | "warn" | "risk"` para reflejar el semáforo
-  operativo.
-- `chipline` acepta strings o diccionarios con `label`, `icon` y `tone`. Usala
-  para resumir medidas de mitigación, badges de inventario o flags EVA.
+- `pill(kind="ok" | "warn" | "risk")` resume el estado operativo.
+- `chipline` acepta strings o diccionarios con `label`, `icon`, `tone`.
+- Pasá `render=False` para obtener el HTML y reutilizarlo en otros contenedores.
 
-Si necesitás el HTML para incrustarlo en otro componente, pasá `render=False` y
-recibirás el markup listo para reutilizar.
-
-## Botones de acción compartidos
+## Botones de acción
 
 ```python
 from app.modules.ui_blocks import minimal_button
@@ -82,42 +67,39 @@ if minimal_button(
     lanzar_pipeline()
 ```
 
-- `minimal_button` cubre el 90% de los CTAs operativos; ajustá `state` (`idle`,
-  `loading`, `success`, `error`) según la respuesta del backend.
-- `futuristic_button` conserva una variante destacada con layout propio;
-  los efectos visuales ahora son discretos para no distraer durante las demos.
+`minimal_button` soporta estados `idle`, `loading`, `success`, `error` y evita
+microinteracciones intrusivas. `action_button` añade soporte para descargas y
+marcos más robustos.
 
-## Marcadores de objetivo
+## Sliders del Target Designer
 
-Los sliders de la página **Target Designer** se alimentan con
-`app.modules.target_limits.compute_target_limits`. El helper analiza los presets
-de `data/targets_presets.json` y el inventario NASA para calcular límites,
-pasos y mensajes de ayuda.
+`compute_target_limits` calcula límites y tooltips a partir de presets e
+inventario NASA.
 
 ```python
 from app.modules.target_limits import compute_target_limits
-
 presets = load_targets()
-slider_limits = compute_target_limits(presets)
-st.slider(
+limits = compute_target_limits(presets)
+water_slider = st.slider(
     "Agua máxima (L)",
-    slider_limits["max_water_l"]["min"],
-    slider_limits["max_water_l"]["max"],
-    slider_limits["max_water_l"]["min"],
-    slider_limits["max_water_l"]["step"],
-    help=slider_limits["max_water_l"]["help"],
+    limits["max_water_l"]["min"],
+    limits["max_water_l"]["max"],
+    limits["max_water_l"]["default"],
+    limits["max_water_l"]["step"],
+    help=limits["max_water_l"]["help"],
 )
 ```
 
-> **Tip**: mantené el CSV de inventario actualizado; el helper toma el P90 de
-> volumen y masa para alinear los límites con los baseline NASA.
+## Extender la biblioteca
 
-## Extender el sistema
+1. Creá nuevos helpers en `ui_blocks.py` con parámetros explícitos y soporte para
+   `render=False` (útil en tests).
+2. Definí clases en `app/static/styles/base.css` siguiendo el prefijo `rex-` o
+   `layout-` para mantener consistencia.
+3. Documentá cambios relevantes en este archivo y en `docs/design-system.md`.
 
-- Si necesitás un nuevo bloque, creadlo en `ui_blocks.py` siguiendo la misma
-  filosofía: estilos inyectados, API declarativa y soporte para `render=False`
-  en caso de tests o composición.
-- Para variantes visuales definí clases en `app/static/styles/base.css` y
-  referencialas mediante `use_token` o funciones auxiliares.
-- Documentá los cambios en esta página para que el equipo de laboratorio tenga
-  una referencia única del sistema operativo UI.
+### Copy y tono
+
+- Títulos cortos (máx. 4 palabras) y verbos de acción.
+- Mensajes directos, sin metáforas ni jerga innecesaria.
+- Siempre indicá qué debe hacer la tripulación a continuación.

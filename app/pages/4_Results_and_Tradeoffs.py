@@ -215,7 +215,9 @@ header_chips.append({"label": "Restricciones OK" if feasible else "Revisar restr
 
 st.title(f"📊 {process_id} · {process_name}")
 st.caption(
-    "Predicciones Rex-AI con trazabilidad NASA y contraste frente a la heurística de referencia."
+    "Mirá cómo la receta seleccionada responde según Rex-AI, con trazabilidad"
+    " NASA, comparación con la heurística y alertas si alguna restricción se"
+    " estira demasiado."
 )
 
 if header_chips:
@@ -227,9 +229,15 @@ if constraint_entries:
     render_constraint_chips(constraint_entries)
 
 if feasible:
-    st.success("La receta cumple las metas de rigidez y propiedades definidas.")
+    st.success(
+        "La receta respeta rigidez, estanqueidad y límites de recursos definidos en"
+        " el objetivo. Continuá con la comparación o exportá el plan."
+    )
 else:
-    st.error("La receta no cumple todas las restricciones. Ajustá materiales o límites.")
+    st.error(
+        "La receta supera al menos una restricción. Ajustá materiales, procesos o"
+        " límites y regenerá candidatos."
+    )
 
 error_rows: list[dict[str, object]] = []
 for entry in constraint_entries:
@@ -263,6 +271,11 @@ for entry in constraint_entries:
 
 if error_rows:
     st.subheader("Bandas de incertidumbre ±σ")
+    st.caption(
+        "Mostramos el valor estimado junto con la desviación estándar del ensemble."
+        " Las barras resaltan dónde conviene reforzar mediciones o ampliar el"
+        " dataset."
+    )
     error_df = pd.DataFrame(error_rows)
     base = alt.Chart(error_df)
     error_bars = base.mark_errorbar(color="#94a3b8").encode(
@@ -320,6 +333,11 @@ if isinstance(candidates_all, list) and candidates_all:
 
 if pareto_rows:
     st.subheader("Frente Pareto de candidatos generados")
+    st.caption(
+        "Cada punto representa una receta explorada; el color celeste indica las"
+        " que forman parte del frente Pareto (mejor score y menor penalización"
+        " sin dominancia)."
+    )
     pareto_df = pd.DataFrame(pareto_rows)
     scatter = alt.Chart(pareto_df).mark_circle().encode(
         x=alt.X("score:Q", title="Score"),

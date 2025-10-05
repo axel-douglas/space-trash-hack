@@ -35,13 +35,14 @@ render_breadcrumbs(current_step)
 st.title("2) Definir objetivo (TargetSpec)")
 
 st.info(
-    "En esta misión podés elegir entre tres escenarios: **Residence Renovations** "
-    "(rehabilitar hábitats existentes), **Cosmic Celebrations** (montajes rápidos para"
-    " eventos especiales) y **Daring Discoveries** (expediciones de laboratorio)."
-    " Configurá la rigidez y la estanqueidad para alinear la ingeniería del producto "
-    "con cada reto, y fijá límites de agua, energía y minutos de tripulación para "
-    "asegurarte de que la receta resultante respete los recursos disponibles en la "
-    "estación."
+    "Seleccioná el escenario que describe tu misión y usá los deslizadores para "
+    "balancear desempeño y logística antes de pasar al generador:\n"
+    "- **Residence Renovations** prioriza refuerzos estructurales y sellado estable "
+    "  para módulos habitables.\n"
+    "- **Cosmic Celebrations** busca montajes rápidos con bajo consumo de crew y "
+    "  recursos.\n"
+    "- **Daring Discoveries** habilita prototipos de laboratorio donde la precisión "
+    "  del sellado y la energía disponible son críticas."
 )
 
 presets = load_targets()
@@ -75,9 +76,18 @@ if scenario not in scenario_options:
     scenario = default_scenario
 
 scenario_descriptions = {
-    "Residence Renovations": "rehabilitar y ampliar espacios existentes a largo plazo",
-    "Cosmic Celebrations": "crear montajes efímeros y visuales para eventos orbitales",
-    "Daring Discoveries": "apoyar misiones científicas con prototipos ajustados",
+    "Residence Renovations": (
+        "rehabilitar y ampliar espacios habitables con énfasis en estabilidad"
+        " estructural"
+    ),
+    "Cosmic Celebrations": (
+        "montar instalaciones efímeras donde manda la agilidad y el consumo"
+        " acotado de recursos"
+    ),
+    "Daring Discoveries": (
+        "respaldar expediciones científicas con prototipos precisos y soporte"
+        " instrumental"
+    ),
 }
 
 scenario = st.selectbox(
@@ -199,12 +209,19 @@ st.table(limits_table)
 crew_focus_text = "priorizar procesos rápidos" if crew_time_low else "permitir procesos con más supervisión"
 scenario_text = scenario_descriptions.get(scenario, scenario.lower())
 st.markdown(
-    "**Resumen narrativo:** Configuraste el objetivo para "
-    f"**{scenario}**, enfocado en {scenario_text}. La receta deberá respetar una "
-    f"rigidez de {rigidity:.2f} (protege la estructura), una estanqueidad de {tightness:.2f} "
-    "(evita fugas críticas) y usar hasta "
-    f"{max_water:.2f} L de agua y {max_energy:.2f} kWh de energía. También indicaste "
-    f"{crew_focus_text}, con un máximo de {max_crew:.0f} minutos humanos disponibles."
+    "\n".join(
+        [
+            "**Resumen de misión**",
+            f"- Escenario elegido: **{scenario}** ({scenario_text}).",
+            f"- Rigidez objetivo: `{rigidity:.2f}` (controla la resistencia del producto).",
+            f"- Estanqueidad objetivo: `{tightness:.2f}` (evita fugas y pérdida de presión).",
+            f"- Recursos máximos: `{max_water:.2f}` L de agua y `{max_energy:.2f}` kWh disponibles.",
+            f"- Tiempo humano asignado: `{max_crew:.0f}` minutos para operadores ({crew_focus_text}).",
+        ]
+    )
 )
 
-st.success("Objetivo listo. Abrí la página **3) Generador** para obtener recetas.")
+st.success(
+    "Objetivo listo. Pasá al paso **3 · Generador asistido** para crear recetas"
+    " compatibles con estas restricciones."
+)
