@@ -9,8 +9,7 @@ from pathlib import Path
 import html
 import sys
 from datetime import datetime
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import urlopen
 
 try:
     from app.bootstrap import ensure_streamlit_entrypoint
@@ -99,14 +98,6 @@ _MARS_IMAGE_SEARCH_DIRS = [
 _MARS_IMAGE_PATTERNS = ("*.jpg", "*.jpeg", "*.png", "*.tif", "*.tiff")
 _MARS_GLOBAL_BOUNDS = [-180.0, -90.0, 180.0, 90.0]
 _REMOTE_JEZERO_IMAGE = "https://photojournal.jpl.nasa.gov/jpeg/PIA24688.jpg"
-_MARS_TILE_TEMPLATE = (
-    "https://planetarymaps.usgs.gov/tiles/"
-    "Mars_Viking_MDIM21_ClrMosaic_global_232m/1.0.0/default/default028mm/{z}/{y}/{x}.png"
-)
-_MARS_TILE_PROBE = _MARS_TILE_TEMPLATE.format(z=5, x=17, y=9)
-_MARS_TEXTURE_PATH = Path(__file__).resolve().parent.parent / "static" / "images" / "mars_global_8k.jpg"
-_MARS_GLOBAL_BOUNDS = [-180.0, -90.0, 180.0, 90.0]
-
 _CRATER_ASSET_DIR = Path(__file__).resolve().parents[2] / "datasets" / "crater"
 _CRATER_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".tif", ".tiff")
 _CRATER_MODEL_FILENAME = "jezero_crater_mars.glb"
@@ -261,52 +252,8 @@ def _mars_local_texture_path() -> Path | None:
         except OSError:
             continue
 
-@st.cache_data(show_spinner=False, ttl=3600)
-def _mars_tile_service_available() -> bool:
-    try:
-        probe_request = Request(_MARS_TILE_PROBE, method="HEAD")
-        with urlopen(probe_request, timeout=4) as response:
-            if 200 <= getattr(response, "status", 0) < 400:
-                return True
-    except TypeError:
-        # Python <3.11 compat: fallback to manual method override.
-        try:
-            probe_request = Request(_MARS_TILE_PROBE)
-            probe_request.get_method = lambda: "HEAD"  # type: ignore[attr-defined]
-            with urlopen(probe_request, timeout=4) as response:
-                if 200 <= getattr(response, "status", 0) < 400:
-                    return True
-        except Exception:
-            pass
-    except (HTTPError, URLError, TimeoutError, ValueError):
-        pass
-
-    try:
-        # Some WMTS endpoints reject HEAD; fetch a byte range instead.
-        probe_request = Request(_MARS_TILE_PROBE)
-        probe_request.add_header("Range", "bytes=0-0")
-        with urlopen(probe_request, timeout=4) as response:
-            return 200 <= getattr(response, "status", 0) < 400
-    except (HTTPError, URLError, TimeoutError, ValueError):
-        return False
-
-
 def _mars_background_layers() -> list[pdk.Layer]:
     background_layers: list[pdk.Layer] = []
-
-    if _mars_tile_service_available():
-        background_layers.append(
-            pdk.Layer(
-                "TileLayer",
-                data=_MARS_TILE_TEMPLATE,
-                id="mars-wmts",
-                min_zoom=0,
-                max_zoom=12,
-                tile_size=256,
-                pickable=False,
-            )
-        )
-        return background_layers
 
     local_texture = _mars_local_texture_path()
     if local_texture:
@@ -1666,9 +1613,11 @@ with tabs[0]:
         st.markdown("#### Jezero Crater · orientación visual")
         _render_crater_overview(capsule_data, zone_data, geometry)
 
-        layers: list[pdk.Layer] = list(_mars_background_layers())
+        background_layers: list[pdk.Layer] = list(_mars_background_layers())
+        overlay_layers: list[pdk.Layer] = []
+
         if geometry and isinstance(geometry, Mapping) and geometry.get("features"):
-            layers.append(
+            overlay_layers.append(
                 pdk.Layer(
                     "GeoJsonLayer",
                     geometry,
@@ -1680,7 +1629,7 @@ with tabs[0]:
                 )
             )
         if isinstance(zone_data, pd.DataFrame) and not zone_data.empty:
-            layers.append(
+            overlay_layers.append(
                 pdk.Layer(
                     "ScatterplotLayer",
                     zone_data,
@@ -1696,7 +1645,7 @@ with tabs[0]:
                 )
             )
         if isinstance(capsule_data, pd.DataFrame) and not capsule_data.empty:
-            layers.append(
+            overlay_layers.append(
                 pdk.Layer(
                     "ScatterplotLayer",
                     capsule_data,
@@ -1712,38 +1661,50 @@ with tabs[0]:
                 )
             )
 
-        tooltip = {
-            "html": (
-                "<div style='font-size:14px;font-weight:600;'>{vehicle}</div>"
-                "<div>{status}</div>"
-                "<div>ETA: {eta_minutes} min</div>"
-                "<div>Materiales: {materials_tooltip}</div>"
-                "<div>Espectro: {material_spectrum}</div>"
-                "<div>Densidad: {density} g/cm³ · Compatibilidad: {compatibility}</div>"
-                "<div>{tooltip}</div>"
-            ),
-            "style": {"backgroundColor": "#0f172a", "color": "white"},
-        }
+        render_layers = background_layers + overlay_layers
 
-        view_state = pdk.ViewState(
-            latitude=18.43,
-            longitude=77.58,
-            zoom=9.1,
-            pitch=45,
-            bearing=25,
-        )
+        if not render_layers:
+            st.info(
+                "Añadí un mosaico local de Jezero en `datasets/mars/` o en"
+                " `app/static/images/` para habilitar el mapa operativo."
+            )
+        else:
+            tooltip = None
+            if overlay_layers:
+                tooltip = {
+                    "html": (
+                        "<div style='font-size:14px;font-weight:600;'>{vehicle}</div>"
+                        "<div>{status}</div>"
+                        "<div>ETA: {eta_minutes} min</div>"
+                        "<div>Materiales: {materials_tooltip}</div>"
+                        "<div>Espectro: {material_spectrum}</div>"
+                        "<div>Densidad: {density} g/cm³ · Compatibilidad: {compatibility}</div>"
+                        "<div>{tooltip}</div>"
+                    ),
+                    "style": {"backgroundColor": "#0f172a", "color": "white"},
+                }
 
-        st.pydeck_chart(
-            pdk.Deck(
-                layers=layers,
-                initial_view_state=view_state,
-                tooltip=tooltip,
-                map_style=None,
-                map_provider=None,
-            ),
-            use_container_width=True,
-        )
-        st.caption("Mapa operacional de Jezero: cápsulas, zonas clave y perímetro de seguridad.")
+            view_state = pdk.ViewState(
+                latitude=18.43,
+                longitude=77.58,
+                zoom=9.1,
+                pitch=45,
+                bearing=25,
+            )
+
+            st.pydeck_chart(
+                pdk.Deck(
+                    layers=render_layers,
+                    initial_view_state=view_state,
+                    tooltip=tooltip,
+                    map_style=None,
+                    map_provider=None,
+                ),
+                use_container_width=True,
+            )
+            st.caption(
+                "Mapa operacional de Jezero: cápsulas, zonas clave y perímetro de seguridad."
+            )
 
         micro_divider()
         display_df = flights_df[
