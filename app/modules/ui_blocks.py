@@ -309,6 +309,37 @@ def pill(
     return markup
 
 
+def render_dataset_badge(
+    *,
+    uses_physical_dataset: bool,
+    tooltip: str | None = None,
+    container: DeltaGenerator | None = None,
+) -> None:
+    """Render a badge signalling whether a physical NASA dataset backed the model."""
+
+    load_theme(show_hud=False)
+
+    tone: PillKind = "ok" if uses_physical_dataset else "warn"
+    label = "Physical dataset used ✅" if uses_physical_dataset else "Heuristic fallback ⚠️"
+
+    default_tooltip = (
+        "Predicción calibrada con datasets físicos Rex-AI/NASA."
+        if uses_physical_dataset
+        else "Sin respaldo directo de dataset físico; se usa heurística Rex-AI."
+    )
+    title = escape((tooltip or default_tooltip).strip())
+
+    markup = (
+        f"<span class='mission-pill mission-pill--{tone}' "
+        f"data-mission-pill='{tone}' data-lab-pill='{tone}' data-kind='{tone}' "
+        f"title='{title}'>"
+        f"{escape(label)}</span>"
+    )
+
+    target = container or st
+    target.markdown(markup, unsafe_allow_html=True)
+
+
 def section(title: str, subtitle: str = "") -> None:
     st.subheader(title)
     if subtitle:

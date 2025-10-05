@@ -47,6 +47,12 @@ from app.modules.ui_blocks import (
     layout_block,
     render_brand_header,
     render_constraint_chips,
+    render_dataset_badge,
+)
+from app.modules.utils import (
+    format_label_summary,
+    physical_dataset_tooltip,
+    uses_physical_dataset,
 )
 
 configure_page(page_title="Rex-AI • Resultados", page_icon="📊")
@@ -79,6 +85,18 @@ score = cand.get("score", 0.0)
 safety = selected.get("safety", {"level": "—", "detail": ""})
 process_id = cand.get("process_id", "—")
 process_name = cand.get("process_name", "Proceso")
+
+prediction_source = getattr(props, "source", cand.get("prediction_source", "heuristic"))
+uses_physical = uses_physical_dataset(prediction_source)
+summary_text = format_label_summary(metadata.get("label_summary"))
+dataset_tooltip = (
+    physical_dataset_tooltip(
+        summary=summary_text or None,
+        trained_at=metadata.get("trained_at"),
+    )
+    if uses_physical
+    else None
+)
 
 planner = PropertyPlanner()
 evaluation = planner.evaluate_candidate(cand, target)
@@ -218,6 +236,11 @@ st.caption(
     "Mirá cómo la receta seleccionada responde según Rex-AI, con trazabilidad"
     " NASA, comparación con la heurística y alertas si alguna restricción se"
     " estira demasiado."
+)
+
+render_dataset_badge(
+    uses_physical_dataset=uses_physical,
+    tooltip=dataset_tooltip,
 )
 
 if header_chips:
@@ -377,6 +400,10 @@ if pareto_rows:
 
 metrics_df = build_candidate_metric_table(props, heur, score, ci, uncertainty)
 st.subheader("Métricas clave")
+render_dataset_badge(
+    uses_physical_dataset=uses_physical,
+    tooltip=dataset_tooltip,
+)
 metrics_style = metrics_df.style.format(
     {
         "IA Rex-AI": "{:.3f}",
@@ -624,8 +651,8 @@ with st.expander("🛰️ Contexto y trazabilidad", expanded=True):
         f"**Vector latente ({autoencoder_label})**: {latent_text} · Interpreta la proximidad a casos previos antes de aprobar extrapolaciones.",
         unsafe_allow_html=True,
     )
-    src = getattr(props, "source", "heuristic")
-    if src.startswith("rexai"):
+    src = prediction_source
+    if uses_physical:
         trained_at = metadata.get("trained_at", "?")
         st.caption(f"Predicciones por modelo Rex-AI (**{src}**, entrenado {trained_at}).")
     else:

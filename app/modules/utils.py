@@ -11,6 +11,8 @@ __all__ = [
     "format_number",
     "format_resource_text",
     "format_label_summary",
+    "uses_physical_dataset",
+    "physical_dataset_tooltip",
 ]
 
 
@@ -119,3 +121,31 @@ def format_label_summary(summary: Mapping[str, Mapping[str, float]] | None) -> s
         parts.append(fragment)
 
     return " · ".join(parts)
+
+
+def uses_physical_dataset(source: Any) -> bool:
+    """Return ``True`` when the prediction source maps to a Rex-AI physical model."""
+
+    if isinstance(source, str):
+        return source.lower().startswith("rexai")
+    return False
+
+
+def physical_dataset_tooltip(*, summary: str | None = None, trained_at: Any | None = None) -> str:
+    """Compose a concise tooltip describing NASA datasets backing Rex-AI predictions."""
+
+    base = (
+        "Respaldado por datasets físicos NASA ISRU: granulometría MGS-1, espectros (Fig.4) y "
+        "perfiles térmicos (Fig.5)."
+    )
+    parts = [base]
+
+    if summary:
+        parts.append(f"Cobertura labels: {summary}.")
+
+    if trained_at:
+        trained_label = str(trained_at).strip()
+        if trained_label and trained_label not in {"?", "—"}:
+            parts.append(f"Entrenado {trained_label}.")
+
+    return " ".join(parts)

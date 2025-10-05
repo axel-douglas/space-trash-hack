@@ -50,13 +50,16 @@ from app.modules.ui_blocks import (
     micro_divider,
     pill,
     render_brand_header,
+    render_dataset_badge,
 )
 from app.modules.visualizations import ConvergenceScene
 from app.modules.utils import (
     format_label_summary,
     format_number,
     format_resource_text,
+    physical_dataset_tooltip,
     safe_float,
+    uses_physical_dataset,
 )
 from app.pages.generator_view_model import GeneratorViewModel
 
@@ -67,6 +70,14 @@ TARGET_DISPLAY = {
     "energy_kwh": "Energía (kWh)",
     "water_l": "Agua (L)",
     "crew_min": "Crew (min)",
+}
+
+PREDICTION_ATTR_MAP = {
+    "rigidez": "rigidity",
+    "estanqueidad": "tightness",
+    "energy_kwh": "energy_kwh",
+    "water_l": "water_l",
+    "crew_min": "crew_min",
 }
 
 
@@ -524,17 +535,33 @@ def render_candidate_card(
             meta_payload = {}
             if isinstance(candidate.get("ml_prediction"), dict):
                 meta_payload = candidate["ml_prediction"].get("metadata", {}) or {}
+
+            summary_source = meta_payload.get("label_summary") or model_registry.label_summary
+            summary_text = format_label_summary(summary_source)
+            uses_physical = uses_physical_dataset(src) and not pred_error
+            dataset_tooltip = (
+                physical_dataset_tooltip(
+                    summary=summary_text or None,
+                    trained_at=meta_payload.get("trained_at"),
+                )
+                if uses_physical
+                else None
+            )
+
+            render_dataset_badge(
+                container=info_col,
+                uses_physical_dataset=uses_physical,
+                tooltip=dataset_tooltip,
+            )
+
             if pred_error:
                 info_col.caption("Fallback heurístico mostrado por indisponibilidad del modelo.")
-            elif str(src).startswith("rexai"):
+            elif uses_physical:
                 trained_at = meta_payload.get("trained_at", "?")
                 latent = candidate.get("latent_vector", [])
                 latent_note = "" if not latent else f" · Vector latente {len(latent)}D"
                 info_col.caption(
                     f"Predicción por modelo ML (**{src}**, entrenado {trained_at}){latent_note}."
-                )
-                summary_text = format_label_summary(
-                    meta_payload.get("label_summary") or model_registry.label_summary
                 )
                 if summary_text:
                     info_col.caption(f"Dataset Rex-AI: {summary_text}")
@@ -556,6 +583,15 @@ def render_candidate_card(
                         "Lo": lo_val,
                         "Hi": hi_val,
                     }
+                    attr_name = PREDICTION_ATTR_MAP.get(key)
+                    center_value = None
+                    if attr_name and hasattr(props, attr_name):
+                        center_value = getattr(props, attr_name)
+                    try:
+                        if center_value is not None:
+                            row["Predicción"] = float(center_value)
+                    except (TypeError, ValueError):
+                        row["Predicción"] = float("nan")
                     sigma_val = unc.get(key)
                     if sigma_val is not None:
                         try:
@@ -566,6 +602,39 @@ def render_candidate_card(
                 if rows and not pred_error:
                     info_col.markdown("**📉 Intervalos de confianza (95%)**")
                     ci_df = pd.DataFrame(rows)
+                    chart_df = ci_df.copy()
+                    for column in ["Lo", "Hi", "Predicción", "σ (std)"]:
+                        if column in chart_df.columns:
+                            chart_df[column] = pd.to_numeric(chart_df[column], errors="coerce")
+                    chart_df = chart_df.dropna(subset=["Lo", "Hi"])
+                    if not chart_df.empty:
+                        if "Predicción" not in chart_df.columns:
+                            chart_df["Predicción"] = (chart_df["Lo"] + chart_df["Hi"]) / 2
+                        else:
+                            chart_df["Predicción"] = chart_df["Predicción"].fillna(
+                                (chart_df["Lo"] + chart_df["Hi"]) / 2
+                            )
+                        tooltips = [
+                            alt.Tooltip("Variable:N", title="Indicador"),
+                            alt.Tooltip("Predicción:Q", title="Predicción", format=".3f"),
+                            alt.Tooltip("Lo:Q", title="Lo 95%", format=".3f"),
+                            alt.Tooltip("Hi:Q", title="Hi 95%", format=".3f"),
+                        ]
+                        if "σ (std)" in chart_df.columns:
+                            tooltips.append(alt.Tooltip("σ (std):Q", title="σ", format=".3f"))
+                        base = alt.Chart(chart_df)
+                        error_bars = base.mark_errorbar(color="#94a3b8").encode(
+                            x=alt.X("Variable:N", title="Indicador"),
+                            y=alt.Y("Lo:Q", title="Valor", scale=alt.Scale(zero=False)),
+                            y2="Hi:Q",
+                        )
+                        points = base.mark_point(filled=True, size=140, color="#38bdf8").encode(
+                            x=alt.X("Variable:N", title="Indicador"),
+                            y=alt.Y("Predicción:Q", title="Valor", scale=alt.Scale(zero=False)),
+                            tooltip=tooltips,
+                        )
+                        info_col.altair_chart(error_bars + points, use_container_width=True)
+
                     info_col.dataframe(ci_df, hide_index=True, use_container_width=True)
 
             feature_imp = candidate.get("feature_importance") or []
