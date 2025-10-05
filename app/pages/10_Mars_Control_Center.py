@@ -227,6 +227,7 @@ def _mars_local_texture_path() -> Path | None:
                 return candidate
         except OSError:
             continue
+
 @st.cache_data(show_spinner=False, ttl=3600)
 def _mars_tile_service_available() -> bool:
     try:
@@ -255,15 +256,6 @@ def _mars_tile_service_available() -> bool:
             return 200 <= getattr(response, "status", 0) < 400
     except (HTTPError, URLError, TimeoutError, ValueError):
         return False
-
-
-def _mars_local_texture_path() -> Path | None:
-    try:
-        if _MARS_TEXTURE_PATH.exists():
-            return _MARS_TEXTURE_PATH
-    except OSError:
-        return None
-    return None
 
 
 def _mars_background_layers() -> list[pdk.Layer]:
